@@ -1,0 +1,101 @@
+// ============================================================
+// NEON HARBOR — content catalog
+// Skins (car paints), environment themes, economy constants.
+// Premium = locked behind the Full Access Pass (monetization).
+// ============================================================
+
+export interface Skin {
+  id: string
+  name: string
+  desc: string
+  price: number // in-game cash; 0 = free starter
+  premium: boolean // requires Full Access Pass
+  minLevel: number
+  body: number // car paint color (hex)
+  glow: number // underglow / trail color (hex)
+  model?: string // Kenney car-kit model id (default sedan-sports)
+}
+
+export interface Theme {
+  id: string
+  name: string
+  desc: string
+  price: number
+  premium: boolean
+  sky: number
+  fog: number
+  fogDensity: number
+  ambient: number
+  ambientIntensity: number
+  moon: number
+  moonIntensity: number
+  ground: number
+  water: number
+  rain: boolean
+}
+
+export const FULL_ACCESS_PRICE = '$14.99'
+export const GAME_VERSION = 'v0.12.1'
+export const GAME_TITLE = 'NEON HARBOR'
+
+// ---------- CAR SKINS ----------
+export const SKINS: Skin[] = [
+  { id: 'stock',    name: 'Harbor Gray',   desc: 'Factory fresh port-runner coupe.',        price: 0,    premium: false, minLevel: 1, body: 0x8a93a6, glow: 0x22d3ee },
+  { id: 'blue',     name: 'Midnight Blue', desc: 'Deep-sea metallic with cyan underglow.',  price: 450,  premium: false, minLevel: 1, body: 0x1d4ed8, glow: 0x38bdf8 },
+  { id: 'amber',    name: 'Taxi Amber',    desc: 'Ride-share legend. Smells like hustle.',  price: 700,  premium: false, minLevel: 2, body: 0xf59e0b, glow: 0xfde047, model: 'taxi' },
+  { id: 'white',    name: 'Rally White',   desc: 'Clean, loud, and gone before the echo.',  price: 950,  premium: false, minLevel: 2, body: 0xf1f5f9, glow: 0x4ade80, model: 'hatchback-sports' },
+  { id: 'viper',    name: 'Viper Green',   desc: 'Toxic avenger of the dock district.',     price: 1400, premium: false, minLevel: 3, body: 0x16a34a, glow: 0xa3e635, model: 'suv' },
+  { id: 'ghost',    name: 'Crimson Ghost', desc: 'PREMIUM — the patrol hates this one.',    price: 0,    premium: true,  minLevel: 1, body: 0x9f1239, glow: 0xfb7185, model: 'race' },
+  { id: 'royal',    name: 'Royal Violet',  desc: 'PREMIUM — harbor-night royalty.',         price: 0,    premium: true,  minLevel: 1, body: 0x6d28d9, glow: 0xc084fc, model: 'suv-luxury' },
+  { id: 'solar',    name: 'Solar Flare',   desc: 'PREMIUM — molten gold, zero subtlety.',   price: 0,    premium: true,  minLevel: 1, body: 0xd97706, glow: 0xfbbf24, model: 'race' },
+  { id: 'oni',      name: 'Cyber Oni',     desc: 'PREMIUM — matte black, demon neon.',      price: 0,    premium: true,  minLevel: 1, body: 0x111114, glow: 0xff2d95, model: 'race' },
+]
+
+// ---------- ENVIRONMENT THEMES ----------
+export const THEMES: Theme[] = [
+  {
+    id: 'midnight', name: 'Midnight Rain', desc: 'The classic. Neon reflections, warm rain.',
+    price: 0, premium: false,
+    sky: 0x070a18, fog: 0x0d1226, fogDensity: 0.0078,
+    ambient: 0x41527a, ambientIntensity: 1.15, moon: 0x9cc0ff, moonIntensity: 0.85,
+    ground: 0x0d1120, water: 0x0d2c40, rain: true,
+  },
+  {
+    id: 'day', name: 'Harbor Day', desc: 'Bright sun, blue water, the port wide awake.',
+    price: 0, premium: false,
+    sky: 0x8ec8f0, fog: 0xaed4ee, fogDensity: 0.0011,
+    ambient: 0xcfe0f5, ambientIntensity: 0.7, moon: 0xfff3da, moonIntensity: 1.7,
+    ground: 0x8b95a1, water: 0x3f7fab, rain: false,
+  },
+  {
+    id: 'golden', name: 'Golden Hour', desc: 'PREMIUM — the harbor at eternal sunset.',
+    price: 0, premium: true,
+    sky: 0x2a1608, fog: 0x58290a, fogDensity: 0.0065,
+    ambient: 0xffb26b, ambientIntensity: 1.0, moon: 0xffd9a0, moonIntensity: 0.9,
+    ground: 0x171008, water: 0x3a2410, rain: false,
+  },
+  {
+    id: 'acid', name: 'Acid Rain', desc: 'PREMIUM — something leaked in Sector 7.',
+    price: 0, premium: true,
+    sky: 0x03130a, fog: 0x062b16, fogDensity: 0.0088,
+    ambient: 0x3a9160, ambientIntensity: 1.2, moon: 0x7dffa8, moonIntensity: 0.75,
+    ground: 0x06120b, water: 0x0a3320, rain: true,
+  },
+  {
+    id: 'sakura', name: 'Sakura Dusk', desc: 'PREMIUM — pink neon, festival night.',
+    price: 0, premium: true,
+    sky: 0x170a1c, fog: 0x2b0f33, fogDensity: 0.007,
+    ambient: 0xa06cc0, ambientIntensity: 1.25, moon: 0xffc2e0, moonIntensity: 0.85,
+    ground: 0x120a16, water: 0x2a1030, rain: false,
+  },
+]
+
+export const DEFAULT_SKIN = SKINS[0]
+export const DEFAULT_THEME = THEMES[0]
+
+export function getSkin(id: string): Skin {
+  return SKINS.find((s) => s.id === id) ?? DEFAULT_SKIN
+}
+export function getTheme(id: string): Theme {
+  return THEMES.find((t) => t.id === id) ?? DEFAULT_THEME
+}
