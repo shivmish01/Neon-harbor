@@ -39,6 +39,18 @@ export default function App() {
   const [isTouch] = useState(
     () => typeof window !== 'undefined' && (window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window),
   )
+  // Mobile plays in landscape — portrait shows a "rotate your device" screen
+  const [isPortrait, setIsPortrait] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches,
+  )
+  useEffect(() => {
+    if (!isTouch) return
+    const mq = window.matchMedia('(orientation: portrait)')
+    const update = () => setIsPortrait(mq.matches)
+    update()
+    mq.addEventListener('change', update)
+    return () => mq.removeEventListener('change', update)
+  }, [isTouch])
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const minimapRef = useRef<HTMLCanvasElement>(null)
@@ -171,10 +183,10 @@ export default function App() {
 
   // Pause only for modal overlays during gameplay — menus keep the city alive
   useEffect(() => {
-    engineRef.current?.setPaused(screen === 'game' && overlay !== null)
+    engineRef.current?.setPaused(screen === 'game' && (overlay !== null || (isTouch && isPortrait)))
     // Never leave a held touch button "stuck" when a menu opens over the game
     if (overlay !== null) engineRef.current?.touchReset()
-  }, [overlay, screen])
+  }, [overlay, screen, isTouch, isPortrait])
 
   // Escape opens/closes pause
   useEffect(() => {
@@ -466,7 +478,7 @@ export default function App() {
               </div>
             ) : (
               <div className="hud-panel text-center text-[11px] text-slate-400">
-                Free roam — visit the <span className="text-cyan-300">glowing garage beam</span> and press <b>E</b> for jobs
+                {isTouch ? <>Free roam — head to the <span className="text-cyan-300">glowing garage beam</span> for jobs</> : <>Free roam — visit the <span className="text-cyan-300">glowing garage beam</span> and press <b>E</b> for jobs</>}
               </div>
             )}
           </div>
@@ -482,7 +494,7 @@ export default function App() {
                 <div className="flex justify-between text-[10px] tracking-[0.2em] text-cyan-300">
                   <span>FIRST NIGHT — {hud.tutorial.step}/{hud.tutorial.total}</span>
                   <span className="flex items-center gap-2">
-                    <span className="text-slate-500 hidden sm:inline">press T to skip</span>
+                    {!isTouch && <span className="text-slate-500 hidden sm:inline">press T to skip</span>}
                     <button
                       onClick={() => setTutorialHidden(true)}
                       className="text-slate-400 hover:text-white leading-none"
@@ -490,8 +502,8 @@ export default function App() {
                     >✕</button>
                   </span>
                 </div>
-                <div className="text-white font-bold text-sm mt-1 leading-snug">{hud.tutorial.title}</div>
-                <div className="text-[11px] text-slate-300 mt-0.5 leading-snug">{hud.tutorial.hint}</div>
+                <div className="text-white font-bold text-sm mt-1 leading-snug">{isTouch ? touchTitle(hud.tutorial.title) : hud.tutorial.title}</div>
+                <div className="text-[11px] text-slate-300 mt-0.5 leading-snug">{isTouch ? touchHint(hud.tutorial.hint) : hud.tutorial.hint}</div>
               </div>
             </div>
           )}
@@ -509,7 +521,7 @@ export default function App() {
                 <div className="text-[10px] text-red-200 text-right leading-tight max-w-[11rem]">
                   {hud.bustedProgress > 0.25 ? (
                     <span className="text-red-400 font-bold animate-pulse text-[11px]">
-                      ⚠ GRABBED — MASH SPACE to break free!
+                      {isTouch ? '⚠ GRABBED — MASH THE BUTTON!' : '⚠ GRABBED — MASH SPACE to break free!'}
                     </span>
                   ) : hud.bustedProgress > 0.08 ? (
                     <span className="text-red-400 font-bold animate-pulse text-[11px]">
@@ -517,7 +529,7 @@ export default function App() {
                     </span>
                   ) : hud.pursued ? (
                     <span className="text-amber-300 font-bold text-[11px]">
-                      ★ CHASED — you're faster: hold SHIFT (boost) and keep driving to shake them!
+                      {isTouch ? '★ CHASED — tap NITRO to boost and keep driving!' : "★ CHASED — you're faster: hold SHIFT (boost) and keep driving to shake them!"}
                     </span>
                   ) : (
                     <span>EVADE — keep 60m+ from patrol drones until the stars fade</span>
@@ -530,14 +542,14 @@ export default function App() {
             </div>
           </div>
 
-          {/* bottom-left: speed + boost */}
-          <div className="absolute bottom-4 left-4 z-20">
+          {/* bottom-left: speed + boost (raised on touch so it never sits under the joystick) */}
+          <div className={`absolute left-4 z-20 ${isTouch ? 'bottom-44' : 'bottom-4'}`}>
             <div className="hud-panel">
               <div className="text-4xl font-black text-white font-mono">{hud.speedKmh}<span className="text-base text-slate-400 font-normal"> km/h</span></div>
               <div className="w-48 h-2 bg-slate-800 rounded mt-2">
                 <div className={`h-full rounded ${hud.boosting ? 'bg-fuchsia-400 shadow-[0_0_12px_rgba(232,121,249,0.9)]' : 'bg-cyan-500'}`} style={{ width: `${hud.boost}%` }} />
               </div>
-              <div className="text-[10px] text-slate-400 mt-1">NITRO — hold SHIFT {hud.drift > 0 && <span className="text-yellow-300 ml-2">DRIFT {hud.drift}</span>}</div>
+              <div className="text-[10px] text-slate-400 mt-1">{isTouch ? 'NITRO · DRIFT — right-side buttons' : 'NITRO — hold SHIFT'}{hud.drift > 0 && <span className="text-yellow-300 ml-2">DRIFT {hud.drift}</span>}</div>
             </div>
           </div>
 
@@ -640,16 +652,18 @@ export default function App() {
           )}
 
           {/* E prompt */}
-          {hud.nearGarage && !overlay && (
+          {hud.nearGarage && !overlay && !isTouch && (
             <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2 bg-cyan-500/20 border border-cyan-400 rounded text-cyan-200 text-sm animate-pulse">
               Press <b>E</b> — open the Job Board
             </div>
           )}
 
-          {/* early access badge */}
-          <div className="absolute bottom-1 left-1/2 -translate-x-1/2 z-10 text-[10px] tracking-[0.4em] text-slate-600">
-            EARLY ACCESS — progress is saved locally
-          </div>
+          {/* early access badge (desktop only; mobile keeps the view clean) */}
+          {!isTouch && (
+            <div className="absolute bottom-1 left-1/2 -translate-x-1/2 z-10 text-[10px] tracking-[0.4em] text-slate-600">
+              EARLY ACCESS — progress is saved locally
+            </div>
+          )}
 
           {/* busted flash + what-to-do summary */}
           {bustedFlash && (
@@ -658,7 +672,11 @@ export default function App() {
                 <div className="text-6xl font-black text-red-400 tracking-[0.3em]">BUSTED</div>
                 <div className="mt-3 text-slate-200 text-sm max-w-sm mx-auto leading-relaxed">
                   The Patrol hauled you back to the garage and fined 15% of your cash.<br />
-                  <span className="text-cyan-300">Next time: when a drone grabs you, MASH SPACE to break free — and never stop moving.</span>
+                  <span className="text-cyan-300">
+                    {isTouch
+                      ? 'Next time: when a drone grabs you, MASH the DRIFT button rapidly to break free — and never stop moving.'
+                      : 'Next time: when a drone grabs you, MASH SPACE to break free — and never stop moving.'}
+                  </span>
                 </div>
               </div>
             </div>
@@ -851,7 +869,7 @@ export default function App() {
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-amber-300 font-black tracking-widest">FULL ACCESS PASS — {FULL_ACCESS_PRICE}</div>
-                    <div className="text-slate-300 text-xs mt-1">Unlock every premium skin and all city environments. Founders keep all future themes free.</div>
+                    <div className="text-slate-300 text-xs mt-1">Unlock all 4 premium cars and 2 exclusive environments (Sakura Dusk, Acid Rain). Founders keep all future content free.</div>
                   </div>
                   <div className="text-2xl">🔓</div>
                 </div>
@@ -902,6 +920,7 @@ export default function App() {
                   isEquipped={save.theme === item.id}
                   isLocked={locked(item)}
                   level={save.level}
+                  preview={<ThemePreview theme={item} />}
                   onBuy={() => buyItem(item.id, item.price, item.premium, 1)}
                   onEquip={() => equipItem(item.id)}
                 />
@@ -929,12 +948,21 @@ export default function App() {
               <li>🚗 <b className="text-amber-300">Solar Flare</b> — molten gold, zero subtlety</li>
               <li>🚗 <b className="text-amber-300">Cyber Oni</b> — matte black, demon neon</li>
             </ul>
-            <div className="text-left text-slate-400 text-[11px] tracking-widest mb-1">3 ENVIRONMENTS YOU'VE NEVER SEEN</div>
-            <ul className="text-left text-slate-200 text-sm space-y-1 mb-3">
-              <li>🌇 <b className="text-amber-300">Golden Hour</b> — the harbor at eternal sunset</li>
-              <li>🌸 <b className="text-amber-300">Sakura Dusk</b> — pink neon festival night</li>
-              <li>☣️ <b className="text-amber-300">Acid Rain</b> — something leaked in Sector 7</li>
-            </ul>
+            <div className="text-left text-slate-400 text-[11px] tracking-widest mb-1">2 ENVIRONMENTS YOU'VE NEVER SEEN</div>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              {THEMES.filter((t) => t.premium).map((t) => (
+                <div key={t.id} className="rounded-lg border border-slate-700 overflow-hidden">
+                  <ThemePreview theme={t} />
+                  <div className="px-2 pb-1.5 -mt-1">
+                    <div className="text-amber-300 text-[11px] font-bold">{t.name}</div>
+                    <div className="text-slate-400 text-[10px] leading-tight">{t.desc.replace('PREMIUM — ', '')}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="text-left text-slate-200 text-xs mb-3">
+              🌇 <b className="text-amber-300">Golden Hour</b> is now earnable with in-game cash — no pass needed.
+            </div>
             <div className="text-left text-emerald-300/90 text-xs mb-4">✦ Plus every future theme and car added during Early Access — free, forever</div>
             <div className="bg-amber-500/10 border border-amber-400/30 rounded p-2 text-amber-200/90 text-[11px] mb-4">
               DEMO CHECKOUT — no real payment is processed. At launch this button connects to your real payment provider (Stripe, Steam, etc.).
@@ -969,19 +997,41 @@ export default function App() {
               <button onClick={() => setOverlay(null)} className="text-slate-400 hover:text-white text-xl">✕</button>
             </div>
             <div className="text-slate-300 text-sm space-y-3 leading-relaxed">
-              <p><b className="text-cyan-300">Drive & earn.</b> Take courier jobs and races from the Job Board (glowing cyan beam in the city center, press E). Finish fast for bigger payouts.</p>
+              <p><b className="text-cyan-300">Drive & earn.</b>{' '}
+                {isTouch
+                  ? <>Take courier jobs and races from the Job Board — drive into the <b>glowing cyan beam</b> in the city center and tap the <b>E</b> button. Finish fast for bigger payouts.</>
+                  : <>Take courier jobs and races from the Job Board (glowing cyan beam in the city center, press E). Finish fast for bigger payouts.</>}
+              </p>
               <p><b className="text-cyan-300">Explore.</b> 24 data shards glow around the city. Orange ramps pay airtime bonuses. Handbrake drifts around corners pay too.</p>
               <p>
                 <b className="text-red-300">The Patrol — read this!</b> Speeding near red patrol drones raises your ★ heat.
                 <b> What to do when attacked:</b> keep driving FAST and get 60m+ away from every drone — the stars fade and they give up.
-                If a drone sticks to your bumper, <b>never stop</b>. And if one grabs you, <b>mash SPACE rapidly to break free</b> —
+                If a drone sticks to your bumper, <b>never stop</b>. And if one grabs you,{' '}
+                <b>{isTouch ? 'MASH the DRIFT button rapidly to break free' : 'mash SPACE rapidly to break free'}</b> —
                 only a stopped, surrounded car gets BUSTED (15% fine, hauled back to the garage). At 3★+ you hear sirens; drones get faster every star.
               </p>
-              <p><b className="text-cyan-300">Spend & customize.</b> Cash buys car skins. The Full Access Pass unlocks premium skins and entire city environments (this build demos it for free).</p>
+              <p><b className="text-cyan-300">Spend & customize.</b> Cash buys car skins and the Golden Hour environment. The Full Access Pass unlocks premium skins and two more city environments (this build demos it for free).</p>
               <div className="text-slate-500 text-xs pt-2 border-t border-slate-800">
-                Controls: WASD/arrows drive · SHIFT nitro · SPACE handbrake · E job board · H horn · C camera · ESC pause
+                {isTouch ? (
+                  save.controls === 'joystick'
+                    ? 'Joystick: push forward to drive · tilt to steer · pull back to brake — NITRO and DRIFT buttons on the right · E jobs · 📷 camera · 📯 horn · II pause'
+                    : '◀ ▶ steer · ▲ gas · ▼ brake/reverse · NITRO · DRIFT — E jobs · 📷 camera · 📯 horn · II pause'
+                ) : (
+                  'Controls: WASD/arrows drive · SHIFT nitro · SPACE handbrake · E job board · H horn · C camera · ESC pause'
+                )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= ROTATE DEVICE (mobile portrait) ================= */}
+      {isTouch && isPortrait && (
+        <div className="absolute inset-0 z-[60] flex flex-col items-center justify-center bg-[#05060f]">
+          <div className="rotate-phone text-5xl mb-6">📱</div>
+          <div className="text-cyan-300 tracking-[0.35em] text-sm font-bold">ROTATE YOUR DEVICE</div>
+          <div className="text-slate-400 text-xs mt-3 max-w-[16rem] text-center leading-relaxed">
+            {GAME_TITLE} plays in landscape — turn your phone sideways for the full harbor
           </div>
         </div>
       )}
@@ -1091,6 +1141,55 @@ function Joystick({ engine }: { engine: GameEngine | null }) {
   )
 }
 
+// ---------- Touch-aware tutorial text (mobile shows touch controls, not keys) ----------
+function touchTitle(t: string) {
+  if (/HOLD W|accelerate/i.test(t)) return 'DRIVE'
+  if (/STEER/i.test(t)) return 'STEER'
+  if (/SHIFT|nitro/i.test(t)) return 'NITRO BOOST'
+  if (/DRIFT|SPACE/i.test(t)) return 'DRIFT'
+  if (/press E|GARAGE|Job/i.test(t)) return t.replace(/press E/i, 'Tap E')
+  return t
+}
+function touchHint(h: string) {
+  if (/WASD|arrow keys|HOLD W/i.test(h)) return 'Push the joystick forward to drive — tilt it left and right to steer'
+  if (/Tap A or D/i.test(h)) return 'Tilt the joystick while moving to turn. Try a corner'
+  if (/SHIFT/i.test(h)) return 'Tap NITRO on the right to boost — it recharges on its own'
+  if (/SPACE|Handbrake/i.test(h)) return 'Hold DRIFT in a turn to slide. Drifts earn cash chains'
+  if (/press E/i.test(h)) return 'Tap the E button at the garage — jobs, races, taxi fares and getaways await'
+  return h
+}
+
+// ---------- Live environment preview (animated mini-scene for theme cards) ----------
+function ThemePreview({ theme }: { theme: Theme }) {
+  const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`
+  return (
+    <div
+      className="relative h-14 rounded-lg mb-2 overflow-hidden"
+      style={{ background: `linear-gradient(180deg, ${hex(theme.sky)} 0%, ${hex(theme.fog)} 78%)` }}
+    >
+      {/* sun / moon */}
+      <div
+        className="absolute rounded-full"
+        style={{
+          width: 14, height: 14, right: 12, top: 6,
+          background: hex(theme.moon),
+          boxShadow: `0 0 14px 3px ${hex(theme.moon)}`,
+        }}
+      />
+      {/* skyline silhouette */}
+      <div className="absolute bottom-2 left-2 right-2 flex items-end gap-[3px] opacity-70">
+        {[10, 16, 8, 13, 18, 9, 14, 11].map((h, i) => (
+          <div key={i} className="flex-1 rounded-[1px]" style={{ height: h, background: hex(theme.sky), filter: 'brightness(1.6)' }} />
+        ))}
+      </div>
+      {/* water line */}
+      <div className="absolute bottom-0 inset-x-0 h-2" style={{ background: hex(theme.water), opacity: 0.9 }} />
+      {/* rain streaks */}
+      {theme.rain && <div className="theme-rain absolute inset-0" />}
+    </div>
+  )
+}
+
 // ---------- Shop item card ----------
 function ShopCard(props: {
   name: string
@@ -1104,6 +1203,7 @@ function ShopCard(props: {
   isEquipped: boolean
   isLocked: boolean
   level: number
+  preview?: React.ReactNode // replaces the swatch block (e.g. live environment preview)
   onBuy: () => void
   onEquip: () => void
 }) {
@@ -1114,9 +1214,11 @@ function ShopCard(props: {
       {props.premium && (
         <div className="absolute -top-2 -right-2 bg-amber-500 text-black text-[10px] font-black px-2 py-0.5 rounded-full">PREMIUM</div>
       )}
-      <div className="h-14 rounded-lg mb-2 flex items-end justify-center" style={{ background: `linear-gradient(135deg, ${hex(props.swatch)}, #0b0d14)` }}>
-        <div className="w-24 h-2 rounded-full mb-2" style={{ background: hex(props.glow), boxShadow: `0 0 14px ${hex(props.glow)}` }} />
-      </div>
+      {props.preview ?? (
+        <div className="h-14 rounded-lg mb-2 flex items-end justify-center" style={{ background: `linear-gradient(135deg, ${hex(props.swatch)}, #0b0d14)` }}>
+          <div className="w-24 h-2 rounded-full mb-2" style={{ background: hex(props.glow), boxShadow: `0 0 14px ${hex(props.glow)}` }} />
+        </div>
+      )}
       <div className="text-white font-bold text-sm">{props.name}</div>
       <div className="text-slate-400 text-[11px] mt-0.5 leading-snug min-h-[2rem]">{props.desc}</div>
       <div className="mt-2">

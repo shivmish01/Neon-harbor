@@ -234,3 +234,52 @@
   from { transform: scale(1); box-shadow: 0 0 12px rgba(248, 113, 113, 0.4); }
   to { transform: scale(1.12); box-shadow: 0 0 30px rgba(248, 113, 113, 0.8); }
 }
+
+/* Narrow phones (<= 380px): shrink controls so every button stays on-screen */
+@media (max-width: 380px) {
+  .touch-btn {
+    width: 3.6rem;
+    height: 3.6rem;
+    font-size: 0.95rem;
+  }
+  .touch-btn-sm {
+    width: 2.6rem;
+    height: 2.6rem;
+    font-size: 0.75rem;
+  }
+  .touch-btn-wide {
+    width: 5.5rem;
+    height: 2.9rem;
+    font-size: 0.75rem;
+  }
+  .touch-btn-tall {
+    height: 4.5rem;
+  }
+}
+
+/* ============ Environment preview cards (shop / checkout) ============ */
+.theme-rain {
+  background-image: repeating-linear-gradient(
+    112deg,
+    transparent 0px,
+    transparent 5px,
+    rgba(174, 214, 255, 0.28) 5px,
+    rgba(174, 214, 255, 0.28) 6px
+  );
+  background-size: 12px 12px;
+  animation: theme-rain-fall 0.45s linear infinite;
+  pointer-events: none;
+}
+@keyframes theme-rain-fall {
+  from { background-position: 0 0; }
+  to { background-position: -6px 12px; }
+}
+
+/* ============ Rotate-device prompt (mobile portrait) ============ */
+.rotate-phone {
+  animation: rotate-phone-anim 1.8s ease-in-out infinite;
+}
+@keyframes rotate-phone-anim {
+  0%, 25% { transform: rotate(0deg); }
+  55%, 100% { transform: rotate(90deg); }
+}

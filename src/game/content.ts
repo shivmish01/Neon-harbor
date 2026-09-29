@@ -35,7 +35,7 @@ export interface Theme {
 }
 
 export const FULL_ACCESS_PRICE = '$14.99'
-export const GAME_VERSION = 'v0.12.1'
+export const GAME_VERSION = 'v0.13.0'
 export const GAME_TITLE = 'NEON HARBOR'
 
 // ---------- CAR SKINS ----------
@@ -45,10 +45,10 @@ export const SKINS: Skin[] = [
   { id: 'amber',    name: 'Taxi Amber',    desc: 'Ride-share legend. Smells like hustle.',  price: 700,  premium: false, minLevel: 2, body: 0xf59e0b, glow: 0xfde047, model: 'taxi' },
   { id: 'white',    name: 'Rally White',   desc: 'Clean, loud, and gone before the echo.',  price: 950,  premium: false, minLevel: 2, body: 0xf1f5f9, glow: 0x4ade80, model: 'hatchback-sports' },
   { id: 'viper',    name: 'Viper Green',   desc: 'Toxic avenger of the dock district.',     price: 1400, premium: false, minLevel: 3, body: 0x16a34a, glow: 0xa3e635, model: 'suv' },
-  { id: 'ghost',    name: 'Crimson Ghost', desc: 'PREMIUM — the patrol hates this one.',    price: 0,    premium: true,  minLevel: 1, body: 0x9f1239, glow: 0xfb7185, model: 'race' },
-  { id: 'royal',    name: 'Royal Violet',  desc: 'PREMIUM — harbor-night royalty.',         price: 0,    premium: true,  minLevel: 1, body: 0x6d28d9, glow: 0xc084fc, model: 'suv-luxury' },
-  { id: 'solar',    name: 'Solar Flare',   desc: 'PREMIUM — molten gold, zero subtlety.',   price: 0,    premium: true,  minLevel: 1, body: 0xd97706, glow: 0xfbbf24, model: 'race' },
-  { id: 'oni',      name: 'Cyber Oni',     desc: 'PREMIUM — matte black, demon neon.',      price: 0,    premium: true,  minLevel: 1, body: 0x111114, glow: 0xff2d95, model: 'race' },
+  { id: 'ghost',    name: 'Crimson Ghost', desc: 'The patrol hates this one.',              price: 0,    premium: true,  minLevel: 1, body: 0x9f1239, glow: 0xfb7185, model: 'race' },
+  { id: 'royal',    name: 'Royal Violet',  desc: 'Harbor-night royalty.',                   price: 0,    premium: true,  minLevel: 1, body: 0x6d28d9, glow: 0xc084fc, model: 'suv-luxury' },
+  { id: 'solar',    name: 'Solar Flare',   desc: 'Molten gold, zero subtlety.',             price: 0,    premium: true,  minLevel: 1, body: 0xd97706, glow: 0xfbbf24, model: 'race' },
+  { id: 'oni',      name: 'Cyber Oni',     desc: 'Matte black, demon neon.',                price: 0,    premium: true,  minLevel: 1, body: 0x111114, glow: 0xff2d95, model: 'race' },
 ]
 
 // ---------- ENVIRONMENT THEMES ----------
@@ -68,21 +68,21 @@ export const THEMES: Theme[] = [
     ground: 0x8b95a1, water: 0x3f7fab, rain: false,
   },
   {
-    id: 'golden', name: 'Golden Hour', desc: 'PREMIUM — the harbor at eternal sunset.',
-    price: 0, premium: true,
+    id: 'golden', name: 'Golden Hour', desc: 'The harbor at eternal sunset. Earned, not given.',
+    price: 1200, premium: false,
     sky: 0x2a1608, fog: 0x58290a, fogDensity: 0.0065,
     ambient: 0xffb26b, ambientIntensity: 1.0, moon: 0xffd9a0, moonIntensity: 0.9,
     ground: 0x171008, water: 0x3a2410, rain: false,
   },
   {
-    id: 'acid', name: 'Acid Rain', desc: 'PREMIUM — something leaked in Sector 7.',
+    id: 'acid', name: 'Acid Rain', desc: 'Something leaked in Sector 7. Green haze, toxic rain.',
     price: 0, premium: true,
     sky: 0x03130a, fog: 0x062b16, fogDensity: 0.0088,
     ambient: 0x3a9160, ambientIntensity: 1.2, moon: 0x7dffa8, moonIntensity: 0.75,
     ground: 0x06120b, water: 0x0a3320, rain: true,
   },
   {
-    id: 'sakura', name: 'Sakura Dusk', desc: 'PREMIUM — pink neon, festival night.',
+    id: 'sakura', name: 'Sakura Dusk', desc: 'Pink neon festival night under the blossom towers.',
     price: 0, premium: true,
     sky: 0x170a1c, fog: 0x2b0f33, fogDensity: 0.007,
     ambient: 0xa06cc0, ambientIntensity: 1.25, moon: 0xffc2e0, moonIntensity: 0.85,
