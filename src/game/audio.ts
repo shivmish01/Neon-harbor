@@ -356,6 +356,25 @@ export class Synth {
     this.blip(1050, 0.12, 'square', 0.1, 0.05)
   }
 
+  // Cash register "cha-ching" — reward feedback
+  cash(): void {
+    this.blip(1245, 0.09, 'triangle', 0.2)
+    this.blip(1865, 0.22, 'triangle', 0.18, 0.07)
+  }
+
+  // Heavy impact: noise burst + low thump (crashes into poles/barriers)
+  crash(): void {
+    this.blip(95, 0.35, 'sawtooth', 0.3, 0, 38)
+    this.blip(62, 0.4, 'square', 0.22, 0.02, 30)
+    this.blip(1800, 0.12, 'sawtooth', 0.1, 0, 300)
+  }
+
+  // Job accepted: rising confirm two-tone
+  jobStart(): void {
+    this.blip(523, 0.12, 'triangle', 0.2)
+    this.blip(784, 0.2, 'triangle', 0.22, 0.1)
+  }
+
   dispose(): void {
     try {
       if (this.musicTimer !== null) window.clearInterval(this.musicTimer)

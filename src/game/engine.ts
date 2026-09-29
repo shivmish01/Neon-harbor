@@ -9,7 +9,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { getSkin, getTheme } from './content'
+import { getSkin, getTheme, ACHIEVEMENTS, DISTRICTS, districtAt } from './content'
 import { grantXp, xpForLevel, type SaveData } from './save'
 import { Synth } from './audio'
 import { cloneCar, cloneCharacter, CITY_BY_KIND, type GameAssets } from './assets'
@@ -179,6 +179,17 @@ function seededRand(seed: number): () => number {
 export class GameEngine {
   private renderer: THREE.WebGLRenderer
   private composer: EffectComposer
+  private bloomPass!: UnrealBloomPass
+  // MOB-3: FPS watchdog — on touch devices, sustained low FPS steps quality
+  // down (display scale first, then bloom + shadow resolution). Never re-raises.
+  private autoQuality = false
+  private qualityLevel = 0
+  private fpsAccum = 0
+  private fpsFrames = 0
+  private fpsWindow = 0
+  // MOB-1: analog touch input from the virtual joystick (null = keyboard/digital)
+  private analogSteer: number | null = null
+  private analogThrottle: number | null = null
   private scene = new THREE.Scene()
   private camera: THREE.PerspectiveCamera
   private mmCanvas: HTMLCanvasElement
@@ -308,8 +319,8 @@ export class GameEngine {
     // Post-processing: neon bloom
     this.composer = new EffectComposer(renderer)
     this.composer.addPass(new RenderPass(this.scene, this.camera))
-    const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.42, 0.5, 0.62)
-    this.composer.addPass(bloom)
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.42, 0.5, 0.62)
+    this.composer.addPass(this.bloomPass)
 
     const mmCtx = minimap.getContext('2d')
     if (!mmCtx) throw new Error('no 2d context')
@@ -2654,7 +2665,16 @@ export class GameEngine {
   // Mobile touch overlay: held buttons feed the same key set as the keyboard
   touchDown(k: string): void { this.keys.add(k.toLowerCase()) }
   touchUp(k: string): void { this.keys.delete(k.toLowerCase()) }
-  touchReset(): void { this.keys.clear() }
+  touchReset(): void {
+    this.keys.clear()
+    this.analogSteer = null
+    this.analogThrottle = null
+  }
+  /** Virtual joystick: steer/throttle in -1..1; pass null to return to digital keys */
+  touchAnalog(steer: number | null, throttle: number | null): void {
+    this.analogSteer = steer
+    this.analogThrottle = throttle
+  }
   /** One-shot action buttons reuse the keyboard handler (E / mash SPACE / C / H / T) */
   touchTap(k: string): void { this.onKeyDown(new KeyboardEvent('keydown', { key: k })) }
 
@@ -2689,7 +2709,49 @@ export class GameEngine {
       this.time += dt
       this.update(dt)
     }
+    // MOB-3: quality watchdog — only counts active frames, only on touch devices,
+    // steps down at most one level per 3s window
+    if (this.autoQuality && !this.paused) {
+      this.fpsAccum += dt
+      this.fpsFrames += 1
+      this.fpsWindow += dt
+      if (this.fpsWindow >= 3) {
+        const avg = this.fpsFrames / this.fpsAccum
+        this.fpsWindow = 0
+        this.fpsAccum = 0
+        this.fpsFrames = 0
+        if (avg < 42 && this.qualityLevel < 2) {
+          this.qualityLevel += 1
+          this.applyQuality()
+        }
+      }
+    }
     this.composer.render()
+  }
+
+  setAutoQualityEnabled(on: boolean): void {
+    this.autoQuality = on
+  }
+
+  private applyQuality(): void {
+    const dpr = window.devicePixelRatio || 1
+    const pr = this.qualityLevel === 0 ? Math.min(dpr, 1.75) : this.qualityLevel === 1 ? Math.min(dpr, 1.25) : 1
+    this.renderer.setPixelRatio(pr)
+    this.composer.setPixelRatio(pr)
+    this.resize()
+    if (this.qualityLevel >= 2) {
+      this.bloomPass.enabled = false
+      if (this.moon.shadow.mapSize.x > 1024) {
+        this.moon.shadow.mapSize.set(1024, 1024)
+        if (this.moon.shadow.map) {
+          this.moon.shadow.map.dispose()
+          this.moon.shadow.map = null
+        }
+      }
+      this.hooks.onToast('Performance mode: effects reduced to keep the game smooth', 'info')
+    } else {
+      this.hooks.onToast('Performance mode: display scaled down for smoother play', 'info')
+    }
   }
 
   private update(dt: number): void {
@@ -2706,6 +2768,7 @@ export class GameEngine {
     this.updateIdlers(dt)
     this.updateCrates(dt)
     this.updateLandmarks(dt)
+    this.updateDistricts(dt)
     this.updateDronesAndHeat(dt)
     // street cred chain decay
     if (this.chainTimer > 0) {
@@ -2773,11 +2836,16 @@ export class GameEngine {
 
     if (!frozen) {
       const mult = this.boosting ? BOOST_MULT : 1
-      if (up) s += ACCEL * mult * dt
-      if (down) s -= (s > 1 ? BRAKE : ACCEL * 0.6) * dt
+      // Joystick (analog) input replaces the digital pedals when active
+      const aThr = this.analogThrottle
+      const gas = aThr !== null ? aThr > 0.12 : up
+      const braking = aThr !== null ? aThr < -0.12 : down
+      if (gas) s += ACCEL * (aThr !== null ? Math.min(1, aThr) : 1) * mult * dt
+      if (braking) s -= (s > 1 ? BRAKE : ACCEL * 0.6) * dt
       const maxS = MAX_SPEED * mult
       s = THREE.MathUtils.clamp(s, -10, maxS)
-      const steer = (left ? 1 : 0) - (right ? 1 : 0)
+      const aSt = this.analogSteer
+      const steer = aSt !== null ? -aSt : (left ? 1 : 0) - (right ? 1 : 0)
       const grip = handbrake ? 1.4 : 7.5
       const turnRate = steer * 2.1 * THREE.MathUtils.clamp(Math.abs(s) / 10, 0, 1) * (handbrake ? 1.5 : 1)
       this.heading += turnRate * dt * Math.sign(s >= 0 ? 1 : -1)
@@ -2793,7 +2861,7 @@ export class GameEngine {
     }
 
     // Brake / boost light feedback
-    this.taillightMat.color.setHex(down && !frozen ? 0xff5566 : 0x881122)
+    this.taillightMat.color.setHex((this.analogThrottle !== null ? this.analogThrottle < -0.12 : down) && !frozen ? 0xff5566 : 0x881122)
     this.flameL.visible = this.boosting
     this.flameR.visible = this.boosting
     if (this.boosting) {
@@ -2852,6 +2920,7 @@ export class GameEngine {
       if (this.driftScore > 40) {
         const pay = this.addChain(this.driftScore, 'Drift bonus')
         save.stats.bestDrift = Math.max(save.stats.bestDrift, pay)
+        if (pay >= 500) this.unlockAchievement('drift-500')
         this.hooks.commit()
       }
       this.driftScore = 0
@@ -2868,6 +2937,8 @@ export class GameEngine {
         this.grantXp(30)
         this.synth.pickup()
         this.hooks.commit()
+        if (save.shards.length >= 12) this.unlockAchievement('shard-12')
+        if (save.shards.length >= 24) this.unlockAchievement('shard-24')
       }
     }
 
@@ -2905,23 +2976,32 @@ export class GameEngine {
       const vDot = this.vel.x * nx + this.vel.z * nz
       if (vDot < 0) {
         const impact = -vDot
-        this.vel.x -= nx * vDot * 1.5
-        this.vel.z -= nz * vDot * 1.5
-        if (impact > 5) {
-          this.shake = Math.min(this.shake + impact * 0.03, 0.7)
+        this.vel.x -= nx * vDot * 1.85
+        this.vel.z -= nz * vDot * 1.85
+        // Grazes still register: tiny jolt so clipping a pole never feels free
+        if (impact > 1.5) this.shake = Math.min(this.shake + impact * 0.02, 0.85)
+        if (impact > 2.5) {
+          this.shake = Math.min(this.shake + impact * 0.05, 0.85)
           this.synth.thud()
-          if (impact > 8) {
-            for (let i = 0; i < 5; i++) {
-              this.emitPuff(
-                this.pos.x + nx * 1.6 + (Math.random() - 0.5),
-                0.5 + Math.random() * 0.5,
-                this.pos.z + nz * 1.6 + (Math.random() - 0.5),
-                0xffa63d, 0.28 + Math.random() * 0.2, 0.3, true
-              )
-            }
-          }
-          if (impact > 12) this.heat = Math.min(5, this.heat + 0.35)
+          this.emitPuff(
+            this.pos.x + nx * 1.6, 0.5 + Math.random() * 0.4, this.pos.z + nz * 1.6,
+            0xffd27d, 0.2 + Math.random() * 0.15, 0.25, true
+          )
         }
+        if (impact > 8) {
+          // Hard hit: heavy crash sound, bigger spark burst, speed bleeds off
+          this.synth.crash()
+          this.vel.multiplyScalar(0.72)
+          for (let i = 0; i < 8; i++) {
+            this.emitPuff(
+              this.pos.x + nx * 1.6 + (Math.random() - 0.5),
+              0.5 + Math.random() * 0.5,
+              this.pos.z + nz * 1.6 + (Math.random() - 0.5),
+              0xffa63d, 0.28 + Math.random() * 0.2, 0.3, true
+            )
+          }
+        }
+        if (impact > 12) this.heat = Math.min(5, this.heat + 0.35)
       }
     }
     if (this.pos.y < 5) {
@@ -2939,6 +3019,68 @@ export class GameEngine {
     const save = this.hooks.getSave()
     save.cash = Math.max(0, save.cash + amount)
     this.hooks.commit()
+    // Reward feedback: register ping, rate-limited so chains don't machine-gun
+    if (amount > 0 && this.time - this.lastCashSfx > 0.35) {
+      this.lastCashSfx = this.time
+      this.synth.cash()
+    }
+    if (save.cash >= 5000) this.unlockAchievement('rich-5k')
+  }
+
+  private lastCashSfx = -9
+
+  // PC-7: achievements — one-shot unlocks with a toast + jingle (+$150 bonus)
+  unlockAchievement(id: string): void {
+    const save = this.hooks.getSave()
+    if (save.achievements.includes(id)) return
+    save.achievements.push(id)
+    this.hooks.commit()
+    const a = ACHIEVEMENTS.find((x) => x.id === id)
+    if (a) {
+      this.hooks.onToast(`🏆 ${a.name} — ${a.desc} (+$150)`, 'good')
+      this.synth.missionDone()
+      this.grantCash(150)
+      if (save.achievements.filter((x) => ACHIEVEMENTS.some((y) => y.id === x)).length === ACHIEVEMENTS.length) {
+        this.hooks.onToast('👑 ALL TROPHIES — you are the legend of Neon Harbor!', 'good')
+      }
+    }
+  }
+
+  // PC-7: district gates — locked districts push the player back at the border;
+  // newly-entered unlocked districts grant a discovery bonus once each
+  private districtCd = 0
+  private updateDistricts(dt: number): void {
+    this.districtCd = Math.max(0, this.districtCd - dt)
+    const d = districtAt(this.pos.x, this.pos.z)
+    if (!d) return
+    const save = this.hooks.getSave()
+    if (save.level < d.minLevel) {
+      // Push out along the axis of least penetration, damping the hit
+      const pens = [
+        { p: this.pos.x - d.minX, axis: 'x' as const, to: d.minX - 0.6 },
+        { p: d.maxX - this.pos.x, axis: 'x' as const, to: d.maxX + 0.6 },
+        { p: this.pos.z - d.minZ, axis: 'z' as const, to: d.minZ - 0.6 },
+        { p: d.maxZ - this.pos.z, axis: 'z' as const, to: d.maxZ + 0.6 },
+      ].sort((a, b) => a.p - b.p)[0]
+      if (pens.axis === 'x') this.pos.x = pens.to
+      else this.pos.z = pens.to
+      this.vel.multiplyScalar(0.35)
+      this.shake = Math.min(this.shake + 0.25, 0.6)
+      if (this.districtCd <= 0) {
+        this.districtCd = 2.5
+        this.hooks.onToast(`🔒 ${d.name} — reach level ${d.minLevel} to enter`, 'warn')
+        this.synth.denied()
+      }
+      return
+    }
+    if (!save.districts.includes(d.id)) {
+      save.districts.push(d.id)
+      this.hooks.commit()
+      this.hooks.onToast(`🗺️ Welcome to ${d.name} — ${d.desc} (+$100 discovery bonus)`, 'good')
+      this.synth.missionDone()
+      this.grantCash(100)
+      if (save.districts.length >= DISTRICTS.length) this.unlockAchievement('tour')
+    }
   }
 
   private grantXp(amount: number): void {
@@ -2947,6 +3089,7 @@ export class GameEngine {
     if (ups > 0) {
       for (let i = 0; i < ups; i++) this.hooks.onLevelUp(save.level - ups + i + 1)
       this.synth.missionDone()
+      if (save.level >= 5) this.unlockAchievement('level-5')
     }
   }
 
@@ -3128,6 +3271,7 @@ export class GameEngine {
     const fine = Math.round(save.cash * 0.15)
     save.cash = Math.max(0, save.cash - fine)
     save.stats.busts += 1
+    if (save.stats.busts >= 3) this.unlockAchievement('busted-3')
     this.hooks.commit()
     this.busted = true
     this.bustedCooldown = 2.6
@@ -3144,20 +3288,34 @@ export class GameEngine {
   }
 
   // =============== MISSIONS ===============
+  /** Road point that respects district gates: resamples until the target lies in
+      a district the player's level can enter (missions must always be reachable). */
+  private openPoint(rand: () => number, from: THREE.Vector3, dist: number): THREE.Vector3 {
+    const save = this.hooks.getSave()
+    let p = roadPoint(rand, from, dist)
+    for (let i = 0; i < 10; i++) {
+      const d = districtAt(p.x, p.z)
+      if (!d || save.level >= d.minLevel) return p
+      p = roadPoint(rand, from, dist)
+    }
+    return p
+  }
+
   startMission(kind: 'delivery' | 'race' | 'taxi' | 'getaway'): void {
     const rand = Math.random
     const save = this.hooks.getSave()
     // Starting a new contract must never orphan the previous one's world props
     this.clearMission()
+    this.synth.jobStart()
     if (kind === 'delivery') {
-      const a = roadPoint(rand, this.pos, 50)
-      const b = roadPoint(rand, a, 90)
+      const a = this.openPoint(rand, this.pos, 50)
+      const b = this.openPoint(rand, a, 90)
       const timer = Math.round(a.distanceTo(b) / 9 + 26)
       this.mission = { kind, stage: 'pickup', a, b, timer, name: `Courier Run ${save.stats.deliveries + 1}` }
       this.hooks.onToast('Courier contract accepted — reach the pickup beacon', 'good')
     } else if (kind === 'taxi') {
-      const a = roadPoint(rand, this.pos, 40)
-      const b = roadPoint(rand, a, 90)
+      const a = this.openPoint(rand, this.pos, 40)
+      const b = this.openPoint(rand, a, 90)
       const timer = Math.round(a.distanceTo(b) / 8 + 30)
       const passenger = this.makePassenger(a)
       this.mission = { kind, stage: 'pickup', a, b, timer, name: `Taxi Fare ${save.stats.fares + 1}`, passenger, dist: a.distanceTo(b) }
@@ -3171,7 +3329,7 @@ export class GameEngine {
       const cps: THREE.Vector3[] = []
       let prev = this.pos.clone()
       for (let i = 0; i < 8; i++) {
-        const cp = roadPoint(rand, prev, 55)
+        const cp = this.openPoint(rand, prev, 55)
         cps.push(cp)
         prev = cp
       }
@@ -3237,6 +3395,8 @@ export class GameEngine {
         const reward = Math.round(300 + m.heat0 * 130)
         const save = this.hooks.getSave()
         save.stats.getaways += 1
+        this.unlockAchievement('first-getaway')
+        if (save.stats.getaways >= 5) this.unlockAchievement('getaway-5')
         this.grantCash(reward)
         this.grantXp(280)
         this.synth.missionDone()
@@ -3262,6 +3422,8 @@ export class GameEngine {
           const reward = Math.round(200 + m.a.distanceTo(m.b) * 0.9 + m.timer * 5)
           const save = this.hooks.getSave()
           save.stats.deliveries += 1
+          this.unlockAchievement('first-delivery')
+          if (save.stats.deliveries >= 10) this.unlockAchievement('delivery-10')
           this.grantCash(reward)
           this.grantXp(150)
           this.synth.missionDone()
@@ -3272,6 +3434,7 @@ export class GameEngine {
           const fare = Math.round(120 + m.dist * 0.8 + m.timer * 4)
           const save = this.hooks.getSave()
           save.stats.fares += 1
+          this.unlockAchievement('first-fare')
           this.grantCash(fare)
           this.grantXp(180)
           this.synth.missionDone()
@@ -3293,6 +3456,7 @@ export class GameEngine {
           const reward = Math.round(380 + m.total * 22)
           const save = this.hooks.getSave()
           save.stats.races += 1
+          this.unlockAchievement('first-race')
           const raceTime = Math.round(8 * 14 - m.total)
           if (!save.stats.bestRace || raceTime < save.stats.bestRace) save.stats.bestRace = raceTime
           this.grantCash(reward)
@@ -3331,7 +3495,7 @@ export class GameEngine {
       this.camera.position.y += (Math.random() - 0.5) * s * 0.5
     }
     this.camera.lookAt(look)
-    const targetFov = 62 + Math.min(sp * 0.45, 22)
+    const targetFov = 62 + Math.min(sp * 0.45, 22) + (this.boosting ? 8 : 0)
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(dt * 4, 1)
     this.camera.updateProjectionMatrix()
   }
@@ -3553,6 +3717,37 @@ export class GameEngine {
       ctx.beginPath()
       ctx.arc(toPx(d.pos.x), toPx(d.pos.z), 2.4, 0, Math.PI * 2)
       ctx.fill()
+    }
+    // Patrol cruisers: flashing red/blue dots while heat is on, with a pulsing
+    // heat zone ring around the nearest unit so the threat area reads at a glance
+    if (this.heat > 0.5 && this.cruisers.length > 0) {
+      const flash = Math.floor(this.time * 4) % 2 === 0
+      let nearest: { x: number; z: number } | null = null
+      let nearestD = Infinity
+      for (const c of this.cruisers) {
+        const px = toPx(c.pos.x)
+        const pz = toPx(c.pos.z)
+        ctx.fillStyle = flash ? '#ff3355' : '#3b82f6'
+        ctx.beginPath()
+        ctx.arc(px, pz, 3, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.strokeStyle = 'rgba(255,255,255,0.75)'
+        ctx.lineWidth = 0.8
+        ctx.stroke()
+        const dd = (c.pos.x - this.pos.x) ** 2 + (c.pos.z - this.pos.z) ** 2
+        if (dd < nearestD) {
+          nearestD = dd
+          nearest = { x: px, z: pz }
+        }
+      }
+      if (nearest && this.heat >= 2) {
+        const pulse = 0.5 + 0.5 * Math.sin(this.time * 3.2)
+        ctx.strokeStyle = `rgba(255,51,85,${0.25 + pulse * 0.35})`
+        ctx.lineWidth = 1.6
+        ctx.beginPath()
+        ctx.arc(nearest.x, nearest.z, (26 + this.heat * 9) * scale, 0, Math.PI * 2)
+        ctx.stroke()
+      }
     }
     ctx.save()
     ctx.translate(toPx(this.pos.x), toPx(this.pos.z))

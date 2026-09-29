@@ -99,3 +99,57 @@ export function getSkin(id: string): Skin {
 export function getTheme(id: string): Theme {
   return THEMES.find((t) => t.id === id) ?? DEFAULT_THEME
 }
+
+// ---------- ACHIEVEMENTS (PC-7) ----------
+export interface Achievement {
+  id: string
+  name: string
+  desc: string
+  icon: string
+}
+
+export const ACHIEVEMENTS: Achievement[] = [
+  { id: 'first-delivery', name: 'Special Courier',  desc: 'Complete your first Courier Run',        icon: '📦' },
+  { id: 'delivery-10',    name: 'Harbor Workhorse', desc: 'Complete 10 Courier Runs',               icon: '🚚' },
+  { id: 'first-race',     name: 'Gate Crasher',     desc: 'Finish a Harbor GP street race',         icon: '🏁' },
+  { id: 'first-fare',     name: 'Meter Running',    desc: 'Complete a Taxi Fare',                   icon: '🚕' },
+  { id: 'first-getaway',  name: 'Ghost Rider',      desc: 'Escape the Patrol in a Getaway contract', icon: '🚨' },
+  { id: 'getaway-5',      name: 'Untouchable',      desc: 'Escape 5 pursuits in total',             icon: '👻' },
+  { id: 'drift-500',      name: 'Smoke Show',       desc: 'Bank a single drift worth 500+',         icon: '💨' },
+  { id: 'shard-12',       name: 'Shard Hunter',     desc: 'Collect 12 neon shards',                 icon: '💠' },
+  { id: 'shard-24',       name: 'City Lights',      desc: 'Collect all 24 neon shards',             icon: '✨' },
+  { id: 'level-5',        name: 'Harbor Legend',    desc: 'Reach level 5',                          icon: '⭐' },
+  { id: 'buy-skin',       name: 'Fresh Paint',      desc: 'Buy a new car skin',                     icon: '🎨' },
+  { id: 'buy-theme',      name: 'New Horizons',     desc: 'Buy a new city environment',             icon: '🌆' },
+  { id: 'busted-3',       name: 'Frequent Flyer',   desc: 'Get busted by the Patrol 3 times',       icon: '🚔' },
+  { id: 'rich-5k',        name: 'Five Grand',       desc: 'Hold $5,000 in cash at once',            icon: '💰' },
+  { id: 'tour',           name: 'Sightseer',        desc: 'Visit every district of the city',       icon: '🗺️' },
+]
+
+// ---------- DISTRICTS (PC-7) ----------
+// The city square spans -HALF..HALF (HALF = 205). Anything outside it is the
+// free beach ring. Downtown is open from level 1; outer districts gate on level.
+export interface District {
+  id: string
+  name: string
+  desc: string
+  minLevel: number
+  minX: number
+  maxX: number
+  minZ: number
+  maxZ: number
+}
+
+export const DISTRICTS: District[] = [
+  { id: 'downtown', name: 'Downtown Core', desc: 'The neon heart of the harbor',              minLevel: 1, minX: -82, maxX: 82, minZ: -82, maxZ: 82 },
+  { id: 'north',    name: 'Harbor North',  desc: 'Warehouses, cranes and night shifts',      minLevel: 2, minX: -82, maxX: 82, minZ: -205, maxZ: -82 },
+  { id: 'south',    name: 'Harbor South',  desc: 'Markets, food stalls and back alleys',     minLevel: 2, minX: -82, maxX: 82, minZ: 82, maxZ: 205 },
+  { id: 'west',     name: 'West Docks',    desc: 'Container mazes and smuggler runs',        minLevel: 3, minX: -205, maxX: -82, minZ: -205, maxZ: 205 },
+  { id: 'east',     name: 'East Neon',     desc: 'Towers, casinos and the rich side',        minLevel: 4, minX: 82, maxX: 205, minZ: -205, maxZ: 205 },
+]
+
+export function districtAt(x: number, z: number): District | null {
+  if (Math.abs(x) > 205 || Math.abs(z) > 205) return null // beach ring — always free
+  return DISTRICTS.find((d) => x >= d.minX && x <= d.maxX && z >= d.minZ && z <= d.maxZ) ?? null
+}
+

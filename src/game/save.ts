@@ -24,6 +24,10 @@ export interface SaveData {
   fullAccess: boolean // owns the Full Access Pass (monetization flag)
   muted: boolean
   tutorialDone: boolean // first-time onboarding finished (or skipped)
+  autoCycle: boolean // environment rotates through owned themes on a timer
+  achievements: string[] // unlocked achievement ids
+  districts: string[] // districts the player has entered at least once
+  controls: 'joystick' | 'buttons' // touch control scheme
   stats: Stats
 }
 
@@ -41,6 +45,10 @@ export function defaultSave(): SaveData {
     fullAccess: false,
     muted: false,
     tutorialDone: false,
+    autoCycle: false,
+    achievements: [],
+    districts: [],
+    controls: 'joystick',
     stats: { deliveries: 0, races: 0, bestRace: 0, bestDrift: 0, busts: 0, fares: 0, getaways: 0 },
   }
 }

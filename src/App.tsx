@@ -8,12 +8,13 @@ import { GameEngine, type HudState } from './game/engine'
 import { loadGameAssets, type GameAssets } from './game/assets'
 import {
   SKINS, THEMES, FULL_ACCESS_PRICE, GAME_VERSION, GAME_TITLE,
+  ACHIEVEMENTS, DISTRICTS,
   type Skin, type Theme,
 } from './game/content'
 import { loadSave, persistSave, defaultSave, type SaveData } from './game/save'
 
 type Screen = 'boot' | 'menu' | 'game'
-type Overlay = null | 'shop' | 'jobs' | 'pause' | 'checkout' | 'help'
+type Overlay = null | 'shop' | 'jobs' | 'pause' | 'checkout' | 'help' | 'progress'
 
 interface Toast {
   id: number
@@ -27,6 +28,8 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('boot')
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [shopTab, setShopTab] = useState<'skins' | 'themes'>('skins')
+  const [progressTab, setProgressTab] = useState<'trophies' | 'districts'>('trophies')
+  const [tutorialHidden, setTutorialHidden] = useState(false)
   const [save, setSave] = useState<SaveData>(() => loadSave())
   const [hud, setHud] = useState<HudState | null>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -83,9 +86,12 @@ export default function App() {
         if (screenRef.current === 'game' && overlayRef.current === null) setOverlay('jobs')
       },
     }, assets)
+    // MOB-3: quality watchdog only runs on touch devices — desktop keeps full
+    // quality regardless (QA screenshot harness stays untouched)
+    engine.setAutoQualityEnabled(isTouch)
     engineRef.current = engine
     return engine
-  }, [commit, pushToast])
+  }, [commit, pushToast, isTouch])
 
   // Load the 3D model packs first, then create the engine so the menus
   // float over the fully-built live city.
@@ -203,6 +209,83 @@ export default function App() {
     commit()
   }
 
+  // PC-5: auto day/night cycle — rotate through owned themes on a timer
+  const toggleCycle = () => {
+    const s = saveRef.current
+    s.autoCycle = !s.autoCycle
+    commit()
+    setSave({ ...s })
+    pushToast(s.autoCycle ? 'Environment cycle ON — the city shifts over time' : 'Environment cycle OFF', 'info')
+  }
+
+  // MOB-1: switch between virtual joystick and classic touch buttons
+  const toggleControls = () => {
+    const s = saveRef.current
+    s.controls = s.controls === 'joystick' ? 'buttons' : 'joystick'
+    commit()
+    setSave({ ...s })
+    engineRef.current?.touchAnalog(null, null)
+    engineRef.current?.touchReset()
+    pushToast(s.controls === 'joystick' ? 'Joystick controls — push forward to drive' : 'Button controls', 'info')
+  }
+
+  useEffect(() => {
+    if (screen !== 'game' || !save.autoCycle) return
+    const id = window.setInterval(() => {
+      const s = saveRef.current
+      const ownedThemes = THEMES.filter((t) => s.owned.includes(t.id))
+      if (ownedThemes.length < 2) return
+      const idx = Math.max(0, ownedThemes.findIndex((t) => t.id === s.theme))
+      const next = ownedThemes[(idx + 1) % ownedThemes.length]
+      s.theme = next.id
+      commit()
+      engineRef.current?.applyLoadout()
+      pushToast(`Environment shifting — ${next.name}`, 'info')
+    }, 80000)
+    return () => window.clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen, save.autoCycle])
+
+  // PC-6: save export / import — players can carry progress between devices
+  const exportSave = () => {
+    const blob = new Blob([JSON.stringify(saveRef.current, null, 2)], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'neon-harbor-save.json'
+    a.click()
+    URL.revokeObjectURL(a.href)
+    pushToast('Save file downloaded — keep it safe!', 'good')
+  }
+
+  const importSaveFile = (file: File) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result)) as Partial<SaveData>
+        if (typeof parsed.cash !== 'number' || typeof parsed.level !== 'number') throw new Error('not a save')
+        const fresh = defaultSave()
+        const merged: SaveData = {
+          ...fresh,
+          ...parsed,
+          stats: { ...fresh.stats, ...(parsed.stats ?? {}) },
+          shards: Array.isArray(parsed.shards) ? parsed.shards : [],
+          owned: Array.isArray(parsed.owned) && parsed.owned.length > 0 ? parsed.owned : fresh.owned,
+          achievements: Array.isArray(parsed.achievements) ? parsed.achievements : [],
+          districts: Array.isArray(parsed.districts) ? parsed.districts : [],
+        }
+        saveRef.current = merged
+        persistSave(merged)
+        setSave({ ...merged })
+        engineRef.current?.applyLoadout()
+        pushToast('Save imported — welcome back to the harbor!', 'good')
+      } catch {
+        pushToast('That file is not a valid NEON HARBOR save', 'warn')
+      }
+    }
+    reader.readAsText(file)
+  }
+  const fileRef = useRef<HTMLInputElement>(null)
+
   const buyItem = (id: string, price: number, premium: boolean, minLevel: number) => {
     const engine = engineRef.current
     const s = saveRef.current
@@ -225,6 +308,7 @@ export default function App() {
     s.cash -= price
     s.owned.push(id)
     engine?.playBuy()
+    engine?.unlockAchievement(SKINS.some((k) => k.id === id) ? 'buy-skin' : 'buy-theme')
     commit()
     pushToast('Purchased — equipped!', 'good')
     equipItem(id)
@@ -316,6 +400,10 @@ export default function App() {
             <button onClick={() => setOverlay('shop')} className="menu-btn">GARAGE SHOP</button>
             <button onClick={() => setOverlay('help')} className="menu-btn">HOW TO PLAY</button>
           </div>
+          <div className="flex gap-3 mt-3">
+            <button onClick={() => { setProgressTab('trophies'); setOverlay('progress') }} className="menu-btn menu-btn-ghost">🏆 TROPHIES</button>
+            <button onClick={() => { setProgressTab('districts'); setOverlay('progress') }} className="menu-btn menu-btn-ghost">🗺️ DISTRICTS</button>
+          </div>
           <div className="mt-10 text-slate-300 text-sm flex gap-8">
             <span>Cash <b className="text-emerald-400">${save.cash}</b></span>
             <span>Level <b className="text-cyan-400">{save.level}</b></span>
@@ -380,13 +468,24 @@ export default function App() {
             )}
           </div>
 
-          {/* first-night tutorial objective */}
-          {hud.tutorial && (
-            <div className="absolute top-24 left-1/2 -translate-x-1/2 z-20 w-[24rem] max-w-[80vw] animate-pulse">
+          {/* first-night tutorial objective — dims after a few seconds so it stops
+              hogging the screen; ✕ dismisses it for this run (T skips forever) */}
+          {hud.tutorial && !tutorialHidden && (
+            <div
+              key={hud.tutorial.step}
+              className="absolute top-24 left-1/2 -translate-x-1/2 z-20 w-[24rem] max-w-[80vw] animate-pulse tutorial-dim"
+            >
               <div className="hud-panel border-cyan-400/70 shadow-[0_0_28px_rgba(34,211,238,0.3)] w-full">
                 <div className="flex justify-between text-[10px] tracking-[0.2em] text-cyan-300">
                   <span>FIRST NIGHT — {hud.tutorial.step}/{hud.tutorial.total}</span>
-                  <span className="text-slate-500">press T to skip</span>
+                  <span className="flex items-center gap-2">
+                    <span className="text-slate-500 hidden sm:inline">press T to skip</span>
+                    <button
+                      onClick={() => setTutorialHidden(true)}
+                      className="text-slate-400 hover:text-white leading-none"
+                      aria-label="Hide tutorial"
+                    >✕</button>
+                  </span>
                 </div>
                 <div className="text-white font-bold text-sm mt-1 leading-snug">{hud.tutorial.title}</div>
                 <div className="text-[11px] text-slate-300 mt-0.5 leading-snug">{hud.tutorial.hint}</div>
@@ -447,16 +546,19 @@ export default function App() {
             </div>
           )}
 
-          {/* ======== TOUCH CONTROLS (mobile / tablet) ======== */}
-          {isTouch && !overlay && (
+          {/* ======== TOUCH CONTROLS (mobile / tablet) ========
+              Two schemes: virtual joystick (default) or classic buttons */}
+          {isTouch && !overlay && save.controls !== 'buttons' && (
             <div className="absolute inset-0 z-30 pointer-events-none">
-              <div className="absolute inset-x-0 bottom-0 flex justify-between items-end px-4 pb-14">
-                {/* steering */}
-                <div className="flex gap-3 pointer-events-auto">
-                  <TouchBtn engine={engineRef.current} label="◀" hold="a" />
-                  <TouchBtn engine={engineRef.current} label="▶" hold="d" />
+              <div
+                className="absolute inset-x-0 bottom-0 flex justify-between items-end gap-3 px-3 sm:px-4"
+                style={{ paddingBottom: 'max(3.5rem, env(safe-area-inset-bottom))' }}
+              >
+                {/* virtual joystick: push forward = gas, side = steer, back = brake */}
+                <div className="pointer-events-auto">
+                  <Joystick engine={engineRef.current} />
                 </div>
-                {/* pedals + actions */}
+                {/* actions + nitro/drift */}
                 <div className="flex flex-col items-end gap-2 pointer-events-auto">
                   <div className="flex gap-2">
                     {hud.nearGarage && <TouchBtn engine={engineRef.current} label="E" tap="e" small />}
@@ -470,11 +572,58 @@ export default function App() {
                       II
                     </button>
                   </div>
-                  <div className="flex gap-2 items-end">
-                    <TouchBtn engine={engineRef.current} label="NITRO" hold="shift" wide />
-                    <TouchBtn engine={engineRef.current} label="DRIFT" hold=" " />
-                    <TouchBtn engine={engineRef.current} label="▲" hold="w" tall />
-                    <TouchBtn engine={engineRef.current} label="▼" hold="s" />
+                  <div className="flex items-end gap-2">
+                    <div className="flex flex-col gap-2">
+                      <TouchBtn engine={engineRef.current} label="NITRO" hold="shift" wide />
+                      <TouchBtn engine={engineRef.current} label="DRIFT" hold=" " />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {/* big mash button when the Patrol grabs the car */}
+              {hud.bustedProgress > 0.2 && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-auto">
+                  <TouchBtn engine={engineRef.current} label="MASH!" tap=" " mash />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* classic button scheme (opt-in from the pause menu) */}
+          {isTouch && !overlay && save.controls === 'buttons' && (
+            <div className="absolute inset-0 z-30 pointer-events-none">
+              <div
+                className="absolute inset-x-0 bottom-0 flex justify-between items-end gap-3 px-3 sm:px-4"
+                style={{ paddingBottom: 'max(3.5rem, env(safe-area-inset-bottom))' }}
+              >
+                {/* steering */}
+                <div className="flex gap-3 pointer-events-auto">
+                  <TouchBtn engine={engineRef.current} label="◀" hold="a" />
+                  <TouchBtn engine={engineRef.current} label="▶" hold="d" />
+                </div>
+                {/* actions (top-right) + pedals (2x2 grid, bottom-right) */}
+                <div className="flex flex-col items-end gap-2 pointer-events-auto">
+                  <div className="flex gap-2">
+                    {hud.nearGarage && <TouchBtn engine={engineRef.current} label="E" tap="e" small />}
+                    <TouchBtn engine={engineRef.current} label="📷" tap="c" small />
+                    <TouchBtn engine={engineRef.current} label="📯" tap="h" small />
+                    <button
+                      onClick={() => setOverlay('pause')}
+                      className="touch-btn touch-btn-sm"
+                      aria-label="Pause"
+                    >
+                      II
+                    </button>
+                  </div>
+                  <div className="flex items-end gap-2">
+                    <div className="flex flex-col gap-2">
+                      <TouchBtn engine={engineRef.current} label="NITRO" hold="shift" wide />
+                      <TouchBtn engine={engineRef.current} label="DRIFT" hold=" " />
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <TouchBtn engine={engineRef.current} label="▲" hold="w" tall />
+                      <TouchBtn engine={engineRef.current} label="▼" hold="s" />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -530,7 +679,87 @@ export default function App() {
             <button onClick={() => setOverlay('shop')} className="menu-btn">GARAGE SHOP</button>
             <button onClick={() => setOverlay('help')} className="menu-btn">HOW TO PLAY</button>
             <button onClick={toggleMute} className="menu-btn">{save.muted ? 'UNMUTE' : 'MUTE'}</button>
+            <button onClick={toggleCycle} className="menu-btn">ENVIRONMENT CYCLE: {save.autoCycle ? 'ON' : 'OFF'}</button>
+            {isTouch && (
+              <button onClick={toggleControls} className="menu-btn">CONTROLS: {save.controls === 'joystick' ? 'JOYSTICK' : 'BUTTONS'}</button>
+            )}
+            <button onClick={exportSave} className="menu-btn">EXPORT SAVE</button>
+            <button onClick={() => fileRef.current?.click()} className="menu-btn">IMPORT SAVE</button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (f) importSaveFile(f)
+                e.target.value = ''
+              }}
+            />
             <button onClick={quitToMenu} className="menu-btn">QUIT TO MENU</button>
+          </div>
+        </div>
+      )}
+
+      {/* ================= PROGRESS (trophies + districts) ================= */}
+      {overlay === 'progress' && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="w-[42rem] max-w-[92vw] max-h-[80vh] overflow-y-auto bg-slate-900/90 border border-cyan-500/30 rounded-2xl p-6 shadow-[0_0_60px_rgba(34,211,238,0.15)]">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-black text-white tracking-widest">YOUR LEGEND</h2>
+              <button onClick={() => setOverlay(null)} className="text-slate-400 hover:text-white text-xl">✕</button>
+            </div>
+            <div className="flex gap-2 mb-4">
+              <button onClick={() => setProgressTab('trophies')} className={`shop-tab ${progressTab === 'trophies' ? 'shop-tab-on' : ''}`}>TROPHIES</button>
+              <button onClick={() => setProgressTab('districts')} className={`shop-tab ${progressTab === 'districts' ? 'shop-tab-on' : ''}`}>DISTRICTS</button>
+            </div>
+            {progressTab === 'trophies' && (
+              <>
+                <div className="text-xs text-slate-400 mb-3">
+                  {save.achievements.length}/{ACHIEVEMENTS.length} unlocked — each trophy pays a $150 bonus
+                </div>
+                <div className="grid sm:grid-cols-2 gap-2">
+                  {ACHIEVEMENTS.map((a) => {
+                    const got = save.achievements.includes(a.id)
+                    return (
+                      <div key={a.id} className={`rounded-lg border p-3 ${got ? 'border-amber-400/60 bg-amber-400/10' : 'border-slate-700 bg-slate-800/40 opacity-55'}`}>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">{got ? a.icon : '🔒'}</span>
+                          <span className={`font-bold text-sm ${got ? 'text-amber-300' : 'text-slate-400'}`}>{a.name}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-400 mt-1">{a.desc}</div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+            {progressTab === 'districts' && (
+              <>
+                <div className="text-xs text-slate-400 mb-3">
+                  Explore all five districts — each first visit pays a $100 discovery bonus
+                </div>
+                <div className="flex flex-col gap-2">
+                  {DISTRICTS.map((d) => {
+                    const visited = save.districts.includes(d.id)
+                    const locked = save.level < d.minLevel
+                    return (
+                      <div key={d.id} className={`rounded-lg border p-3 flex items-center justify-between ${visited ? 'border-cyan-400/60 bg-cyan-400/10' : locked ? 'border-slate-700 bg-slate-800/40 opacity-55' : 'border-slate-600 bg-slate-800/60'}`}>
+                        <div>
+                          <div className={`font-bold text-sm ${visited ? 'text-cyan-300' : 'text-slate-200'}`}>
+                            {d.name} {visited && <span className="text-[10px] text-emerald-400 ml-1">✓ VISITED</span>}
+                          </div>
+                          <div className="text-[11px] text-slate-400 mt-0.5">{d.desc}</div>
+                        </div>
+                        <div className="text-[11px] font-bold text-right">
+                          {locked ? <span className="text-red-400">LV {d.minLevel}</span> : <span className="text-emerald-400">OPEN</span>}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -761,12 +990,22 @@ function TouchBtn(props: {
   const cls = `touch-btn${props.small ? ' touch-btn-sm' : ''}${props.wide ? ' touch-btn-wide' : ''}${props.tall ? ' touch-btn-tall' : ''}${props.mash ? ' touch-btn-mash' : ''}`
   const start = (e: React.PointerEvent<HTMLButtonElement>) => {
     e.preventDefault()
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      /* pointer capture unsupported — hold still works, just drift-sensitive */
+    }
     if (!props.engine) return
     if (props.hold) props.engine.touchDown(props.hold)
     if (props.tap) props.engine.touchTap(props.tap)
   }
   const end = (e: React.PointerEvent<HTMLButtonElement>) => {
     e.preventDefault()
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
     if (props.engine && props.hold) props.engine.touchUp(props.hold)
   }
   return (
@@ -780,6 +1019,62 @@ function TouchBtn(props: {
     >
       {props.label}
     </button>
+  )
+}
+
+// ---------- Virtual joystick (MOB-1) ----------
+// Floating analog stick: push forward = gas, pull back = brake/reverse,
+// left/right = steering. Pointer capture keeps the hold through thumb drift.
+function Joystick({ engine }: { engine: GameEngine | null }) {
+  const R = 44
+  const [knob, setKnob] = useState({ x: 0, y: 0, active: false })
+  const apply = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const cx = rect.left + rect.width / 2
+    const cy = rect.top + rect.height / 2
+    let dx = e.clientX - cx
+    let dy = e.clientY - cy
+    const len = Math.hypot(dx, dy)
+    if (len > R) {
+      dx = (dx / len) * R
+      dy = (dy / len) * R
+    }
+    setKnob({ x: dx, y: dy, active: true })
+    engine?.touchAnalog(dx / R, -dy / R)
+  }
+  const release = (e: React.PointerEvent<HTMLDivElement>) => {
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
+    setKnob({ x: 0, y: 0, active: false })
+    engine?.touchAnalog(null, null)
+  }
+  return (
+    <div
+      className="pointer-events-auto touch-none select-none relative w-32 h-32 rounded-full border-2 border-cyan-400/40 bg-slate-900/50 backdrop-blur-[2px]"
+      onPointerDown={(e) => {
+        e.preventDefault()
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId)
+        } catch {
+          /* pointer capture unsupported */
+        }
+        apply(e)
+      }}
+      onPointerMove={(e) => {
+        if (knob.active) apply(e)
+      }}
+      onPointerUp={release}
+      onPointerCancel={release}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <div
+        className="absolute left-1/2 top-1/2 w-14 h-14 -ml-7 -mt-7 rounded-full bg-cyan-400/50 border border-cyan-200/80 shadow-[0_0_16px_rgba(34,211,238,0.5)]"
+        style={{ transform: `translate(${knob.x}px, ${knob.y}px)` }}
+      />
+    </div>
   )
 }
 

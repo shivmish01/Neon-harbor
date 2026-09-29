@@ -27,6 +27,20 @@
   }
 }
 
+/* MOB-4: tutorial box stays fully visible for ~8s, then dims to 30% so the
+   HUD declutters itself without hiding the objective entirely */
+@keyframes tutorial-dim {
+  0%, 70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.3;
+  }
+}
+.tutorial-dim {
+  animation: tutorial-dim 9s ease forwards;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   a:nth-of-type(2) .logo {
     animation: logo-spin infinite 20s linear;
