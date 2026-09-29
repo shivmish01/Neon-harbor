@@ -24,12 +24,23 @@ interface Toast {
 
 let toastId = 0
 
+// Photo mode color grades (CSS filters applied to the 3D canvas)
+const PHOTO_FILTERS = [
+  { name: 'Normal', css: 'none' },
+  { name: 'Golden', css: 'sepia(0.35) saturate(1.4) contrast(1.05)' },
+  { name: 'Noir', css: 'grayscale(1) contrast(1.25) brightness(1.05)' },
+  { name: 'Vapor', css: 'saturate(1.8) hue-rotate(25deg) contrast(1.1)' },
+  { name: 'Cyber', css: 'saturate(1.5) hue-rotate(180deg) contrast(1.15)' },
+]
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>('boot')
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [shopTab, setShopTab] = useState<'skins' | 'themes'>('skins')
   const [progressTab, setProgressTab] = useState<'trophies' | 'districts'>('trophies')
   const [tutorialHidden, setTutorialHidden] = useState(false)
+  const [photoMode, setPhotoMode] = useState(false)
+  const [photoFilter, setPhotoFilter] = useState(0)
   const [save, setSave] = useState<SaveData>(() => loadSave())
   const [hud, setHud] = useState<HudState | null>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -96,6 +107,17 @@ export default function App() {
       onMissionDone: (name, reward) => pushToast(`${name} complete!  +$${reward}`, 'good'),
       onPressE: () => {
         if (screenRef.current === 'game' && overlayRef.current === null) setOverlay('jobs')
+      },
+      onPauseToggle: () => {
+        if (screenRef.current !== 'game') return
+        setOverlay((o) => (o === null ? 'pause' : o))
+      },
+      onPhotoToggle: () => {
+        if (screenRef.current !== 'game') return
+        setPhotoMode((m) => {
+          engineRef.current?.setPhotoMode(!m)
+          return !m
+        })
       },
     }, assets)
     // MOB-3: quality watchdog only runs on touch devices — desktop keeps full
@@ -186,6 +208,12 @@ export default function App() {
     engineRef.current?.setPaused(screen === 'game' && (overlay !== null || (isTouch && isPortrait)))
     // Never leave a held touch button "stuck" when a menu opens over the game
     if (overlay !== null) engineRef.current?.touchReset()
+    // Any menu opening exits photo mode cleanly
+    if (overlay !== null && photoMode) {
+      engineRef.current?.setPhotoMode(false)
+      setPhotoMode(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overlay, screen, isTouch, isPortrait])
 
   // Escape opens/closes pause
@@ -209,9 +237,33 @@ export default function App() {
 
   const quitToMenu = () => {
     engineRef.current?.cancelMission()
+    engineRef.current?.setPhotoMode(false)
+    setPhotoMode(false)
     engineRef.current?.setAttract(true)
     setOverlay(null)
     setScreen('menu')
+  }
+
+  // Photo mode: freeze the world, orbit, filter, save a still
+  const togglePhoto = () => {
+    if (screen !== 'game') return
+    setPhotoMode((m) => {
+      engineRef.current?.setPhotoMode(!m)
+      return !m
+    })
+  }
+
+  const savePhoto = () => {
+    const url = engineRef.current?.capturePhoto()
+    if (!url) {
+      pushToast('Could not capture photo', 'warn')
+      return
+    }
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `neon-harbor-${Date.now()}.png`
+    a.click()
+    pushToast('📸 Photo saved to your downloads!', 'good')
   }
 
   const toggleMute = () => {
@@ -356,8 +408,12 @@ export default function App() {
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-black font-game select-none">
-      {/* 3D canvas (live behind every screen) */}
-      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full block" />
+      {/* 3D canvas (live behind every screen) — photo filters tint only in photo mode */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 w-full h-full block"
+        style={{ filter: photoMode ? PHOTO_FILTERS[photoFilter].css : undefined }}
+      />
 
       {/* minimap canvas — always mounted, engine needs it before entering */}
       <canvas
@@ -436,7 +492,7 @@ export default function App() {
       )}
 
       {/* ================= HUD ================= */}
-      {screen === 'game' && hud && (
+      {screen === 'game' && hud && !photoMode && (
         <>
           {/* top-left: cash / level */}
           <div className="absolute top-4 left-4 z-20 space-y-2">
@@ -576,8 +632,8 @@ export default function App() {
                 {/* actions + nitro/drift */}
                 <div className="flex flex-col items-end gap-2 pointer-events-auto">
                   <div className="flex gap-2">
-                    {hud.nearGarage && <TouchBtn engine={engineRef.current} label="E" tap="e" small />}
-                    <TouchBtn engine={engineRef.current} label="📷" tap="c" small />
+                    {(hud.nearGarage || hud.nearToll) && <TouchBtn engine={engineRef.current} label="E" tap="e" small />}
+                    <button onClick={togglePhoto} className="touch-btn touch-btn-sm" aria-label="Photo mode">📷</button>
                     <TouchBtn engine={engineRef.current} label="📯" tap="h" small />
                     <button
                       onClick={() => setOverlay('pause')}
@@ -619,8 +675,8 @@ export default function App() {
                 {/* actions (top-right) + pedals (2x2 grid, bottom-right) */}
                 <div className="flex flex-col items-end gap-2 pointer-events-auto">
                   <div className="flex gap-2">
-                    {hud.nearGarage && <TouchBtn engine={engineRef.current} label="E" tap="e" small />}
-                    <TouchBtn engine={engineRef.current} label="📷" tap="c" small />
+                    {(hud.nearGarage || hud.nearToll) && <TouchBtn engine={engineRef.current} label="E" tap="e" small />}
+                    <button onClick={togglePhoto} className="touch-btn touch-btn-sm" aria-label="Photo mode">📷</button>
                     <TouchBtn engine={engineRef.current} label="📯" tap="h" small />
                     <button
                       onClick={() => setOverlay('pause')}
@@ -651,10 +707,15 @@ export default function App() {
             </div>
           )}
 
-          {/* E prompt */}
-          {hud.nearGarage && !overlay && !isTouch && (
+          {/* E prompt — job board at the garage, or toll booth at a locked border */}
+          {!overlay && !isTouch && hud.nearGarage && (
             <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2 bg-cyan-500/20 border border-cyan-400 rounded text-cyan-200 text-sm animate-pulse">
               Press <b>E</b> — open the Job Board
+            </div>
+          )}
+          {!overlay && !isTouch && !hud.nearGarage && hud.nearToll && (
+            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2 bg-amber-500/20 border border-amber-400 rounded text-amber-200 text-sm animate-pulse">
+              Press <b>E</b> — pay ${hud.nearToll.price} toll to enter {hud.nearToll.name}
             </div>
           )}
 
@@ -689,6 +750,38 @@ export default function App() {
             ))}
           </div>
         </>
+      )}
+
+      {/* ================= PHOTO MODE ================= */}
+      {screen === 'game' && photoMode && (
+        <div className="absolute inset-0 z-30 pointer-events-none">
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 hud-panel text-[11px] text-slate-300 text-center">
+            📸 PHOTO MODE — {isTouch ? 'drag to orbit' : 'drag to orbit · scroll to zoom'} · world is frozen
+          </div>
+          <div
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 pointer-events-auto"
+            style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
+          >
+            <button
+              onClick={() => setPhotoFilter((f) => (f + 1) % PHOTO_FILTERS.length)}
+              className="px-4 py-3 rounded-xl bg-slate-900/70 border border-cyan-500/50 text-cyan-200 text-xs font-bold tracking-widest hover:bg-slate-800/80"
+            >
+              FILTER: {PHOTO_FILTERS[photoFilter].name}
+            </button>
+            <button
+              onClick={savePhoto}
+              className="px-5 py-3 rounded-xl bg-cyan-500/25 border border-cyan-400 text-cyan-100 text-xs font-black tracking-widest hover:bg-cyan-400/35"
+            >
+              ⬇ SAVE
+            </button>
+            <button
+              onClick={togglePhoto}
+              className="px-4 py-3 rounded-xl bg-slate-900/70 border border-slate-600 text-slate-300 text-xs font-bold tracking-widest hover:bg-slate-800/80"
+            >
+              EXIT {isTouch ? '' : '(P)'}
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ================= PAUSE ================= */}
@@ -1002,7 +1095,7 @@ export default function App() {
                   ? <>Take courier jobs and races from the Job Board — drive into the <b>glowing cyan beam</b> in the city center and tap the <b>E</b> button. Finish fast for bigger payouts.</>
                   : <>Take courier jobs and races from the Job Board (glowing cyan beam in the city center, press E). Finish fast for bigger payouts.</>}
               </p>
-              <p><b className="text-cyan-300">Explore.</b> 24 data shards glow around the city. Orange ramps pay airtime bonuses. Handbrake drifts around corners pay too.</p>
+              <p><b className="text-cyan-300">Explore.</b> 24 data shards glow around the city. Orange ramps pay airtime bonuses. Handbrake drifts around corners pay too. Five districts open as you level — or pay the border toll (press E at the gate) to enter early with cash.</p>
               <p>
                 <b className="text-red-300">The Patrol — read this!</b> Speeding near red patrol drones raises your ★ heat.
                 <b> What to do when attacked:</b> keep driving FAST and get 60m+ away from every drone — the stars fade and they give up.
@@ -1011,13 +1104,18 @@ export default function App() {
                 only a stopped, surrounded car gets BUSTED (15% fine, hauled back to the garage). At 3★+ you hear sirens; drones get faster every star.
               </p>
               <p><b className="text-cyan-300">Spend & customize.</b> Cash buys car skins and the Golden Hour environment. The Full Access Pass unlocks premium skins and two more city environments (this build demos it for free).</p>
+              <p><b className="text-fuchsia-300">Signature touches.</b>{' '}
+                {isTouch
+                  ? <>The 📷 button freezes the world — orbit your car with a finger, apply a color grade, and save the shot. The soundtrack intensifies as Patrol heat rises.</>
+                  : <>Press <b>P</b> for photo mode: the world freezes, drag to orbit your car, scroll to zoom, grade the shot, and save a PNG. The soundtrack builds with Patrol heat. Plug in a gamepad and it just works.</>}
+              </p>
               <div className="text-slate-500 text-xs pt-2 border-t border-slate-800">
                 {isTouch ? (
                   save.controls === 'joystick'
-                    ? 'Joystick: push forward to drive · tilt to steer · pull back to brake — NITRO and DRIFT buttons on the right · E jobs · 📷 camera · 📯 horn · II pause'
-                    : '◀ ▶ steer · ▲ gas · ▼ brake/reverse · NITRO · DRIFT — E jobs · 📷 camera · 📯 horn · II pause'
+                    ? 'Joystick: push forward to drive · tilt to steer · pull back to brake — NITRO and DRIFT buttons on the right · E jobs · 📷 photo mode · 📯 horn · II pause'
+                    : '◀ ▶ steer · ▲ gas · ▼ brake/reverse · NITRO · DRIFT — E jobs · 📷 photo mode · 📯 horn · II pause'
                 ) : (
-                  'Controls: WASD/arrows drive · SHIFT nitro · SPACE handbrake · E job board · H horn · C camera · ESC pause'
+                  'Controls: WASD/arrows drive · SHIFT nitro · SPACE handbrake · E job board · P photo mode · C camera · H horn · ESC pause · gamepad supported'
                 )}
               </div>
             </div>

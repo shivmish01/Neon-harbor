@@ -22,12 +22,17 @@ export class Synth {
 
   // Music rig
   private musicGain: GainNode | null = null
+  private musicFilter: BiquadFilterNode | null = null
   private musicDelay: DelayNode | null = null
   private noiseBuf: AudioBuffer | null = null
   private musicTimer: number | null = null
   private nextNoteTime = 0
   private step = 0
   musicOn = false
+  // Adaptive intensity 0..1 (police heat / boost): brightens the filter and
+  // doubles the drum density so chases FEEL faster without changing the song
+  private intensity = 0
+  private intensityTarget = 0
 
   /** Must be called from a user gesture (click). */
   start(): void {
@@ -146,6 +151,13 @@ export class Synth {
     if (!this.ctx || !this.master || this.musicGain) return
     this.musicGain = this.ctx.createGain()
     this.musicGain.gain.value = 0.14
+    // Adaptive filter: mellow lowpass at rest, opens wide under pressure
+    this.musicFilter = this.ctx.createBiquadFilter()
+    this.musicFilter.type = 'lowpass'
+    this.musicFilter.frequency.value = 1100
+    this.musicFilter.Q.value = 0.6
+    this.musicGain.connect(this.musicFilter)
+    this.musicFilter.connect(this.master)
     // Echo for the arp
     const delay = this.ctx.createDelay(0.6)
     delay.delayTime.value = 0.29
@@ -158,7 +170,6 @@ export class Synth {
     delay.connect(wet)
     wet.connect(this.musicGain)
     this.musicDelay = delay
-    this.musicGain.connect(this.master)
     this.musicOn = true
     this.nextNoteTime = this.ctx.currentTime + 0.1
     this.step = 0
@@ -167,12 +178,23 @@ export class Synth {
 
   private scheduleMusic(): void {
     if (!this.ctx || !this.musicOn) return
+    // ease intensity toward its target — smooth musical build-up, no jumps
+    this.intensity += (this.intensityTarget - this.intensity) * 0.12
+    if (this.musicFilter) {
+      this.musicFilter.frequency.setTargetAtTime(900 + this.intensity * 6800, this.ctx.currentTime, 0.25)
+    }
     const eighth = 60 / 104 / 2
     while (this.nextNoteTime < this.ctx.currentTime + 0.15) {
       this.playStep(this.step, this.nextNoteTime)
       this.nextNoteTime += eighth
       this.step = (this.step + 1) % 32
     }
+  }
+
+  /** 0 = cruising mellow, 1 = full police chase. Called every frame. */
+  setMusicIntensity(i: number): void {
+    if (!Number.isFinite(i)) return
+    this.intensityTarget = Math.min(Math.max(i, 0), 1)
   }
 
   private mNote(freq: number, t: number, dur: number, type: OscillatorType, vol: number, echo = false): void {
@@ -242,19 +264,20 @@ export class Synth {
     const chord = chords[bar]
     const inBar = step % 8
 
-    // Drums
-    if (step % 4 === 0) this.mDrum('kick', t)
-    if (inBar === 4) this.mDrum('snare', t)
-    if (step % 2 === 0) this.mDrum('hat', t)
+    // Drums — density doubles when the heat is on
+    const chase = this.intensity > 0.5
+    if (step % 4 === 0 || (chase && inBar === 6)) this.mDrum('kick', t)
+    if (inBar === 4 || (chase && inBar === 7)) this.mDrum('snare', t)
+    if (chase || step % 2 === 0) this.mDrum('hat', t)
     // Pad at bar start
     if (inBar === 0) this.mPad(chord, t, 60 / 104 * 4)
     // Bass groove
     const bassPat = [0, 0, 12, 0, 0, 7, 0, 12]
     const semi = bassPat[inBar]
-    this.mNote(basses[bar] * Math.pow(2, semi / 12), t, 0.22, 'sawtooth', 0.16)
-    // Arp (echoed)
-    const arpNote = chord[step % 3] * 2
-    this.mNote(arpNote, t, 0.14, 'square', 0.045, true)
+    this.mNote(basses[bar] * Math.pow(2, semi / 12), t, 0.22, 'sawtooth', 0.16 + this.intensity * 0.04)
+    // Arp (echoed) — octave-jumps in a chase
+    const arpNote = chord[step % 3] * 2 * (chase && inBar % 2 === 1 ? 2 : 1)
+    this.mNote(arpNote, t, 0.14, 'square', 0.045 + this.intensity * 0.02, true)
   }
 
   // ---------------- SFX ----------------

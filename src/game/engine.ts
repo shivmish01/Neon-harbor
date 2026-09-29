@@ -9,7 +9,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { getSkin, getTheme, ACHIEVEMENTS, DISTRICTS, districtAt } from './content'
+import { getSkin, getTheme, ACHIEVEMENTS, DISTRICTS, districtAt, type District as ContentDistrict } from './content'
 import { grantXp, xpForLevel, type SaveData } from './save'
 import { Synth } from './audio'
 import { cloneCar, cloneCharacter, CITY_BY_KIND, type GameAssets } from './assets'
@@ -43,6 +43,8 @@ export interface HudState {
   tutorial: { step: number; total: number; title: string; hint: string } | null
   mission: HudMission | null
   nearGarage: boolean
+  /** border toll booth: a locked district the player can pay cash to enter now */
+  nearToll: { name: string; price: number } | null
   busted: boolean
   boosting: boolean
 }
@@ -56,6 +58,8 @@ export interface EngineHooks {
   onLevelUp(level: number): void
   onMissionDone(name: string, reward: number): void
   onPressE(): void
+  onPauseToggle?(): void
+  onPhotoToggle?(): void
 }
 
 // ---------- World layout constants ----------
@@ -190,6 +194,20 @@ export class GameEngine {
   // MOB-1: analog touch input from the virtual joystick (null = keyboard/digital)
   private analogSteer: number | null = null
   private analogThrottle: number | null = null
+  // Gamepad (Xbox/PS/Switch controller): polled every frame, overrides nothing
+  // until a stick/pedal actually moves — keyboard and touch keep working
+  private padSteer: number | null = null
+  private padThrottle: number | null = null
+  private padHandbrake = false
+  private padBoost = false
+  private padAnnounced = false
+  private padPrev: boolean[] = []
+  // Photo mode: freezes the world, orbits the car, captures stills
+  photoMode = false
+  private photoYaw = 0
+  private photoPitch = 0.35
+  private photoDist = 9
+  private photoDragging = false
   private scene = new THREE.Scene()
   private camera: THREE.PerspectiveCamera
   private mmCanvas: HTMLCanvasElement
@@ -319,7 +337,7 @@ export class GameEngine {
     // Post-processing: neon bloom
     this.composer = new EffectComposer(renderer)
     this.composer.addPass(new RenderPass(this.scene, this.camera))
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.42, 0.5, 0.62)
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.42, 0.5, 0.72)
     this.composer.addPass(this.bloomPass)
 
     const mmCtx = minimap.getContext('2d')
@@ -353,7 +371,7 @@ export class GameEngine {
     this.headR = new THREE.SpotLight(0xcfe8ff, 60, 60, 0.5, 0.4, 1.6)
     this.scene.add(this.headL, this.headL.target, this.headR, this.headR.target)
     // The one real beam: shadow-casting, lights the tarmac ahead of the car
-    this.headSpot = new THREE.SpotLight(0xfff3d6, 260, 55, 0.44, 0.55, 1.35)
+    this.headSpot = new THREE.SpotLight(0xfff3d6, 85, 48, 0.36, 0.55, 1.35)
     this.headSpot.castShadow = true
     this.headSpot.shadow.mapSize.set(1024, 1024)
     this.headSpot.shadow.camera.near = 2
@@ -1659,7 +1677,7 @@ export class GameEngine {
   /** Real road paint: dashed centre lines, kerb edge lines and zebra crossings —
       the biggest single "this is a real city" readability win. */
   private genRoadMarkings(): void {
-    const paint = new THREE.MeshBasicMaterial({ color: 0xe9edf2 })
+    const paint = new THREE.MeshBasicMaterial({ color: 0x9aa4b5 })
     const m = new THREE.Matrix4()
     const q = new THREE.Quaternion()
     const e = new THREE.Euler()
@@ -2637,7 +2655,10 @@ export class GameEngine {
   private onKeyDown = (e: KeyboardEvent): void => {
     const k = e.key.toLowerCase()
     this.keys.add(k)
-    if (k === 'e' && this.nearGarage && !this.paused && !this.attract) this.hooks.onPressE()
+    if (k === 'e' && !this.paused && !this.attract) {
+      if (this.nearGarage) this.hooks.onPressE()
+      else if (this.nearLocked) this.payToll()
+    }
     if (k === ' ' && this.bustedMeter > 0.25 && this.mashCooldown <= 0 && !this.busted && !this.paused && !this.attract) {
       // Struggle free from the patrol grab
       this.bustedMeter = Math.max(0, this.bustedMeter - 0.7)
@@ -2646,6 +2667,7 @@ export class GameEngine {
       this.synth.checkpoint()
     }
     if (k === 'c' && !this.attract) this.camDist = this.camDist > 12 ? 10 : 17
+    if (k === 'p' && !this.attract && !this.paused) this.hooks.onPhotoToggle?.()
     if (k === 'h') this.synth.horn()
     if (k === 't' && !this.attract && !this.paused) {
       const s = this.hooks.getSave()
@@ -2681,6 +2703,12 @@ export class GameEngine {
   private bindInput(): void {
     window.addEventListener('keydown', this.onKeyDown)
     window.addEventListener('keyup', this.onKeyUp)
+    const el = this.renderer.domElement
+    el.addEventListener('pointerdown', this.onPhotoPointerDown)
+    el.addEventListener('pointermove', this.onPhotoPointerMove)
+    el.addEventListener('pointerup', this.onPhotoPointerUp)
+    el.addEventListener('pointercancel', this.onPhotoPointerUp)
+    el.addEventListener('wheel', this.onPhotoWheel, { passive: false })
   }
 
   private resize = (): void => {
@@ -2706,8 +2734,11 @@ export class GameEngine {
       this.heading = Math.PI
     }
     if (!this.paused) {
-      this.time += dt
-      this.update(dt)
+      if (this.photoMode) this.updatePhotoCamera()
+      else {
+        this.time += dt
+        this.update(dt)
+      }
     }
     // MOB-3: quality watchdog — only counts active frames, only on touch devices,
     // steps down at most one level per 3s window
@@ -2805,17 +2836,115 @@ export class GameEngine {
     const s01 = Math.min(this.vel.length() / (MAX_SPEED * BOOST_MULT), 1)
     this.synth.updateEngine(s01, this.boosting, dt)
     this.synth.updateSiren(this.heat >= 2.5 ? Math.min((this.heat - 2) / 3, 1) : 0, dt)
+    // Adaptive soundtrack: patrol heat builds it, a clean getaway settles it
+    this.synth.setMusicIntensity(
+      this.heat > 0.2 ? Math.min(0.5 + this.heat * 0.12, 1) : this.boosting ? 0.3 : 0,
+    )
+  }
+
+  // =============== GAMEPAD ===============
+  // Standard mapping: left stick steer · RT gas · LT brake · A handbrake ·
+  // RB boost · B camera · X horn · Y job board (near garage) · START pause.
+  private pollGamepad(): void {
+    const pads = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : []
+    let pad: Gamepad | null = null
+    for (const p of pads) if (p && p.connected) { pad = p; break }
+    if (!pad) {
+      this.padSteer = null
+      this.padThrottle = null
+      this.padHandbrake = false
+      this.padBoost = false
+      this.padPrev = []
+      return
+    }
+    if (!this.padAnnounced) {
+      this.padAnnounced = true
+      this.hooks.onToast('🎮 Gamepad connected — sticks drive, RT gas, A handbrake', 'info')
+    }
+    const axis = (i: number) => pad.axes[i] ?? 0
+    const btn = (i: number) => !!pad.buttons[i]?.pressed
+    const steerRaw = axis(0)
+    this.padSteer = Math.abs(steerRaw) > 0.14 ? steerRaw : null
+    const rt = pad.buttons[7]?.value ?? 0
+    const lt = pad.buttons[6]?.value ?? 0
+    let thr = rt - lt
+    const rStickY = axis(3)
+    if (Math.abs(thr) < 0.06 && Math.abs(rStickY) > 0.2) thr = -rStickY
+    this.padThrottle = Math.abs(thr) > 0.06 ? THREE.MathUtils.clamp(thr, -1, 1) : null
+    this.padHandbrake = btn(0)
+    this.padBoost = btn(5) || btn(3) // RB or Y
+    // Edge-triggered buttons (compare with previous frame)
+    const edge = (i: number) => btn(i) && !this.padPrev[i]
+    if (edge(1) && !this.attract) this.camDist = this.camDist > 12 ? 10 : 17 // B: camera
+    if (edge(2)) this.synth.horn() // X
+    if (edge(9) && !this.attract && !this.paused) this.hooks.onPauseToggle?.() // START
+    this.padPrev = pad.buttons.map((b) => b.pressed)
+  }
+
+  // =============== PHOTO MODE ===============
+  /** Freeze the world and orbit the car. Exits cleanly back to gameplay. */
+  setPhotoMode(on: boolean): void {
+    if (this.attract) return
+    this.photoMode = on
+    if (on) {
+      this.photoYaw = this.heading + Math.PI
+      this.photoPitch = 0.35
+      this.photoDist = 9
+      this.touchReset()
+    }
+  }
+
+  private updatePhotoCamera(): void {
+    const yaw = this.photoYaw
+    const cp = THREE.MathUtils.clamp(this.photoPitch, 0.05, 1.3)
+    const target = new THREE.Vector3(this.pos.x, this.pos.y + 1.1, this.pos.z)
+    const off = new THREE.Vector3(
+      Math.sin(yaw) * Math.cos(cp),
+      Math.sin(cp),
+      Math.cos(yaw) * Math.cos(cp),
+    ).multiplyScalar(this.photoDist)
+    this.camera.position.copy(target).add(off)
+    this.camera.lookAt(target)
+  }
+
+  /** Render one clean frame and return it as a PNG data URL. */
+  capturePhoto(): string | null {
+    try {
+      this.composer.render()
+      return this.renderer.domElement.toDataURL('image/png')
+    } catch {
+      return null
+    }
+  }
+
+  private onPhotoPointerDown = (e: PointerEvent): void => {
+    if (!this.photoMode) return
+    this.photoDragging = true
+    ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+  }
+  private onPhotoPointerMove = (e: PointerEvent): void => {
+    if (!this.photoMode || !this.photoDragging) return
+    this.photoYaw -= e.movementX * 0.008
+    this.photoPitch = THREE.MathUtils.clamp(this.photoPitch + e.movementY * 0.006, 0.05, 1.3)
+  }
+  private onPhotoPointerUp = (): void => { this.photoDragging = false }
+  private onPhotoWheel = (e: WheelEvent): void => {
+    if (!this.photoMode) return
+    e.preventDefault()
+    this.photoDist = THREE.MathUtils.clamp(this.photoDist + e.deltaY * 0.01, 4, 20)
   }
 
   // =============== CAR PHYSICS ===============
   private updateCar(dt: number): void {
     const save = this.hooks.getSave()
+    this.pollGamepad()
+    const effThr = this.padThrottle ?? this.analogThrottle // gamepad pedals beat touch joystick
     const up = this.keys.has('w') || this.keys.has('arrowup')
     const down = this.keys.has('s') || this.keys.has('arrowdown')
     const left = this.keys.has('a') || this.keys.has('arrowleft')
     const right = this.keys.has('d') || this.keys.has('arrowright')
-    const handbrake = this.keys.has(' ')
-    const wantBoost = this.keys.has('shift')
+    const handbrake = this.keys.has(' ') || this.padHandbrake
+    const wantBoost = this.keys.has('shift') || this.padBoost
 
     const dir = new THREE.Vector3(Math.sin(this.heading), 0, Math.cos(this.heading))
     let s = this.vel.dot(dir)
@@ -2836,15 +2965,15 @@ export class GameEngine {
 
     if (!frozen) {
       const mult = this.boosting ? BOOST_MULT : 1
-      // Joystick (analog) input replaces the digital pedals when active
-      const aThr = this.analogThrottle
+      // Joystick / gamepad (analog) input replaces the digital pedals when active
+      const aThr = effThr
       const gas = aThr !== null ? aThr > 0.12 : up
       const braking = aThr !== null ? aThr < -0.12 : down
       if (gas) s += ACCEL * (aThr !== null ? Math.min(1, aThr) : 1) * mult * dt
       if (braking) s -= (s > 1 ? BRAKE : ACCEL * 0.6) * dt
       const maxS = MAX_SPEED * mult
       s = THREE.MathUtils.clamp(s, -10, maxS)
-      const aSt = this.analogSteer
+      const aSt = this.padSteer ?? this.analogSteer
       const steer = aSt !== null ? -aSt : (left ? 1 : 0) - (right ? 1 : 0)
       const grip = handbrake ? 1.4 : 7.5
       const turnRate = steer * 2.1 * THREE.MathUtils.clamp(Math.abs(s) / 10, 0, 1) * (handbrake ? 1.5 : 1)
@@ -2861,7 +2990,7 @@ export class GameEngine {
     }
 
     // Brake / boost light feedback
-    this.taillightMat.color.setHex((this.analogThrottle !== null ? this.analogThrottle < -0.12 : down) && !frozen ? 0xff5566 : 0x881122)
+    this.taillightMat.color.setHex((effThr !== null ? effThr < -0.12 : down) && !frozen ? 0xff5566 : 0x881122)
     this.flameL.visible = this.boosting
     this.flameR.visible = this.boosting
     if (this.boosting) {
@@ -3046,33 +3175,55 @@ export class GameEngine {
     }
   }
 
-  // PC-7: district gates — locked districts push the player back at the border;
-  // newly-entered unlocked districts grant a discovery bonus once each
+  // PC-7: district gates — locked districts block the player at the border.
+  // The gate is a SOFT WALL: only the inward velocity component is removed, so
+  // the car slides along the border instead of being teleported and wedged.
+  // A border toll booth lets anyone pay cash to enter a locked district early.
   private districtCd = 0
+  private nearLocked: { d: ContentDistrict; price: number } | null = null
   private updateDistricts(dt: number): void {
     this.districtCd = Math.max(0, this.districtCd - dt)
-    const d = districtAt(this.pos.x, this.pos.z)
-    if (!d) return
     const save = this.hooks.getSave()
-    if (save.level < d.minLevel) {
-      // Push out along the axis of least penetration, damping the hit
+    const tolled = (id: string) => save.tollsPaid.includes(id)
+    const lockedDist = (id: string) => {
+      const d = DISTRICTS.find((x) => x.id === id)
+      return d && save.level < d.minLevel && !tolled(d.id) ? d : null
+    }
+    this.nearLocked = null
+    const d = districtAt(this.pos.x, this.pos.z)
+    // toll booth proximity: within 8m of any locked district border (from either side)
+    for (const dist of DISTRICTS) {
+      if (!lockedDist(dist.id)) continue
+      const dx = Math.max(dist.minX - this.pos.x, 0, this.pos.x - dist.maxX)
+      const dz = Math.max(dist.minZ - this.pos.z, 0, this.pos.z - dist.maxZ)
+      if (dx * dx + dz * dz < 64) {
+        this.nearLocked = { d: dist, price: dist.minLevel * 250 }
+        break
+      }
+    }
+    if (d && save.level < d.minLevel && !tolled(d.id)) {
+      // inside a locked district — find the nearest border and clamp to it
       const pens = [
-        { p: this.pos.x - d.minX, axis: 'x' as const, to: d.minX - 0.6 },
-        { p: d.maxX - this.pos.x, axis: 'x' as const, to: d.maxX + 0.6 },
-        { p: this.pos.z - d.minZ, axis: 'z' as const, to: d.minZ - 0.6 },
-        { p: d.maxZ - this.pos.z, axis: 'z' as const, to: d.maxZ + 0.6 },
+        { p: this.pos.x - d.minX, axis: 'x' as const, low: true },
+        { p: d.maxX - this.pos.x, axis: 'x' as const, low: false },
+        { p: this.pos.z - d.minZ, axis: 'z' as const, low: true },
+        { p: d.maxZ - this.pos.z, axis: 'z' as const, low: false },
       ].sort((a, b) => a.p - b.p)[0]
-      if (pens.axis === 'x') this.pos.x = pens.to
-      else this.pos.z = pens.to
-      this.vel.multiplyScalar(0.35)
-      this.shake = Math.min(this.shake + 0.25, 0.6)
+      const clear = CAR_R + 0.6
+      if (pens.axis === 'x') this.pos.x = pens.low ? d.minX - clear : d.maxX + clear
+      else this.pos.z = pens.low ? d.minZ - clear : d.maxZ + clear
+      // remove only the inward velocity — sliding along the wall stays possible
+      if (pens.axis === 'x') this.vel.x = pens.low ? Math.min(this.vel.x, 0) : Math.max(this.vel.x, 0)
+      else this.vel.z = pens.low ? Math.min(this.vel.z, 0) : Math.max(this.vel.z, 0)
+      this.shake = Math.min(this.shake + 0.18, 0.5)
       if (this.districtCd <= 0) {
         this.districtCd = 2.5
-        this.hooks.onToast(`🔒 ${d.name} — reach level ${d.minLevel} to enter`, 'warn')
+        this.hooks.onToast(`🔒 ${d.name} — reach level ${d.minLevel}, or pay the toll`, 'warn')
         this.synth.denied()
       }
       return
     }
+    if (!d) return
     if (!save.districts.includes(d.id)) {
       save.districts.push(d.id)
       this.hooks.commit()
@@ -3091,6 +3242,24 @@ export class GameEngine {
       this.synth.missionDone()
       if (save.level >= 5) this.unlockAchievement('level-5')
     }
+  }
+
+  /** Border toll booth: pay cash once to enter a level-locked district forever. */
+  private payToll(): void {
+    const booth = this.nearLocked
+    if (!booth) return
+    const save = this.hooks.getSave()
+    if (save.cash < booth.price) {
+      this.synth.denied()
+      this.hooks.onToast(`Toll is $${booth.price} — you only have $${Math.floor(save.cash)}. Take more jobs!`, 'warn')
+      return
+    }
+    save.cash -= booth.price
+    save.tollsPaid.push(booth.d.id)
+    this.hooks.commit()
+    this.synth.buy()
+    this.hooks.onToast(`🎫 Toll paid — ${booth.d.name} is open to you now. Drive in!`, 'good')
+    this.nearLocked = null
   }
 
   // =============== TRAFFIC ===============
@@ -3644,6 +3813,7 @@ export class GameEngine {
       tutorial,
       mission,
       nearGarage: this.nearGarage,
+      nearToll: this.nearLocked ? { name: this.nearLocked.d.name, price: this.nearLocked.price } : null,
       busted: this.busted,
       boosting: this.boosting,
     })
