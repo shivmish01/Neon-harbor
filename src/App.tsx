@@ -120,9 +120,11 @@ export default function App() {
         })
       },
     }, assets)
-    // MOB-3: quality watchdog only runs on touch devices — desktop keeps full
-    // quality regardless (QA screenshot harness stays untouched)
-    engine.setAutoQualityEnabled(isTouch)
+    // MOB-3: quality watchdog — touch devices always get it; desktop keeps full
+    // quality UNLESS the browser is CPU-rendering (SwiftShader/llvmpipe), where
+    // full effects can hard-lock a weak renderer. Real desktops stay untouched.
+    const software = engine.isSoftwareRenderer()
+    engine.setAutoQualityEnabled(isTouch || software, isTouch ? 42 : 24)
     engineRef.current = engine
     return engine
   }, [commit, pushToast, isTouch])

@@ -187,6 +187,7 @@ export class GameEngine {
   // MOB-3: FPS watchdog — on touch devices, sustained low FPS steps quality
   // down (display scale first, then bloom + shadow resolution). Never re-raises.
   private autoQuality = false
+  private fpsThreshold = 42
   private qualityLevel = 0
   private fpsAccum = 0
   private fpsFrames = 0
@@ -2751,7 +2752,7 @@ export class GameEngine {
         this.fpsWindow = 0
         this.fpsAccum = 0
         this.fpsFrames = 0
-        if (avg < 42 && this.qualityLevel < 2) {
+        if (avg < this.fpsThreshold && this.qualityLevel < 2) {
           this.qualityLevel += 1
           this.applyQuality()
         }
@@ -2760,8 +2761,23 @@ export class GameEngine {
     this.composer.render()
   }
 
-  setAutoQualityEnabled(on: boolean): void {
+  setAutoQualityEnabled(on: boolean, fpsThreshold = 42): void {
     this.autoQuality = on
+    this.fpsThreshold = fpsThreshold
+  }
+
+  /** True when WebGL runs on a CPU rasterizer (SwiftShader/llvmpipe) — e.g.
+      headless test rigs and locked-down VMs. Those environments can't hold
+      full quality, so the caller enables the quality watchdog for them too. */
+  isSoftwareRenderer(): boolean {
+    try {
+      const gl = this.renderer.getContext()
+      const ext = gl.getExtension('WEBGL_debug_renderer_info')
+      const r = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : String(gl.getParameter(gl.RENDERER) || '')
+      return /swiftshader|llvmpipe|softpipe|software|basic render/i.test(r)
+    } catch {
+      return false
+    }
   }
 
   private applyQuality(): void {
