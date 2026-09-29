@@ -283,3 +283,11 @@
   0%, 25% { transform: rotate(0deg); }
   55%, 100% { transform: rotate(90deg); }
 }
+
+/* Test hook (?hud=0): cinematic mode hides HUD panels and toasts for recordings */
+.nh-cinema .hud-panel,
+.nh-cinema .toast,
+.nh-cinema .nh-minimap,
+.nh-cinema .nh-prompt {
+  display: none !important;
+}

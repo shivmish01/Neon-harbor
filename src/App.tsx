@@ -188,6 +188,8 @@ export default function App() {
       commit()
       engineRef.current?.applyLoadout()
     }
+    // Test hook: ?hud=0 hides HUD panels for clean cinematic recordings
+    if (params.get('hud') === '0') document.body.classList.add('nh-cinema')
     if (params.has('autostart')) {
       enterGame()
       // Test hook: ?autostart&at=beach teleports to the shore for screenshots
@@ -422,7 +424,7 @@ export default function App() {
         ref={minimapRef}
         width={180}
         height={180}
-        className={`absolute top-4 right-4 z-20 rounded-lg border border-cyan-500/30 shadow-[0_0_20px_rgba(34,211,238,0.25)] ${screen === 'game' && hud ? '' : 'hidden'}`}
+        className={`nh-minimap absolute top-4 right-4 z-20 rounded-lg border border-cyan-500/30 shadow-[0_0_20px_rgba(34,211,238,0.25)] ${screen === 'game' && hud ? '' : 'hidden'}`}
       />
 
       {/* ================= BOOT ================= */}
@@ -711,12 +713,12 @@ export default function App() {
 
           {/* E prompt — job board at the garage, or toll booth at a locked border */}
           {!overlay && !isTouch && hud.nearGarage && (
-            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2 bg-cyan-500/20 border border-cyan-400 rounded text-cyan-200 text-sm animate-pulse">
+            <div className="nh-prompt absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2 bg-cyan-500/20 border border-cyan-400 rounded text-cyan-200 text-sm animate-pulse">
               Press <b>E</b> — open the Job Board
             </div>
           )}
           {!overlay && !isTouch && !hud.nearGarage && hud.nearToll && (
-            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2 bg-amber-500/20 border border-amber-400 rounded text-amber-200 text-sm animate-pulse">
+            <div className="nh-prompt absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2 bg-amber-500/20 border border-amber-400 rounded text-amber-200 text-sm animate-pulse">
               Press <b>E</b> — pay ${hud.nearToll.price} toll to enter {hud.nearToll.name}
             </div>
           )}
@@ -1036,6 +1038,15 @@ export default function App() {
             <h3 className="text-xl font-black text-white tracking-widest">FULL ACCESS PASS</h3>
             <div className="text-amber-200/80 text-[11px] tracking-[0.25em] mt-1">EARLY ACCESS FOUNDER — LOCKED FOR YOU RIGHT NOW</div>
             <div className="text-3xl font-black text-amber-300 my-2">{FULL_ACCESS_PRICE}</div>
+            <video
+              src="promo.mp4"
+              autoPlay
+              muted
+              loop
+              playsInline
+              controls
+              className="w-full rounded-lg border border-slate-700 mb-3"
+            />
             <div className="text-left text-slate-400 text-[11px] tracking-widest mb-1">4 PREMIUM CARS YOU DON'T OWN YET</div>
             <ul className="text-left text-slate-200 text-sm space-y-1 mb-3">
               <li>🚗 <b className="text-amber-300">Crimson Ghost</b> — the Patrol hates this one</li>
