@@ -403,6 +403,9 @@ export default function App() {
           <div className="flex gap-3 mt-3">
             <button onClick={() => { setProgressTab('trophies'); setOverlay('progress') }} className="menu-btn menu-btn-ghost">🏆 TROPHIES</button>
             <button onClick={() => { setProgressTab('districts'); setOverlay('progress') }} className="menu-btn menu-btn-ghost">🗺️ DISTRICTS</button>
+            {!save.fullAccess && (
+              <button onClick={() => setOverlay('checkout')} className="menu-btn menu-btn-ghost border-amber-400/60 text-amber-300">🔓 FULL ACCESS</button>
+            )}
           </div>
           <div className="mt-10 text-slate-300 text-sm flex gap-8">
             <span>Cash <b className="text-emerald-400">${save.cash}</b></span>
@@ -917,12 +920,22 @@ export default function App() {
           <div className="w-[26rem] max-w-[90vw] bg-slate-900 border border-amber-400/50 rounded-2xl p-6 text-center">
             <div className="text-4xl mb-3">🔓</div>
             <h3 className="text-xl font-black text-white tracking-widest">FULL ACCESS PASS</h3>
+            <div className="text-amber-200/80 text-[11px] tracking-[0.25em] mt-1">EARLY ACCESS FOUNDER — LOCKED FOR YOU RIGHT NOW</div>
             <div className="text-3xl font-black text-amber-300 my-2">{FULL_ACCESS_PRICE}</div>
-            <ul className="text-left text-slate-300 text-sm space-y-1 mb-4">
-              <li>✦ All premium car skins (Crimson Ghost, Cyber Oni…)</li>
-              <li>✦ All city environments (Golden Hour, Acid Rain, Sakura Dusk)</li>
-              <li>✦ Every future theme added during Early Access — free</li>
+            <div className="text-left text-slate-400 text-[11px] tracking-widest mb-1">4 PREMIUM CARS YOU DON'T OWN YET</div>
+            <ul className="text-left text-slate-200 text-sm space-y-1 mb-3">
+              <li>🚗 <b className="text-amber-300">Crimson Ghost</b> — the Patrol hates this one</li>
+              <li>🚗 <b className="text-amber-300">Royal Violet</b> — harbor-night royalty</li>
+              <li>🚗 <b className="text-amber-300">Solar Flare</b> — molten gold, zero subtlety</li>
+              <li>🚗 <b className="text-amber-300">Cyber Oni</b> — matte black, demon neon</li>
             </ul>
+            <div className="text-left text-slate-400 text-[11px] tracking-widest mb-1">3 ENVIRONMENTS YOU'VE NEVER SEEN</div>
+            <ul className="text-left text-slate-200 text-sm space-y-1 mb-3">
+              <li>🌇 <b className="text-amber-300">Golden Hour</b> — the harbor at eternal sunset</li>
+              <li>🌸 <b className="text-amber-300">Sakura Dusk</b> — pink neon festival night</li>
+              <li>☣️ <b className="text-amber-300">Acid Rain</b> — something leaked in Sector 7</li>
+            </ul>
+            <div className="text-left text-emerald-300/90 text-xs mb-4">✦ Plus every future theme and car added during Early Access — free, forever</div>
             <div className="bg-amber-500/10 border border-amber-400/30 rounded p-2 text-amber-200/90 text-[11px] mb-4">
               DEMO CHECKOUT — no real payment is processed. At launch this button connects to your real payment provider (Stripe, Steam, etc.).
             </div>
