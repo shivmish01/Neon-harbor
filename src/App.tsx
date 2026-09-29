@@ -1111,6 +1111,9 @@ export default function App() {
                   ? <>The 📷 button freezes the world — orbit your car with a finger, apply a color grade, and save the shot. The soundtrack intensifies as Patrol heat rises.</>
                   : <>Press <b>P</b> for photo mode: the world freezes, drag to orbit your car, scroll to zoom, grade the shot, and save a PNG. The soundtrack builds with Patrol heat. Plug in a gamepad and it just works.</>}
               </p>
+              <div className="text-slate-600 text-[10px] pt-2 border-t border-slate-800">
+                Character models: Quaternius (CC0) · City & cars: Kenney (CC0)
+              </div>
               <div className="text-slate-500 text-xs pt-2 border-t border-slate-800">
                 {isTouch ? (
                   save.controls === 'joystick'

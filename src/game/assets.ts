@@ -48,6 +48,10 @@ const CHAR_MODELS = [
   'character-male-a', 'character-male-b', 'character-male-c', 'character-male-d', 'character-male-e', 'character-male-f',
   'character-female-a', 'character-female-b', 'character-female-c', 'character-female-d', 'character-female-e', 'character-female-f',
 ]
+// Upgraded cast (CC0, Quaternius via poly.pizza): articulated modern people with
+// full walk/idle/sit animation sets — mixed into the crowd with the Kenney kit.
+const CHAR2_BASE = import.meta.env.BASE_URL + 'models/chars2/'
+const CHAR2_MODELS = ['animated-human', 'man', 'woman-casual']
 export const CHAR_KEYS = CHAR_MODELS
 
 export type CityKind = 'skyscraper' | 'midrise' | 'lowrise' | 'detail'
@@ -92,7 +96,7 @@ function mergeSceneGeometry(scene: THREE.Object3D): { geometry: THREE.BufferGeom
 
 export async function loadGameAssets(onProgress: (done: number, total: number) => void): Promise<GameAssets> {
   const loader = new GLTFLoader()
-  const total = CITY_MODELS.length + CAR_MODELS.length + CHAR_MODELS.length
+  const total = CITY_MODELS.length + CAR_MODELS.length + CHAR_MODELS.length + CHAR2_MODELS.length
   let done = 0
   const tick = () => onProgress(++done, total)
 
@@ -154,6 +158,30 @@ export async function loadGameAssets(onProgress: (done: number, total: number) =
     if (r.status === 'fulfilled') {
       chars[CHAR_MODELS[i]] = r.value.scene
       charClips[CHAR_MODELS[i]] = r.value.clips
+    }
+  })
+  // Upgraded cast: same skinned+clips loading, merged into the same tables so
+  // every spawner (streets, stalls, idlers) draws from the full roster
+  const char2Results = await Promise.allSettled(
+    CHAR2_MODELS.map(
+      (m) =>
+        new Promise<{ scene: THREE.Object3D; clips: THREE.AnimationClip[] }>((resolve, reject) => {
+          loader.load(
+            `${CHAR2_BASE}${m}.glb`,
+            (gltf) => {
+              tick()
+              resolve({ scene: gltf.scene, clips: gltf.animations })
+            },
+            undefined,
+            (err) => reject(new Error(`char ${m}: ${err instanceof Error ? err.message : String(err)}`))
+          )
+        })
+    )
+  )
+  char2Results.forEach((r, i) => {
+    if (r.status === 'fulfilled') {
+      chars[CHAR2_MODELS[i]] = r.value.scene
+      charClips[CHAR2_MODELS[i]] = r.value.clips
     }
   })
 

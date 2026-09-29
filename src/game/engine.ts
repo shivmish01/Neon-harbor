@@ -4246,7 +4246,10 @@ export class GameEngine {
       // NOTE: ped shadows are intentionally off — 100+ skinned characters in the
       // shadow pass more than doubles frame cost for a subtle visual gain
       const mixer = new THREE.AnimationMixer(obj)
-      const walkClip = clips.find((c) => c.name === 'walk') ?? clips[0]
+      const walkClip =
+        clips.find((c) => c.name.toLowerCase() === 'walk') ??
+        clips.find((c) => c.name.toLowerCase().includes('walk')) ??
+        clips[0]
       const walk = mixer.clipAction(walkClip)
       walk.play()
       let axis: 'x' | 'z'
