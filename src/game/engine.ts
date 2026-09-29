@@ -296,10 +296,13 @@ export class GameEngine {
   private peds: {
     x: number; z: number; axis: 'x' | 'z'; dir: 1 | -1; speed: number
     mesh: THREE.Object3D; mixer: THREE.AnimationMixer; walk: THREE.AnimationAction; baseSpeed: number
+    idle: THREE.AnimationAction | null
     state: 0 | 1; ht: number; hvx: number; hvz: number; hvy: number; hspin: number
     beach: boolean
     crossing: number
     returnAxis: 'x' | 'z'
+    // life behaviors: phone pauses + startled glance at fast cars
+    pausing: boolean; pauseLeft: number; pauseT: number; glanceT: number
     dog?: THREE.Group
   }[] = []
   private crates: { mesh: THREE.Mesh; active: boolean; respawn: number }[] = []
@@ -4252,6 +4255,9 @@ export class GameEngine {
         clips[0]
       const walk = mixer.clipAction(walkClip)
       walk.play()
+      // Optional idle clip powers the "stop to check phone" street behavior
+      const idleClip = clips.find((c) => /idle|stand/i.test(c.name))
+      const idle = idleClip ? mixer.clipAction(idleClip) : null
       let axis: 'x' | 'z'
       let lane: number
       let px: number
@@ -4285,6 +4291,7 @@ export class GameEngine {
         mesh: wrap,
         mixer,
         walk,
+        idle,
         state:  0 as 0,
         ht: 0,
         hvx: 0,
@@ -4294,6 +4301,10 @@ export class GameEngine {
         beach,
         crossing: 0,
         returnAxis: axis,
+        pausing: false,
+        pauseLeft: 0,
+        pauseT: 4 + rand() * 14,
+        glanceT: 0,
         dog: undefined as THREE.Group | undefined,
       }
       // Evening beach life: some strollers take a dog out (low-poly pup trots beside)
@@ -4342,8 +4353,12 @@ export class GameEngine {
           p.dir = Math.random() > 0.5 ? 1 : -1
           p.crossing = 0
           p.state = 0
+          p.pausing = false
+          p.pauseLeft = 0
+          p.pauseT = 4 + Math.random() * 14
           p.mesh.position.set(p.x, 0, p.z)
           p.mesh.rotation.x = 0
+          p.idle?.stop()
           p.walk.reset().play()
         }
         continue
@@ -4353,8 +4368,28 @@ export class GameEngine {
       const dz = p.z - this.pos.z
       const d2 = dx * dx + dz * dz
       const carSpeed = this.vel.length()
-      const speed = d2 < 49 && carSpeed > 4 ? 5 : p.baseSpeed
+      const speed = (d2 < 49 && carSpeed > 4 ? 5 : p.baseSpeed) * (p.glanceT > 0 ? 0.35 : 1)
       let hold = false
+      // Life behavior: pause and "check phone" at quiet spots, then move on
+      if (p.idle) {
+        if (!p.pausing && p.crossing <= 0 && carSpeed <= 4 && d2 > 64) {
+          p.pauseT -= dt
+          if (p.pauseT <= 0) {
+            p.pausing = true
+            p.pauseLeft = 1.5 + Math.random() * 3
+            p.walk.fadeOut(0.25)
+            p.idle.reset().fadeIn(0.25).play()
+          }
+        } else if (p.pausing) {
+          p.pauseLeft -= dt
+          if (p.pauseLeft <= 0) {
+            p.pausing = false
+            p.pauseT = 6 + Math.random() * 14
+            p.idle.fadeOut(0.25)
+            p.walk.reset().fadeIn(0.25).play()
+          }
+        }
+      }
       if (!p.beach) {
         if (p.crossing > 0) {
           // Mid-crossing at a zebra: commit and finish, signal or not
@@ -4384,7 +4419,7 @@ export class GameEngine {
           }
         }
       }
-      if (!hold) {
+      if (!hold && !p.pausing) {
         const step = speed * dt * p.dir
         if (p.axis === 'x') p.x += step
         else p.z += step
@@ -4407,7 +4442,12 @@ export class GameEngine {
       p.walk.timeScale = 0.6 + (speed / 1.8) * 0.8
       p.mixer.update(dt)
       p.mesh.position.set(p.x, 0, p.z)
-      p.mesh.rotation.y = p.axis === 'x' ? (p.dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (p.dir > 0 ? 0 : Math.PI)
+      // Startled glance: face a fast-approaching car for a beat, then carry on
+      p.glanceT = Math.max(0, p.glanceT - dt)
+      if (d2 < 120 && carSpeed > 7) p.glanceT = 0.9
+      p.mesh.rotation.y = p.glanceT > 0
+        ? Math.atan2(dx, dz)
+        : p.axis === 'x' ? (p.dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (p.dir > 0 ? 0 : Math.PI)
       // Hit by the car: knocked flying, patrol alerted
       if (d2 < 2.1 && carSpeed > 4 && this.pos.y < 1.5) {
         p.state = 1
@@ -4418,6 +4458,8 @@ export class GameEngine {
         p.hvy = 4.5
         p.hspin = (Math.random() > 0.5 ? 1 : -1) * (4 + Math.random() * 4)
         p.walk.stop()
+        p.idle?.stop()
+        p.pausing = false
         this.vel.multiplyScalar(0.82)
         this.shake = Math.min(this.shake + 0.35, 0.8)
         this.heat = Math.min(5, this.heat + 1)
