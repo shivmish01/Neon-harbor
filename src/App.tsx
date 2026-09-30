@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { GameEngine, type HudState } from './game/engine'
 import { loadGameAssets, type GameAssets } from './game/assets'
 import {
-  SKINS, THEMES, FULL_ACCESS_PRICE, GAME_VERSION, GAME_TITLE,
+  SKINS, THEMES, FULL_ACCESS_PRICE, FOUNDER_LEGEND_PRICE, GAME_VERSION, GAME_TITLE,
   ACHIEVEMENTS, DISTRICTS,
   type Skin, type Theme,
 } from './game/content'
@@ -380,6 +380,32 @@ export default function App() {
     commit()
     pushToast('Purchased — equipped!', 'good')
     equipItem(id)
+  }
+
+  // Real-money quick buy (demo checkout): unlocks a single item instantly.
+  // Used by the ⚡ price buttons — $0.99 impulse up to $9.99 flagship items.
+  const buyUsd = (id: string) => {
+    const engine = engineRef.current
+    const s = saveRef.current
+    if (s.owned.includes(id)) return
+    s.owned.push(id)
+    engine?.playBuy()
+    engine?.unlockAchievement(SKINS.some((k) => k.id === id) ? 'buy-skin' : 'buy-theme')
+    commit()
+    pushToast('Owned — equipped! (demo checkout, no real payment)', 'good')
+    equipItem(id)
+  }
+
+  // Founder's Legend — the $99.99 ultra tier: everything + exclusive Aurora Prime
+  const buyLegend = () => {
+    const s = saveRef.current
+    s.fullAccess = true
+    s.legend = true
+    if (!s.owned.includes('aurora')) s.owned.push('aurora')
+    commit()
+    engineRef.current?.playBuy()
+    pushToast("FOUNDER'S LEGEND unlocked — Aurora Prime is yours. Welcome to the top!", 'good')
+    setOverlay('shop')
   }
 
   const equipItem = (id: string) => {
@@ -966,7 +992,7 @@ export default function App() {
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-amber-300 font-black tracking-widest">FULL ACCESS PASS — {FULL_ACCESS_PRICE}</div>
-                    <div className="text-slate-300 text-xs mt-1">Unlock all 4 premium cars and 2 exclusive environments (Sakura Dusk, Acid Rain). Founders keep all future content free.</div>
+                    <div className="text-slate-300 text-xs mt-1">Unlock all premium cars and exclusive environments (Sakura Dusk, Acid Rain). Founders keep all future content free. Or go <b className="text-fuchsia-300">Founder's Legend — {FOUNDER_LEGEND_PRICE}</b> for the exclusive Aurora Prime.</div>
                   </div>
                   <div className="text-2xl">🔓</div>
                 </div>
@@ -993,13 +1019,16 @@ export default function App() {
                   swatch={item.body}
                   glow={item.glow}
                   price={item.price}
+                  usd={item.usd}
                   premium={item.premium}
+                  legendItem={item.legend ?? false}
                   minLevel={item.minLevel}
                   isOwned={owned(item.id)}
                   isEquipped={save.skin === item.id}
-                  isLocked={locked(item)}
+                  isLocked={item.legend ? !save.legend : locked(item)}
                   level={save.level}
-                  onBuy={() => buyItem(item.id, item.price, item.premium, item.minLevel)}
+                  onBuy={() => item.legend ? setOverlay('checkout') : buyItem(item.id, item.price, item.premium, item.minLevel)}
+                  onBuyUsd={() => buyUsd(item.id)}
                   onEquip={() => equipItem(item.id)}
                 />
               ))}
@@ -1011,6 +1040,7 @@ export default function App() {
                   swatch={item.fog}
                   glow={item.moon}
                   price={item.price}
+                  usd={item.usd}
                   premium={item.premium}
                   minLevel={1}
                   isOwned={owned(item.id)}
@@ -1019,12 +1049,13 @@ export default function App() {
                   level={save.level}
                   preview={<ThemePreview theme={item} />}
                   onBuy={() => buyItem(item.id, item.price, item.premium, 1)}
+                  onBuyUsd={() => buyUsd(item.id)}
                   onEquip={() => equipItem(item.id)}
                 />
               ))}
             </div>
             <p className="text-slate-600 text-[11px] mt-5 text-center">
-              Early Access build — purchases here use in-game cash. The Full Access Pass is a demo checkout with no real payment.
+              Early Access build — green buttons use in-game cash; ⚡ buttons are instant demo unlocks (no real payment yet). Full Access and Founder's Legend are demo checkouts.
             </p>
           </div>
         </div>
@@ -1090,6 +1121,19 @@ export default function App() {
                 Not now
               </button>
             </div>
+            {!save.legend && (
+              <button
+                onClick={buyLegend}
+                className="w-full mt-3 py-3 bg-fuchsia-500/15 border border-fuchsia-400/70 text-fuchsia-200 rounded hover:bg-fuchsia-400/25 font-bold tracking-widest text-sm"
+              >
+                👑 GO LEGEND — {FOUNDER_LEGEND_PRICE}
+              </button>
+            )}
+            {save.legend && (
+              <div className="w-full mt-3 py-2 border border-fuchsia-400/40 bg-fuchsia-500/10 text-fuchsia-300 rounded text-xs font-bold text-center">
+                👑 FOUNDER'S LEGEND owned — Aurora Prime unlocked
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1311,7 +1355,9 @@ function ShopCard(props: {
   swatch: number
   glow: number
   price: number
+  usd: number
   premium: boolean
+  legendItem?: boolean
   minLevel: number
   isOwned: boolean
   isEquipped: boolean
@@ -1319,13 +1365,26 @@ function ShopCard(props: {
   level: number
   preview?: React.ReactNode // replaces the swatch block (e.g. live environment preview)
   onBuy: () => void
+  onBuyUsd: () => void
   onEquip: () => void
 }) {
   const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`
   const levelBlocked = props.level < props.minLevel
+  const usdBtn = props.usd > 0 && (
+    <button
+      onClick={props.onBuyUsd}
+      title="Instant unlock — demo checkout, no real payment"
+      className="px-2.5 py-1.5 text-xs font-black border border-fuchsia-500/60 text-fuchsia-300 rounded hover:bg-fuchsia-500/10 whitespace-nowrap"
+    >
+      ⚡ ${props.usd.toFixed(2)}
+    </button>
+  )
   return (
     <div className={`relative rounded-xl border p-3 bg-slate-800/60 transition-all ${props.isEquipped ? 'border-cyan-400 shadow-[0_0_16px_rgba(34,211,238,0.35)]' : 'border-slate-700 hover:border-slate-500'}`}>
-      {props.premium && (
+      {props.legendItem && (
+        <div className="absolute -top-2 -right-2 bg-fuchsia-500 text-black text-[10px] font-black px-2 py-0.5 rounded-full">👑 LEGEND</div>
+      )}
+      {!props.legendItem && props.premium && (
         <div className="absolute -top-2 -right-2 bg-amber-500 text-black text-[10px] font-black px-2 py-0.5 rounded-full">PREMIUM</div>
       )}
       {props.preview ?? (
@@ -1340,14 +1399,35 @@ function ShopCard(props: {
           <div className="text-center text-cyan-300 text-xs font-bold py-1.5 border border-cyan-500/50 rounded">EQUIPPED</div>
         ) : props.isOwned ? (
           <button onClick={props.onEquip} className="w-full py-1.5 text-xs font-bold border border-slate-500 text-slate-200 rounded hover:bg-slate-700">EQUIP</button>
-        ) : props.isLocked ? (
-          <button onClick={props.onBuy} className="w-full py-1.5 text-xs font-bold border border-amber-500/60 text-amber-300 rounded hover:bg-amber-500/10">🔒 FULL ACCESS</button>
-        ) : levelBlocked ? (
-          <div className="text-center text-slate-500 text-xs py-1.5 border border-slate-800 rounded">Requires level {props.minLevel}</div>
-        ) : (
-          <button onClick={props.onBuy} className="w-full py-1.5 text-xs font-bold border border-emerald-500/60 text-emerald-300 rounded hover:bg-emerald-500/10">
-            BUY — ${props.price.toLocaleString()}
+        ) : props.legendItem && props.isLocked ? (
+          <button onClick={props.onBuy} className="w-full py-1.5 text-xs font-bold border border-fuchsia-500/70 text-fuchsia-300 rounded hover:bg-fuchsia-500/10">
+            👑 FOUNDER'S LEGEND {FOUNDER_LEGEND_PRICE}
           </button>
+        ) : props.isLocked ? (
+          <div className="flex gap-1.5">
+            <button onClick={props.onBuy} className="flex-1 py-1.5 text-xs font-bold border border-amber-500/60 text-amber-300 rounded hover:bg-amber-500/10">🔒 FULL ACCESS</button>
+            {usdBtn}
+          </div>
+        ) : levelBlocked ? (
+          <div className="flex items-center gap-1.5">
+            <div className="flex-1 text-center text-slate-500 text-[11px] py-1.5 border border-slate-800 rounded">Requires level {props.minLevel}</div>
+            {props.usd > 0 && (
+              <button
+                onClick={props.onBuyUsd}
+                title="Skip the level gate — instant unlock, demo checkout, no real payment"
+                className="px-2.5 py-1.5 text-xs font-black border border-fuchsia-500/60 text-fuchsia-300 rounded hover:bg-fuchsia-500/10 whitespace-nowrap"
+              >
+                ⚡ ${props.usd.toFixed(2)}
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex gap-1.5">
+            <button onClick={props.onBuy} className="flex-1 py-1.5 text-xs font-bold border border-emerald-500/60 text-emerald-300 rounded hover:bg-emerald-500/10">
+              BUY — ${props.price.toLocaleString()}
+            </button>
+            {usdBtn}
+          </div>
         )}
       </div>
     </div>

@@ -22,6 +22,7 @@ export interface SaveData {
   skin: string
   theme: string
   fullAccess: boolean // owns the Full Access Pass (monetization flag)
+  legend: boolean // owns the Founder's Legend bundle ($99.99 ultra tier)
   muted: boolean
   tutorialDone: boolean // first-time onboarding finished (or skipped)
   autoCycle: boolean // environment rotates through owned themes on a timer
@@ -44,6 +45,7 @@ export function defaultSave(): SaveData {
     skin: 'stock',
     theme: 'midnight',
     fullAccess: false,
+    legend: false,
     muted: false,
     tutorialDone: false,
     autoCycle: false,
@@ -68,6 +70,7 @@ export function loadSave(): SaveData {
       shards: [...new Set(parsed.shards ?? [])],
       owned: parsed.owned ?? base.owned,
       tollsPaid: parsed.tollsPaid ?? [],
+      legend: parsed.legend ?? false,
     }
   } catch {
     return defaultSave()
