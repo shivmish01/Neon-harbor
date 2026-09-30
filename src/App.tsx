@@ -190,6 +190,17 @@ export default function App() {
     }
     // Test hook: ?hud=0 hides HUD panels for clean cinematic recordings
     if (params.get('hud') === '0') document.body.classList.add('nh-cinema')
+    // Review hook: ?unlock=founder grants the full game on THIS machine only
+    // (owner playtest — sets the same flags the demo checkouts set)
+    if (params.get('unlock') === 'founder') {
+      const s = saveRef.current
+      s.fullAccess = true
+      s.legend = true
+      for (const item of [...SKINS, ...THEMES]) {
+        if (!s.owned.includes(item.id)) s.owned.push(item.id)
+      }
+      commit()
+    }
     if (params.has('autostart')) {
       enterGame()
       // Test hook: ?autostart&at=beach teleports to the shore for screenshots
