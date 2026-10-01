@@ -103,13 +103,13 @@
 }
 
 .menu-btn {
-  padding: 0.8rem 1rem;
+  padding: 0.85rem 1.1rem;
   border: 1px solid rgba(148, 163, 184, 0.35);
   border-radius: 0.6rem;
   color: #e2e8f0;
   letter-spacing: 0.25em;
   font-weight: 700;
-  font-size: 0.8rem;
+  font-size: 0.95rem;
   background: rgba(15, 23, 42, 0.6);
   transition: all 0.15s ease;
 }
@@ -117,11 +117,80 @@
   border-color: rgba(34, 211, 238, 0.7);
   color: #67e8f9;
   box-shadow: 0 0 18px rgba(34, 211, 238, 0.25);
+  transform: translateY(-1px);
+}
+.menu-btn:active {
+  transform: translateY(1px);
 }
 .menu-btn-primary {
   border-color: rgba(34, 211, 238, 0.8);
   color: #22d3ee;
   background: rgba(34, 211, 238, 0.12);
+}
+
+/* Animated attention pulse for buttons the game is telling you to press
+   (main-menu primary action, checkout, tutorial targets). */
+.btn-attend {
+  animation: btn-attend-pulse 1.6s ease-in-out infinite;
+}
+@keyframes btn-attend-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(34, 211, 238, 0.25); transform: scale(1); }
+  50% { box-shadow: 0 0 26px rgba(34, 211, 238, 0.6); transform: scale(1.03); }
+}
+.btn-attend-amber {
+  animation: btn-attend-amber 1.6s ease-in-out infinite;
+}
+@keyframes btn-attend-amber {
+  0%, 100% { box-shadow: 0 0 8px rgba(251, 191, 36, 0.25); transform: scale(1); }
+  50% { box-shadow: 0 0 26px rgba(251, 191, 36, 0.6); transform: scale(1.03); }
+}
+.btn-attend-fuchsia {
+  animation: btn-attend-fuchsia 1.6s ease-in-out infinite;
+}
+@keyframes btn-attend-fuchsia {
+  0%, 100% { box-shadow: 0 0 8px rgba(232, 121, 249, 0.25); transform: scale(1); }
+  50% { box-shadow: 0 0 26px rgba(232, 121, 249, 0.6); transform: scale(1.03); }
+}
+
+/* Key cap badge — wraps keys the tutorial/prompts tell you to press */
+.key-cap {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  margin: 0 0.15rem;
+  border-radius: 0.4rem;
+  border: 1px solid rgba(34, 211, 238, 0.7);
+  background: rgba(34, 211, 238, 0.15);
+  color: #a5f3fc;
+  font-weight: 800;
+  font-size: 0.85em;
+  letter-spacing: 0.08em;
+  box-shadow: 0 2px 0 rgba(34, 211, 238, 0.45);
+  animation: key-cap-pulse 1.4s ease-in-out infinite;
+  white-space: nowrap;
+}
+@keyframes key-cap-pulse {
+  0%, 100% { box-shadow: 0 2px 0 rgba(34, 211, 238, 0.45), 0 0 6px rgba(34, 211, 238, 0.2); }
+  50% { box-shadow: 0 2px 0 rgba(34, 211, 238, 0.45), 0 0 18px rgba(34, 211, 238, 0.65); }
+}
+.key-cap-amber {
+  border-color: rgba(251, 191, 36, 0.75);
+  background: rgba(251, 191, 36, 0.14);
+  color: #fde68a;
+  box-shadow: 0 2px 0 rgba(251, 191, 36, 0.5);
+  animation-name: key-cap-pulse-amber;
+}
+@keyframes key-cap-pulse-amber {
+  0%, 100% { box-shadow: 0 2px 0 rgba(251, 191, 36, 0.5), 0 0 6px rgba(251, 191, 36, 0.2); }
+  50% { box-shadow: 0 2px 0 rgba(251, 191, 36, 0.5), 0 0 18px rgba(251, 191, 36, 0.65); }
+}
+
+/* Menu panels slide in gently instead of popping */
+.menu-in {
+  animation: menu-in 0.35s ease-out;
+}
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .job-card {
@@ -138,10 +207,10 @@
 }
 
 .shop-tab {
-  padding: 0.45rem 1rem;
+  padding: 0.5rem 1.1rem;
   border: 1px solid rgba(148, 163, 184, 0.3);
   border-radius: 0.5rem;
-  font-size: 0.75rem;
+  font-size: 0.85rem;
   font-weight: 700;
   letter-spacing: 0.2em;
   color: #94a3b8;
@@ -153,9 +222,9 @@
 }
 
 .toast {
-  padding: 0.4rem 1rem;
+  padding: 0.5rem 1.1rem;
   border-radius: 0.5rem;
-  font-size: 0.85rem;
+  font-size: 0.95rem;
   font-weight: 600;
   background: rgba(8, 12, 24, 0.85);
   border: 1px solid;

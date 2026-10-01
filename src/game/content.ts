@@ -39,7 +39,7 @@ export interface Theme {
 
 export const FULL_ACCESS_PRICE = '$14.99'
 export const FOUNDER_LEGEND_PRICE = '$99.99'
-export const GAME_VERSION = 'v0.15.3'
+export const GAME_VERSION = 'v0.15.5'
 export const GAME_TITLE = 'NEON HARBOR'
 
 // ---------- CAR SKINS ----------

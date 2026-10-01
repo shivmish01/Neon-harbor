@@ -477,7 +477,7 @@ export default function App() {
           {assetsReady ? (
             <button
               onClick={enterGame}
-              className="mt-10 px-12 py-4 bg-cyan-500/20 border border-cyan-400 text-cyan-300 text-xl tracking-[0.3em] rounded hover:bg-cyan-400/30 hover:shadow-[0_0_30px_rgba(34,211,238,0.5)] transition-all"
+              className="mt-10 px-12 py-4 bg-cyan-500/20 border border-cyan-400 text-cyan-300 text-xl tracking-[0.3em] rounded hover:bg-cyan-400/30 hover:shadow-[0_0_30px_rgba(34,211,238,0.5)] transition-all btn-attend"
             >
               ENTER THE HARBOR
             </button>
@@ -504,16 +504,16 @@ export default function App() {
           <div className="text-cyan-400 tracking-[0.5em] text-xs mb-2">EARLY ACCESS {GAME_VERSION}</div>
           <h1 className="text-5xl md:text-7xl font-black text-white neon-cyan tracking-wider">{GAME_TITLE}</h1>
           <div className="text-slate-500 tracking-[0.35em] mt-3 text-[10px] uppercase">A vplay.gg exclusive</div>
-          <div className="flex gap-3 mt-10">
-            <button onClick={enterGame} className="menu-btn menu-btn-primary">DRIVE</button>
+          <div className="flex gap-3 mt-10 menu-in">
+            <button onClick={enterGame} className="menu-btn menu-btn-primary btn-attend">DRIVE</button>
             <button onClick={() => setOverlay('shop')} className="menu-btn">GARAGE SHOP</button>
             <button onClick={() => setOverlay('help')} className="menu-btn">HOW TO PLAY</button>
           </div>
-          <div className="flex gap-3 mt-3">
+          <div className="flex gap-3 mt-3 menu-in">
             <button onClick={() => { setProgressTab('trophies'); setOverlay('progress') }} className="menu-btn menu-btn-ghost">🏆 TROPHIES</button>
             <button onClick={() => { setProgressTab('districts'); setOverlay('progress') }} className="menu-btn menu-btn-ghost">🗺️ DISTRICTS</button>
             {!save.fullAccess && (
-              <button onClick={() => setOverlay('checkout')} className="menu-btn menu-btn-ghost border-amber-400/60 text-amber-300">🔓 FULL ACCESS</button>
+              <button onClick={() => setOverlay('checkout')} className="menu-btn menu-btn-ghost border-amber-400/60 text-amber-300 btn-attend-amber">🔓 FULL ACCESS</button>
             )}
           </div>
           <div className="mt-10 text-slate-300 text-sm flex gap-8">
@@ -574,8 +574,8 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              <div className="hud-panel text-center text-[11px] text-slate-400">
-                {isTouch ? <>Free roam — head to the <span className="text-cyan-300">glowing garage beam</span> for jobs</> : <>Free roam — visit the <span className="text-cyan-300">glowing garage beam</span> and press <b>E</b> for jobs</>}
+              <div className="hud-panel text-center text-[13px] text-slate-300">
+                {isTouch ? <>Free roam — head to the <span className="text-cyan-300">glowing garage beam</span> for jobs</> : <>Free roam — visit the <span className="text-cyan-300">glowing garage beam</span> and press <span className="key-cap">E</span> for jobs</>}
               </div>
             )}
           </div>
@@ -588,7 +588,7 @@ export default function App() {
               className="absolute top-24 left-1/2 -translate-x-1/2 z-20 w-[24rem] max-w-[80vw] animate-pulse tutorial-dim"
             >
               <div className="hud-panel border-cyan-400/70 shadow-[0_0_28px_rgba(34,211,238,0.3)] w-full">
-                <div className="flex justify-between text-[10px] tracking-[0.2em] text-cyan-300">
+                <div className="flex justify-between text-[12px] tracking-[0.2em] text-cyan-300">
                   <span>FIRST NIGHT — {hud.tutorial.step}/{hud.tutorial.total}</span>
                   <span className="flex items-center gap-2">
                     {!isTouch && <span className="text-slate-500 hidden sm:inline">press T to skip</span>}
@@ -599,8 +599,8 @@ export default function App() {
                     >✕</button>
                   </span>
                 </div>
-                <div className="text-white font-bold text-sm mt-1 leading-snug">{isTouch ? touchTitle(hud.tutorial.title) : hud.tutorial.title}</div>
-                <div className="text-[11px] text-slate-300 mt-0.5 leading-snug">{isTouch ? touchHint(hud.tutorial.hint) : hud.tutorial.hint}</div>
+                <div className="text-white font-bold text-base mt-1 leading-snug">{isTouch ? touchTitle(hud.tutorial.title) : hud.tutorial.title}</div>
+                <div className="text-[13px] text-slate-200 mt-1 leading-relaxed">{isTouch ? touchHint(hud.tutorial.hint) : hintWithKeys(hud.tutorial.hint)}</div>
               </div>
             </div>
           )}
@@ -609,24 +609,24 @@ export default function App() {
           <div className="absolute top-[196px] right-4 z-20 flex flex-col items-end gap-2">
             <div className={`hud-panel flex flex-col items-end gap-1 ${hud.heatStars > 0 ? 'border-red-500/70 shadow-[0_0_18px_rgba(255,50,80,0.4)]' : ''}`}>
               <div className="flex gap-1 items-center">
-                <span className="text-[10px] text-slate-400 mr-1 tracking-widest">PATROL</span>
+                <span className="text-xs text-slate-400 mr-1 tracking-widest">PATROL</span>
                 {[1, 2, 3, 4, 5].map((i) => (
-                  <span key={i} className={`text-sm ${hud.heat >= i ? 'text-red-500 drop-shadow-[0_0_6px_rgba(255,50,80,0.9)]' : 'text-slate-700'}`}>★</span>
+                  <span key={i} className={`text-base ${hud.heat >= i ? 'text-red-500 drop-shadow-[0_0_6px_rgba(255,50,80,0.9)]' : 'text-slate-700'}`}>★</span>
                 ))}
               </div>
               {hud.heatStars > 0 && (
-                <div className="text-[10px] text-red-200 text-right leading-tight max-w-[11rem]">
+                <div className="text-xs text-red-200 text-right leading-snug max-w-[13rem]">
                   {hud.bustedProgress > 0.25 ? (
-                    <span className="text-red-400 font-bold animate-pulse text-[11px]">
-                      {isTouch ? '⚠ GRABBED — MASH THE BUTTON!' : '⚠ GRABBED — MASH SPACE to break free!'}
+                    <span className="text-red-400 font-bold animate-pulse text-[13px]">
+                      {isTouch ? '⚠ GRABBED — MASH THE BUTTON!' : <>⚠ GRABBED — MASH <span className="key-cap key-cap-amber" style={{ animationDuration: '0.4s' }}>SPACE</span> to break free!</>}
                     </span>
                   ) : hud.bustedProgress > 0.08 ? (
-                    <span className="text-red-400 font-bold animate-pulse text-[11px]">
+                    <span className="text-red-400 font-bold animate-pulse text-[13px]">
                       ⚠ DON'T STOP — floor it or they'll box you in!
                     </span>
                   ) : hud.pursued ? (
-                    <span className="text-amber-300 font-bold text-[11px]">
-                      {isTouch ? '★ CHASED — tap NITRO to boost and keep driving!' : "★ CHASED — you're faster: hold SHIFT (boost) and keep driving to shake them!"}
+                    <span className="text-amber-300 font-bold text-[13px]">
+                      {isTouch ? '★ CHASED — tap NITRO to boost and keep driving!' : <>★ CHASED — you're faster: hold <span className="key-cap key-cap-amber">SHIFT</span> and keep driving to shake them!</>}
                     </span>
                   ) : (
                     <span>EVADE — keep 60m+ from patrol drones until the stars fade</span>
@@ -634,7 +634,7 @@ export default function App() {
                 </div>
               )}
             </div>
-            <div className="hud-panel text-[10px] text-slate-400">
+            <div className="hud-panel text-xs text-slate-400">
               Shards <span className="text-cyan-300 font-bold">{hud.shards}/{hud.totalShards}</span>
             </div>
           </div>
@@ -750,13 +750,13 @@ export default function App() {
 
           {/* E prompt — job board at the garage, or toll booth at a locked border */}
           {!overlay && !isTouch && hud.nearGarage && (
-            <div className="nh-prompt absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2 bg-cyan-500/20 border border-cyan-400 rounded text-cyan-200 text-sm animate-pulse">
-              Press <b>E</b> — open the Job Board
+            <div className="nh-prompt absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2.5 bg-cyan-500/20 border border-cyan-400 rounded text-cyan-100 text-base animate-pulse">
+              Press <span className="key-cap">E</span> — open the Job Board
             </div>
           )}
           {!overlay && !isTouch && !hud.nearGarage && hud.nearToll && (
-            <div className="nh-prompt absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2 bg-amber-500/20 border border-amber-400 rounded text-amber-200 text-sm animate-pulse">
-              Press <b>E</b> — pay ${hud.nearToll.price} toll to enter {hud.nearToll.name}
+            <div className="nh-prompt absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2.5 bg-amber-500/20 border border-amber-400 rounded text-amber-100 text-base animate-pulse">
+              Press <span className="key-cap key-cap-amber">E</span> — pay ${hud.nearToll.price} toll to enter {hud.nearToll.name}
             </div>
           )}
 
@@ -830,7 +830,7 @@ export default function App() {
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
           <h2 className="text-4xl font-black text-white tracking-[0.3em] mb-8">PAUSED</h2>
           <div className="flex flex-col gap-3 w-64">
-            <button onClick={() => setOverlay(null)} className="menu-btn menu-btn-primary">RESUME</button>
+            <button onClick={() => setOverlay(null)} className="menu-btn menu-btn-primary btn-attend">RESUME</button>
             <button onClick={() => setOverlay('shop')} className="menu-btn">GARAGE SHOP</button>
             <button onClick={() => setOverlay('help')} className="menu-btn">HOW TO PLAY</button>
             <button onClick={toggleMute} className="menu-btn">{save.muted ? 'UNMUTE' : 'MUTE'}</button>
@@ -1135,7 +1135,7 @@ export default function App() {
             {!save.legend && (
               <button
                 onClick={buyLegend}
-                className="w-full mt-3 py-3 bg-fuchsia-500/15 border border-fuchsia-400/70 text-fuchsia-200 rounded hover:bg-fuchsia-400/25 font-bold tracking-widest text-sm"
+                className="w-full mt-3 py-3 bg-fuchsia-500/15 border border-fuchsia-400/70 text-fuchsia-200 rounded hover:bg-fuchsia-400/25 font-bold tracking-widest text-sm btn-attend-fuchsia"
               >
                 👑 GO LEGEND — {FOUNDER_LEGEND_PRICE}
               </button>
@@ -1328,6 +1328,20 @@ function touchHint(h: string) {
   return h
 }
 
+// Wrap key names (W, E, SPACE, SHIFT...) in an animated key-cap badge so the
+// instruction "press E" visually points at the exact key to hit.
+const KEY_TOKENS = /\b(WASD|SPACE|SHIFT|ENTER|ESCAPE|ESC|ARROW KEYS|UP|DOWN|LEFT|RIGHT|[WASDECRTHZ])\b/gi
+function hintWithKeys(text: string, amber = false) {
+  const parts = text.split(KEY_TOKENS)
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <span key={i} className={`key-cap ${amber ? 'key-cap-amber' : ''}`}>{part.toUpperCase()}</span>
+    ) : (
+      <span key={i}>{part}</span>
+    )
+  )
+}
+
 // ---------- Live environment preview (animated mini-scene for theme cards) ----------
 function ThemePreview({ theme }: { theme: Theme }) {
   const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`
@@ -1404,7 +1418,7 @@ function ShopCard(props: {
         </div>
       )}
       <div className="text-white font-bold text-sm">{props.name}</div>
-      <div className="text-slate-400 text-[11px] mt-0.5 leading-snug min-h-[2rem]">{props.desc}</div>
+      <div className="text-slate-300 text-[13px] mt-0.5 leading-snug min-h-[2rem]">{props.desc}</div>
       <div className="mt-2">
         {props.isEquipped ? (
           <div className="text-center text-cyan-300 text-xs font-bold py-1.5 border border-cyan-500/50 rounded">EQUIPPED</div>
