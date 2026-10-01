@@ -2045,12 +2045,21 @@ export class GameEngine {
     centers.sort((a, b) => Math.abs(a) - Math.abs(b))
     const avenues = centers.slice(0, 2)
 
-    // Jersey barriers, every ~4.1m with small gaps, following the avenue centerline
+    // Jersey barriers, every ~4.1m with small gaps, following the avenue centerline.
+    // IMPORTANT: the median MUST break at every intersection — a solid wall
+    // through the crosswalk traps cars (and players) with no way across.
+    const allCenters: number[] = []
+    for (let k = 0; k <= N; k++) allCenters.push(-HALF + ROAD / 2 + k * CELL)
+    const nearCrossing = (t: number) => allCenters.some((c) => Math.abs(t - c) < ROAD / 2 + 3)
     const placements: Array<{ x: number; z: number; rot: number }> = []
     for (let ai = 0; ai < avenues.length; ai++) {
       const c = avenues[ai]
       for (let t = -HALF + 10; t < HALF - 10; t += 4.1) {
         if (rand() < 0.07) continue
+        if (nearCrossing(t)) continue
+        // Keep the central garage plaza clean — the player spawns there and
+        // their very first drive must not be a slalom of concrete
+        if (Math.abs(t) < 45 && Math.abs(c) < 45) continue
         placements.push(ai === 0 ? { x: t, z: c, rot: 0 } : { x: c, z: t, rot: Math.PI / 2 })
       }
     }
