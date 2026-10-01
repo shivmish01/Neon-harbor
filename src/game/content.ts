@@ -39,7 +39,7 @@ export interface Theme {
 
 export const FULL_ACCESS_PRICE = '$14.99'
 export const FOUNDER_LEGEND_PRICE = '$99.99'
-export const GAME_VERSION = 'v0.15.5'
+export const GAME_VERSION = 'v0.15.6'
 export const GAME_TITLE = 'NEON HARBOR'
 
 // ---------- CAR SKINS ----------
@@ -64,14 +64,14 @@ export const SKINS: Skin[] = [
 export const THEMES: Theme[] = [
   {
     id: 'midnight', name: 'Midnight Rain', desc: 'The classic. Neon reflections, warm rain.',
-    price: 0, premium: false,
-    sky: 0x070a18, fog: 0x0d1226, fogDensity: 0.0078,
-    ambient: 0x41527a, ambientIntensity: 1.15, moon: 0x9cc0ff, moonIntensity: 0.85,
+    price: 0, usd: 0, premium: false,
+    sky: 0x070a18, fog: 0x0d1226, fogDensity: 0.006,
+    ambient: 0x41527a, ambientIntensity: 1.55, moon: 0x9cc0ff, moonIntensity: 1.1,
     ground: 0x0d1120, water: 0x0d2c40, rain: true,
   },
   {
     id: 'day', name: 'Harbor Day', desc: 'Bright sun, blue water, the port wide awake.',
-    price: 0, premium: false,
+    price: 0, usd: 0, premium: false,
     sky: 0x8ec8f0, fog: 0xaed4ee, fogDensity: 0.0011,
     ambient: 0xcfe0f5, ambientIntensity: 0.7, moon: 0xfff3da, moonIntensity: 1.7,
     ground: 0x8b95a1, water: 0x3f7fab, rain: false,
@@ -80,21 +80,21 @@ export const THEMES: Theme[] = [
     id: 'golden', name: 'Golden Hour', desc: 'The harbor at eternal sunset. Earned, not given.',
     price: 800, usd: 4.99, premium: false,
     sky: 0x2a1608, fog: 0x58290a, fogDensity: 0.0065,
-    ambient: 0xffb26b, ambientIntensity: 1.0, moon: 0xffd9a0, moonIntensity: 0.9,
+    ambient: 0xffb26b, ambientIntensity: 1.2, moon: 0xffd9a0, moonIntensity: 1.05,
     ground: 0x171008, water: 0x3a2410, rain: false,
   },
   {
     id: 'acid', name: 'Acid Rain', desc: 'Something leaked in Sector 7. Green haze, toxic rain.',
     price: 0, usd: 9.99, premium: true,
-    sky: 0x03130a, fog: 0x062b16, fogDensity: 0.0088,
-    ambient: 0x3a9160, ambientIntensity: 1.2, moon: 0x7dffa8, moonIntensity: 0.75,
+    sky: 0x03130a, fog: 0x062b16, fogDensity: 0.007,
+    ambient: 0x3a9160, ambientIntensity: 1.5, moon: 0x7dffa8, moonIntensity: 0.95,
     ground: 0x06120b, water: 0x0a3320, rain: true,
   },
   {
     id: 'sakura', name: 'Sakura Dusk', desc: 'Pink neon festival night under the blossom towers.',
     price: 0, usd: 9.99, premium: true,
-    sky: 0x170a1c, fog: 0x2b0f33, fogDensity: 0.007,
-    ambient: 0xa06cc0, ambientIntensity: 1.25, moon: 0xffc2e0, moonIntensity: 0.85,
+    sky: 0x170a1c, fog: 0x2b0f33, fogDensity: 0.0056,
+    ambient: 0xa06cc0, ambientIntensity: 1.55, moon: 0xffc2e0, moonIntensity: 1.0,
     ground: 0x120a16, water: 0x2a1030, rain: false,
   },
 ]

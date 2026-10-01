@@ -639,21 +639,25 @@ export default function App() {
             </div>
           </div>
 
-          {/* bottom-left: speed + boost (raised on touch so it never sits under the joystick) */}
+          {/* bottom-left: Asphalt-style circular speedometer + nitro ring (raised on touch so it never sits under the joystick) */}
           <div className={`absolute left-4 z-20 ${isTouch ? 'bottom-44' : 'bottom-4'}`}>
-            <div className="hud-panel">
-              <div className="text-4xl font-black text-white font-mono">{hud.speedKmh}<span className="text-base text-slate-400 font-normal"> km/h</span></div>
-              <div className="w-48 h-2 bg-slate-800 rounded mt-2">
-                <div className={`h-full rounded ${hud.boosting ? 'bg-fuchsia-400 shadow-[0_0_12px_rgba(232,121,249,0.9)]' : 'bg-cyan-500'}`} style={{ width: `${hud.boost}%` }} />
+            {isTouch ? (
+              <Speedo speed={hud.speedKmh} boost={hud.boost} boosting={hud.boosting} drift={hud.drift} />
+            ) : (
+              <div className="hud-panel">
+                <div className="text-4xl font-black text-white font-mono">{hud.speedKmh}<span className="text-base text-slate-400 font-normal"> km/h</span></div>
+                <div className="w-48 h-2 bg-slate-800 rounded mt-2">
+                  <div className={`h-full rounded ${hud.boosting ? 'bg-fuchsia-400 shadow-[0_0_12px_rgba(232,121,249,0.9)]' : 'bg-cyan-500'}`} style={{ width: `${hud.boost}%` }} />
+                </div>
+                <div className="text-[10px] text-slate-400 mt-1">NITRO — hold SHIFT{hud.drift > 0 && <span className="text-yellow-300 ml-2">DRIFT {hud.drift}</span>}</div>
               </div>
-              <div className="text-[10px] text-slate-400 mt-1">{isTouch ? 'NITRO · DRIFT — right-side buttons' : 'NITRO — hold SHIFT'}{hud.drift > 0 && <span className="text-yellow-300 ml-2">DRIFT {hud.drift}</span>}</div>
-            </div>
+            )}
           </div>
 
           {/* bottom-right: keyboard hints (desktop only) */}
           {!isTouch && (
             <div className="absolute bottom-4 right-4 z-20 hud-panel text-[11px] text-slate-400 leading-relaxed">
-              <b className="text-slate-200">WASD</b> drive · <b className="text-slate-200">SHIFT</b> nitro · <b className="text-slate-200">SPACE</b> handbrake<br />
+              <b className="text-slate-200">WASD</b> drive · <b className="text-slate-200">SHIFT</b> nitro · <b className="text-slate-200">SPACE</b> handbrake · <b className="text-slate-200">R</b> unstuck<br />
               <b className="text-slate-200">E</b> job board · <b className="text-slate-200">H</b> horn · <b className="text-slate-200">C</b> camera · <b className="text-slate-200">ESC</b> menu
             </div>
           )}
@@ -674,6 +678,7 @@ export default function App() {
                 <div className="flex flex-col items-end gap-2 pointer-events-auto">
                   <div className="flex gap-2">
                     {(hud.nearGarage || hud.nearToll) && <TouchBtn engine={engineRef.current} label="E" tap="e" small />}
+                    {hud.stuck && <TouchBtn engine={engineRef.current} label="RESET" tap="r" small />}
                     <button onClick={togglePhoto} className="touch-btn touch-btn-sm" aria-label="Photo mode">📷</button>
                     <TouchBtn engine={engineRef.current} label="📯" tap="h" small />
                     <button
@@ -686,8 +691,8 @@ export default function App() {
                   </div>
                   <div className="flex items-end gap-2">
                     <div className="flex flex-col gap-2">
-                      <TouchBtn engine={engineRef.current} label="NITRO" hold="shift" wide />
-                      <TouchBtn engine={engineRef.current} label="DRIFT" hold=" " />
+                      <TouchBtn engine={engineRef.current} label="⚡" hold="shift" variant="nitro" ready={hud.boost >= 95} lit={hud.boosting} />
+                      <TouchBtn engine={engineRef.current} label="DRIFT" hold=" " variant="drift" />
                     </div>
                   </div>
                 </div>
@@ -717,6 +722,7 @@ export default function App() {
                 <div className="flex flex-col items-end gap-2 pointer-events-auto">
                   <div className="flex gap-2">
                     {(hud.nearGarage || hud.nearToll) && <TouchBtn engine={engineRef.current} label="E" tap="e" small />}
+                    {hud.stuck && <TouchBtn engine={engineRef.current} label="RESET" tap="r" small />}
                     <button onClick={togglePhoto} className="touch-btn touch-btn-sm" aria-label="Photo mode">📷</button>
                     <TouchBtn engine={engineRef.current} label="📯" tap="h" small />
                     <button
@@ -729,12 +735,12 @@ export default function App() {
                   </div>
                   <div className="flex items-end gap-2">
                     <div className="flex flex-col gap-2">
-                      <TouchBtn engine={engineRef.current} label="NITRO" hold="shift" wide />
-                      <TouchBtn engine={engineRef.current} label="DRIFT" hold=" " />
+                      <TouchBtn engine={engineRef.current} label="⚡" hold="shift" variant="nitro" ready={hud.boost >= 95} lit={hud.boosting} />
+                      <TouchBtn engine={engineRef.current} label="DRIFT" hold=" " variant="drift" />
                     </div>
                     <div className="flex flex-col gap-2">
-                      <TouchBtn engine={engineRef.current} label="▲" hold="w" tall />
-                      <TouchBtn engine={engineRef.current} label="▼" hold="s" />
+                      <TouchBtn engine={engineRef.current} label="▲" hold="w" variant="pedal" tall />
+                      <TouchBtn engine={engineRef.current} label="▼" hold="s" variant="pedal" />
                     </div>
                   </div>
                 </div>
@@ -757,6 +763,13 @@ export default function App() {
           {!overlay && !isTouch && !hud.nearGarage && hud.nearToll && (
             <div className="nh-prompt absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2.5 bg-amber-500/20 border border-amber-400 rounded text-amber-100 text-base animate-pulse">
               Press <span className="key-cap key-cap-amber">E</span> — pay ${hud.nearToll.price} toll to enter {hud.nearToll.name}
+            </div>
+          )}
+
+          {/* stuck recovery — car wedged on a pole/barrier/wall: offer the reset */}
+          {!overlay && hud.stuck && (
+            <div className="nh-prompt absolute bottom-40 left-1/2 -translate-x-1/2 z-20 px-5 py-3 bg-amber-500/25 border-2 border-amber-400 rounded-lg text-amber-100 text-base font-bold animate-pulse text-center">
+              {isTouch ? <>Car stuck? Tap <span className="key-cap key-cap-amber">RESET</span></> : <>Car stuck? Press <span className="key-cap key-cap-amber">R</span> to get back on the road</>}
             </div>
           )}
 
@@ -1218,8 +1231,12 @@ function TouchBtn(props: {
   wide?: boolean
   tall?: boolean
   mash?: boolean
+  variant?: 'nitro' | 'drift' | 'pedal'
+  /** nitro state: fully charged (pulses) and/or currently firing (hard glow) */
+  ready?: boolean
+  lit?: boolean
 }) {
-  const cls = `touch-btn${props.small ? ' touch-btn-sm' : ''}${props.wide ? ' touch-btn-wide' : ''}${props.tall ? ' touch-btn-tall' : ''}${props.mash ? ' touch-btn-mash' : ''}`
+  const cls = `touch-btn${props.variant ? ` touch-btn-${props.variant}` : ''}${props.small ? ' touch-btn-sm' : ''}${props.wide ? ' touch-btn-wide' : ''}${props.tall ? ' touch-btn-tall' : ''}${props.mash ? ' touch-btn-mash' : ''}${props.ready && props.variant === 'nitro' ? ' ready' : ''}${props.lit && props.variant === 'nitro' ? ' lit' : ''}`
   const start = (e: React.PointerEvent<HTMLButtonElement>) => {
     e.preventDefault()
     try {
@@ -1285,7 +1302,7 @@ function Joystick({ engine }: { engine: GameEngine | null }) {
   }
   return (
     <div
-      className="pointer-events-auto touch-none select-none relative w-32 h-32 rounded-full border-2 border-cyan-400/40 bg-slate-900/50 backdrop-blur-[2px]"
+      className="joy-base pointer-events-auto touch-none select-none"
       onPointerDown={(e) => {
         e.preventDefault()
         try {
@@ -1303,9 +1320,53 @@ function Joystick({ engine }: { engine: GameEngine | null }) {
       onContextMenu={(e) => e.preventDefault()}
     >
       <div
-        className="absolute left-1/2 top-1/2 w-14 h-14 -ml-7 -mt-7 rounded-full bg-cyan-400/50 border border-cyan-200/80 shadow-[0_0_16px_rgba(34,211,238,0.5)]"
+        className="joy-knob"
         style={{ transform: `translate(${knob.x}px, ${knob.y}px)` }}
       />
+    </div>
+  )
+}
+
+// ---------- Asphalt-style circular speedometer (mobile) ----------
+// Glass dial with a sweeping needle, a glowing speed arc, tick marks,
+// a nitro charge ring around the dial, and a live km/h readout.
+function Speedo({ speed, boost, boosting, drift }: { speed: number; boost: number; boosting: boolean; drift: number }) {
+  const MAX = 260
+  const pct = Math.min(1, Math.max(0, speed / MAX))
+  const angle = -120 + pct * 240 // 240° sweep, starting bottom-left
+  return (
+    <div className="speedo">
+      <svg viewBox="0 0 120 120" className="speedo-dial">
+        <circle cx="60" cy="60" r="54" className="speedo-bg" />
+        <circle cx="60" cy="60" r="45" pathLength="100" strokeDasharray={`${pct * 100} 100`} className="speedo-arc" />
+        {Array.from({ length: 25 }).map((_, i) => {
+          const a = ((-120 + i * 10) * Math.PI) / 180
+          const r1 = 39
+          const r2 = i % 5 === 0 ? 32 : 36
+          return (
+            <line
+              key={i}
+              x1={60 + r1 * Math.cos(a)}
+              y1={60 + r1 * Math.sin(a)}
+              x2={60 + r2 * Math.cos(a)}
+              y2={60 + r2 * Math.sin(a)}
+              className={i % 5 === 0 ? 'speedo-tick-major' : 'speedo-tick'}
+            />
+          )
+        })}
+        <g transform={`rotate(${angle} 60 60)`}>
+          <line x1="60" y1="62" x2="60" y2="26" className="speedo-needle" />
+        </g>
+        <circle cx="60" cy="60" r="4.5" className="speedo-hub" />
+      </svg>
+      <svg viewBox="0 0 120 120" className="speedo-nitro-ring">
+        <circle cx="60" cy="60" r="51" pathLength="100" strokeDasharray={`${boost} 100`} className={boosting ? 'speedo-nitro-boost' : 'speedo-nitro-idle'} />
+      </svg>
+      <div className="speedo-readout">
+        <div className="speedo-val">{Math.round(speed)}</div>
+        <div className="speedo-unit">km/h</div>
+      </div>
+      {drift > 0 && <div className="speedo-drift">DRIFT +{drift}</div>}
     </div>
   )
 }

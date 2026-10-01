@@ -47,6 +47,8 @@ export interface HudState {
   nearToll: { name: string; price: number } | null
   busted: boolean
   boosting: boolean
+  /** car is wedged (gas held but no movement) — HUD offers the reset recovery */
+  stuck: boolean
 }
 
 export interface EngineHooks {
@@ -247,6 +249,7 @@ export class GameEngine {
   private pos = new THREE.Vector3(0, 0, 20)
   private vel = new THREE.Vector3()
   private heading = Math.PI
+  private stuckTime = 0
   private vy = 0
   private grounded = true
   private boost = 100
@@ -332,7 +335,7 @@ export class GameEngine {
     this.renderer = renderer
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.0
+    this.renderer.toneMappingExposure = 1.15
     // Real-time shadows — the single biggest realism lift in the whole render
     this.renderer.shadowMap.enabled = true
     this.camera = new THREE.PerspectiveCamera(62, 1, 0.1, 1600)
@@ -2656,6 +2659,27 @@ export class GameEngine {
   }
 
   // =============== INPUT ===============
+  /** Unstick: snap the car onto the nearest road center, aligned to the lane. */
+  resetToRoad(): void {
+    const kx = THREE.MathUtils.clamp(Math.round((this.pos.x + HALF - ROAD / 2) / CELL), 0, N)
+    const kz = THREE.MathUtils.clamp(Math.round((this.pos.z + HALF - ROAD / 2) / CELL), 0, N)
+    const cx = -HALF + ROAD / 2 + kx * CELL
+    const cz = -HALF + ROAD / 2 + kz * CELL
+    if (Math.abs(this.pos.x - cx) <= Math.abs(this.pos.z - cz)) {
+      this.pos.x = cx // snap onto the vertical road
+      this.pos.z = THREE.MathUtils.clamp(this.pos.z, -HALF + ROAD, HALF - ROAD)
+    } else {
+      this.pos.z = cz // snap onto the horizontal road
+      this.pos.x = THREE.MathUtils.clamp(this.pos.x, -HALF + ROAD, HALF - ROAD)
+    }
+    // Face along the road (nearest 90°) so you're never pointed into a wall
+    this.heading = Math.round(this.heading / (Math.PI / 2)) * (Math.PI / 2)
+    this.vel.set(0, 0, 0)
+    this.vy = 0
+    this.stuckTime = 0
+    this.hooks.onToast('Back on the road — keep driving!', 'info')
+  }
+
   private onKeyDown = (e: KeyboardEvent): void => {
     const k = e.key.toLowerCase()
     this.keys.add(k)
@@ -2671,6 +2695,10 @@ export class GameEngine {
       this.synth.checkpoint()
     }
     if (k === 'c' && !this.attract) this.camDist = this.camDist > 12 ? 10 : 17
+    if (k === 'r' && !this.attract && !this.paused) {
+      this.resetToRoad()
+      this.synth.checkpoint()
+    }
     if (k === 'p' && !this.attract && !this.paused) this.hooks.onPhotoToggle?.()
     if (k === 'h') this.synth.horn()
     if (k === 't' && !this.attract && !this.paused) {
@@ -3004,6 +3032,10 @@ export class GameEngine {
       const onRoad = this.isOnRoad(this.pos.x, this.pos.z)
       const drag = onRoad ? 0.45 : 2.6
       this.vel.multiplyScalar(Math.exp(-dt * drag))
+      // Stuck detection: flooring the gas but barely moving (wedged on a pole,
+      // barrier or wall). HUD then offers the R-key / RESET-button recovery.
+      if (gas && this.vel.lengthSq() < 4) this.stuckTime += dt
+      else this.stuckTime = 0
     } else {
       this.vel.multiplyScalar(Math.exp(-dt * 3))
     }
@@ -3835,6 +3867,7 @@ export class GameEngine {
       nearToll: this.nearLocked ? { name: this.nearLocked.d.name, price: this.nearLocked.price } : null,
       busted: this.busted,
       boosting: this.boosting,
+      stuck: this.stuckTime > 2 && !this.busted,
     })
   }
 
