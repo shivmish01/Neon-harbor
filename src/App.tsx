@@ -501,7 +501,7 @@ export default function App() {
           {splashStep === 1 && (
             <div className="menu-in flex flex-col items-center px-6">
               <img
-                src="logos/vplay.png"
+                src="logos/vplaygg.svg"
                 alt="vplay.gg"
                 className="w-[70vw] max-w-lg md:max-w-xl drop-shadow-[0_0_28px_rgba(59,130,246,0.4)]"
                 draggable={false}
@@ -519,7 +519,7 @@ export default function App() {
           <div className="text-cyan-400 tracking-[0.5em] text-sm mb-3 animate-pulse">EARLY ACCESS {GAME_VERSION}</div>
           <h1 className="text-6xl md:text-8xl font-black text-white neon-cyan tracking-wider">{GAME_TITLE}</h1>
           <div className="text-fuchsia-500 tracking-[0.4em] mt-2 text-sm md:text-base">FIRST LIGHT</div>
-          <img src="logos/vplay.png" alt="vplay.gg exclusive" className="h-5 md:h-6 mt-4 opacity-90" draggable={false} />
+          <img src="logos/vplaygg.svg" alt="vplay.gg exclusive" className="h-7 md:h-8 mt-4 opacity-95" draggable={false} />
           <p className="text-slate-300 mt-6 max-w-md text-center px-4 text-sm leading-relaxed">
             An open-world neon port city. Run courier jobs, race the harbor, outrun the Patrol — and build your legend.
           </p>
@@ -552,7 +552,7 @@ export default function App() {
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/55 backdrop-blur-[2px]">
           <div className="text-cyan-400 tracking-[0.5em] text-xs mb-2">EARLY ACCESS {GAME_VERSION}</div>
           <h1 className="text-5xl md:text-7xl font-black text-white neon-cyan tracking-wider">{GAME_TITLE}</h1>
-          <img src="logos/vplay.png" alt="vplay.gg exclusive" className="h-4 mt-3 opacity-80" draggable={false} />
+          <img src="logos/vplaygg.svg" alt="vplay.gg exclusive" className="h-5 mt-3 opacity-90" draggable={false} />
           <div className="flex gap-3 mt-10 menu-in">
             <button onClick={enterGame} className="menu-btn menu-btn-primary btn-attend">DRIVE</button>
             <button onClick={() => setOverlay('shop')} className="menu-btn">GARAGE SHOP</button>
