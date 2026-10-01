@@ -46,6 +46,10 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([])
   const [bustedFlash, setBustedFlash] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
+  // Opening splash: Vary Gaming "PRESENTS" → vplay.gg "EXCLUSIVE" → title screen.
+  // 0 = Vary Gaming, 1 = vplay.gg, 2 = splash finished. Skipped by ?autostart
+  // (automated tests) and dismissible with a click/tap.
+  const [splashStep, setSplashStep] = useState(0)
   // Mobile/tablet players get on-screen drive controls instead of keyboard hints
   const [isTouch] = useState(
     () => typeof window !== 'undefined' && (window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window),
@@ -62,6 +66,18 @@ export default function App() {
     mq.addEventListener('change', update)
     return () => mq.removeEventListener('change', update)
   }, [isTouch])
+
+  // Splash sequence timing: each card holds ~2.2s; ?autostart skips straight
+  // into the game (test harness must not wait through branding)
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has('autostart')) {
+      setSplashStep(2)
+      return
+    }
+    if (splashStep >= 2) return
+    const t = setTimeout(() => setSplashStep((s) => s + 1), 2200)
+    return () => clearTimeout(t)
+  }, [splashStep])
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const minimapRef = useRef<HTMLCanvasElement>(null)
@@ -464,13 +480,46 @@ export default function App() {
         className={`nh-minimap absolute top-4 right-4 z-20 rounded-lg border border-cyan-500/30 shadow-[0_0_20px_rgba(34,211,238,0.25)] ${screen === 'game' && hud ? '' : 'hidden'}`}
       />
 
+      {/* ================= OPENING SPLASH (logos, tap to skip) ================= */}
+      {splashStep < 2 && (
+        <button
+          onClick={() => setSplashStep(2)}
+          className="absolute inset-0 z-[60] flex flex-col items-center justify-center bg-[#05060f] cursor-pointer overflow-hidden"
+          aria-label="Skip intro"
+        >
+          {splashStep === 0 && (
+            <div className="menu-in flex flex-col items-center px-6">
+              <div className="text-slate-500 tracking-[0.55em] text-xs md:text-sm mb-6 animate-pulse">PRESENTS</div>
+              <img
+                src="logos/varygaming.png"
+                alt="Vary Gaming"
+                className="w-[78vw] max-w-xl md:max-w-2xl drop-shadow-[0_0_28px_rgba(34,211,238,0.35)]"
+                draggable={false}
+              />
+            </div>
+          )}
+          {splashStep === 1 && (
+            <div className="menu-in flex flex-col items-center px-6">
+              <img
+                src="logos/vplay.png"
+                alt="vplay.gg"
+                className="w-[70vw] max-w-lg md:max-w-xl drop-shadow-[0_0_28px_rgba(59,130,246,0.4)]"
+                draggable={false}
+              />
+              <div className="text-slate-400 tracking-[0.55em] text-xs md:text-sm mt-6 animate-pulse">E X C L U S I V E</div>
+            </div>
+          )}
+          <div className="absolute bottom-8 text-slate-600 text-[11px] tracking-[0.3em]">TAP TO SKIP</div>
+        </button>
+      )}
+
       {/* ================= BOOT ================= */}
       {screen === 'boot' && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-gradient-to-b from-[#05060f]/85 via-[#0a0d1f]/70 to-[#05060f]/85">
           <div className="text-cyan-400 tracking-[0.5em] text-sm mb-3 animate-pulse">EARLY ACCESS {GAME_VERSION}</div>
           <h1 className="text-6xl md:text-8xl font-black text-white neon-cyan tracking-wider">{GAME_TITLE}</h1>
           <div className="text-fuchsia-500 tracking-[0.4em] mt-2 text-sm md:text-base">FIRST LIGHT</div>
-          <div className="text-slate-500 tracking-[0.35em] mt-3 text-[11px] uppercase">A vplay.gg exclusive</div>
+          <img src="logos/vplay.png" alt="vplay.gg exclusive" className="h-5 md:h-6 mt-4 opacity-90" draggable={false} />
           <p className="text-slate-300 mt-6 max-w-md text-center px-4 text-sm leading-relaxed">
             An open-world neon port city. Run courier jobs, race the harbor, outrun the Patrol — and build your legend.
           </p>
@@ -503,7 +552,7 @@ export default function App() {
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/55 backdrop-blur-[2px]">
           <div className="text-cyan-400 tracking-[0.5em] text-xs mb-2">EARLY ACCESS {GAME_VERSION}</div>
           <h1 className="text-5xl md:text-7xl font-black text-white neon-cyan tracking-wider">{GAME_TITLE}</h1>
-          <div className="text-slate-500 tracking-[0.35em] mt-3 text-[10px] uppercase">A vplay.gg exclusive</div>
+          <img src="logos/vplay.png" alt="vplay.gg exclusive" className="h-4 mt-3 opacity-80" draggable={false} />
           <div className="flex gap-3 mt-10 menu-in">
             <button onClick={enterGame} className="menu-btn menu-btn-primary btn-attend">DRIVE</button>
             <button onClick={() => setOverlay('shop')} className="menu-btn">GARAGE SHOP</button>
