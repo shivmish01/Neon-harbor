@@ -489,11 +489,11 @@ export default function App() {
         >
           {splashStep === 0 && (
             <div className="menu-in flex flex-col items-center px-6">
-              <div className="text-slate-500 tracking-[0.55em] text-xs md:text-sm mb-6 animate-pulse">PRESENTS</div>
+              <div className="nh-splash-kicker text-slate-500 tracking-[0.55em] text-xs md:text-sm mb-6 animate-pulse">PRESENTS</div>
               <img
                 src="logos/varygaming.png"
                 alt="Vary Gaming"
-                className="w-[78vw] max-w-xl md:max-w-2xl drop-shadow-[0_0_28px_rgba(34,211,238,0.35)]"
+                className="nh-splash-logo w-[78vw] max-w-xl md:max-w-2xl drop-shadow-[0_0_28px_rgba(34,211,238,0.35)]"
                 draggable={false}
               />
             </div>
@@ -503,10 +503,10 @@ export default function App() {
               <img
                 src="logos/vplaygg.svg"
                 alt="vplay.gg"
-                className="w-[70vw] max-w-lg md:max-w-xl drop-shadow-[0_0_28px_rgba(59,130,246,0.4)]"
+                className="nh-splash-logo w-[70vw] max-w-lg md:max-w-xl drop-shadow-[0_0_28px_rgba(59,130,246,0.4)]"
                 draggable={false}
               />
-              <div className="text-slate-400 tracking-[0.55em] text-xs md:text-sm mt-6 animate-pulse">E X C L U S I V E</div>
+              <div className="nh-splash-sub text-slate-400 tracking-[0.55em] text-xs md:text-sm mt-6 animate-pulse">E X C L U S I V E</div>
             </div>
           )}
           <div className="absolute bottom-8 text-slate-600 text-[11px] tracking-[0.3em]">TAP TO SKIP</div>
@@ -517,16 +517,16 @@ export default function App() {
       {screen === 'boot' && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-gradient-to-b from-[#05060f]/85 via-[#0a0d1f]/70 to-[#05060f]/85">
           <div className="text-cyan-400 tracking-[0.5em] text-sm mb-3 animate-pulse">EARLY ACCESS {GAME_VERSION}</div>
-          <h1 className="text-6xl md:text-8xl font-black text-white neon-cyan tracking-wider">{GAME_TITLE}</h1>
+          <h1 className="nh-title text-6xl md:text-8xl font-black text-white neon-cyan tracking-wider">{GAME_TITLE}</h1>
           <div className="text-fuchsia-500 tracking-[0.4em] mt-2 text-sm md:text-base">FIRST LIGHT</div>
           <img src="logos/vplaygg.svg" alt="vplay.gg exclusive" className="h-7 md:h-8 mt-4 opacity-95" draggable={false} />
-          <p className="text-slate-300 mt-6 max-w-md text-center px-4 text-sm leading-relaxed">
+          <p className="nh-boot-desc text-slate-300 mt-6 max-w-md text-center px-4 text-sm leading-relaxed">
             An open-world neon port city. Run courier jobs, race the harbor, outrun the Patrol — and build your legend.
           </p>
           {assetsReady ? (
             <button
               onClick={enterGame}
-              className="mt-10 px-12 py-4 bg-cyan-500/20 border border-cyan-400 text-cyan-300 text-xl tracking-[0.3em] rounded hover:bg-cyan-400/30 hover:shadow-[0_0_30px_rgba(34,211,238,0.5)] transition-all btn-attend"
+              className="nh-boot-btn mt-10 px-12 py-4 bg-cyan-500/20 border border-cyan-400 text-cyan-300 text-xl tracking-[0.3em] rounded hover:bg-cyan-400/30 hover:shadow-[0_0_30px_rgba(34,211,238,0.5)] transition-all btn-attend"
             >
               ENTER THE HARBOR
             </button>
@@ -551,28 +551,28 @@ export default function App() {
       {screen === 'menu' && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/55 backdrop-blur-[2px]">
           <div className="text-cyan-400 tracking-[0.5em] text-xs mb-2">EARLY ACCESS {GAME_VERSION}</div>
-          <h1 className="text-5xl md:text-7xl font-black text-white neon-cyan tracking-wider">{GAME_TITLE}</h1>
-          <img src="logos/vplaygg.svg" alt="vplay.gg exclusive" className="h-5 mt-3 opacity-90" draggable={false} />
-          <div className="flex gap-3 mt-10 menu-in">
+          <h1 className="nh-menu-title text-5xl md:text-7xl font-black text-white neon-cyan tracking-wider">{GAME_TITLE}</h1>
+          <img src="logos/vplaygg.svg" alt="vplay.gg exclusive" className="nh-menu-tag h-5 mt-3 opacity-90" draggable={false} />
+          <div className="nh-menu-gap flex gap-3 mt-10 menu-in">
             <button onClick={enterGame} className="menu-btn menu-btn-primary btn-attend">DRIVE</button>
             <button onClick={() => setOverlay('shop')} className="menu-btn">GARAGE SHOP</button>
             <button onClick={() => setOverlay('help')} className="menu-btn">HOW TO PLAY</button>
           </div>
-          <div className="flex gap-3 mt-3 menu-in">
+          <div className="nh-menu-gap flex gap-3 mt-3 menu-in">
             <button onClick={() => { setProgressTab('trophies'); setOverlay('progress') }} className="menu-btn menu-btn-ghost">🏆 TROPHIES</button>
             <button onClick={() => { setProgressTab('districts'); setOverlay('progress') }} className="menu-btn menu-btn-ghost">🗺️ DISTRICTS</button>
             {!save.fullAccess && (
               <button onClick={() => setOverlay('checkout')} className="menu-btn menu-btn-ghost border-amber-400/60 text-amber-300 btn-attend-amber">🔓 FULL ACCESS</button>
             )}
           </div>
-          <div className="mt-10 text-slate-300 text-sm flex gap-8">
+          <div className="nh-menu-stats mt-10 text-slate-300 text-sm flex gap-8">
             <span>Cash <b className="text-emerald-400">${save.cash}</b></span>
             <span>Level <b className="text-cyan-400">{save.level}</b></span>
             <span>Shards <b className="text-cyan-400">{save.shards.length}/24</b></span>
             <span>Deliveries <b className="text-cyan-400">{save.stats.deliveries}</b></span>
             <span>Races <b className="text-cyan-400">{save.stats.races}</b></span>
           </div>
-          <button onClick={toggleMute} className="mt-6 text-slate-500 text-xs underline hover:text-slate-300">
+          <button onClick={toggleMute} className="nh-menu-gap mt-6 text-slate-500 text-xs underline hover:text-slate-300">
             {save.muted ? 'Unmute sound' : 'Mute sound'}
           </button>
           <button onClick={resetProgress} className="mt-2 text-slate-600 text-xs underline hover:text-red-400">

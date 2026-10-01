@@ -193,6 +193,50 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ============ Short screens (landscape phones): compact layout ============
+   Phone landscape leaves only ~400-500px of height after browser chrome —
+   without this the title overflows and the play button sits off-screen. */
+@media (max-height: 560px) {
+  .nh-title {
+    font-size: 2.3rem !important;
+    line-height: 1.05;
+  }
+  .nh-boot-desc {
+    display: none;
+  }
+  .nh-boot-btn {
+    margin-top: 1rem !important;
+    padding: 0.55rem 2.2rem !important;
+    font-size: 0.95rem !important;
+  }
+  .nh-menu-gap {
+    margin-top: 0.9rem !important;
+  }
+  .nh-menu-title {
+    font-size: 1.9rem !important;
+  }
+  .nh-menu-tag {
+    margin-top: 0.3rem !important;
+    font-size: 0.7rem !important;
+  }
+  .nh-menu-stats {
+    margin-top: 0.9rem !important;
+    font-size: 0.75rem !important;
+  }
+  .nh-splash-logo {
+    max-height: 34vh !important;
+    width: auto !important;
+  }
+  .nh-splash-kicker {
+    margin-bottom: 0.6rem !important;
+    font-size: 0.65rem !important;
+  }
+  .nh-splash-sub {
+    margin-top: 0.6rem !important;
+    font-size: 0.65rem !important;
+  }
+}
+
 .job-card {
   background: rgba(15, 23, 42, 0.7);
   border: 1px solid;
