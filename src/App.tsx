@@ -1,20 +1,22 @@
 // ============================================================
 // NEON HARBOR — React shell: boot screen, main menu (over the
-// live 3D city), HUD with police instructions, shop, checkout.
+// live 3D city), HUD with police instructions, shop, vplay.gg
+// integration (VCoins, entitlements, cloud save, milestones).
 // ============================================================
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GameEngine, type HudState } from './game/engine'
 import { loadGameAssets, type GameAssets } from './game/assets'
 import {
-  SKINS, THEMES, FULL_ACCESS_PRICE, FOUNDER_LEGEND_PRICE, GAME_VERSION, GAME_TITLE,
+  SKINS, THEMES, HARBOR_PASS_ID, HARBOR_PASS_ITEMS, GAME_VERSION, GAME_TITLE,
   ACHIEVEMENTS, DISTRICTS,
   type Skin, type Theme,
 } from './game/content'
 import { loadSave, persistSave, defaultSave, type SaveData } from './game/save'
+import { VPlay, type VPlayInit, type PurchaseResult } from './vplay/sdk'
 
 type Screen = 'boot' | 'menu' | 'game'
-type Overlay = null | 'shop' | 'jobs' | 'pause' | 'checkout' | 'help' | 'progress'
+type Overlay = null | 'shop' | 'jobs' | 'pause' | 'help' | 'progress'
 
 interface Toast {
   id: number
@@ -50,6 +52,19 @@ export default function App() {
   // 0 = Vary Gaming, 1 = vplay.gg, 2 = splash finished. Skipped by ?autostart
   // (automated tests) and dismissible with a click/tap.
   const [splashStep, setSplashStep] = useState(0)
+  // vplay.gg integration: mode/player/VCoin balance/premium entitlements.
+  // vplay.gg owns money + ownership — the game only asks via the SDK.
+  const [vplay, setVplay] = useState<VPlayInit | null>(null)
+  const [vcBalance, setVcBalance] = useState(0)
+  const [entitlements, setEntitlements] = useState<string[]>([])
+  const [hostPaused, setHostPaused] = useState(false)
+  const entitlementsRef = useRef<string[]>([])
+  entitlementsRef.current = entitlements
+  const vplayRef = useRef<VPlayInit | null>(null)
+  vplayRef.current = vplay
+  const lastCloudSaveRef = useRef(0)
+  const pausedByHiddenRef = useRef(false)
+  const lastKnownRef = useRef<{ ach: string[]; districts: string[] }>({ ach: [], districts: [] })
   // Mobile/tablet players get on-screen drive controls instead of keyboard hints
   const [isTouch] = useState(
     () => typeof window !== 'undefined' && (window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window),
@@ -67,17 +82,19 @@ export default function App() {
     return () => mq.removeEventListener('change', update)
   }, [isTouch])
 
-  // Splash sequence timing: each card holds ~2.2s; ?autostart skips straight
-  // into the game (test harness must not wait through branding)
+  // Splash sequence timing: each card holds ~2.2s (1.3s on vplay.gg);
+  // ?autostart (dev builds only) skips straight into the game
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).has('autostart')) {
+    if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('autostart')) {
       setSplashStep(2)
       return
     }
     if (splashStep >= 2) return
-    const t = setTimeout(() => setSplashStep((s) => s + 1), 2200)
+    // vplay.gg asks for a fast boot — keep the whole splash under 3s there
+    const stepMs = vplay?.mode === 'vplay' ? 1300 : 2200
+    const t = setTimeout(() => setSplashStep((s) => s + 1), stepMs)
     return () => clearTimeout(t)
-  }, [splashStep])
+  }, [splashStep, vplay])
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const minimapRef = useRef<HTMLCanvasElement>(null)
@@ -99,10 +116,132 @@ export default function App() {
     window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4200)
   }, [])
 
+  // ---- vplay.gg helpers ----
+  /** One-time milestones: each id is reported to vplay.gg at most once per save. */
+  const reportMilestone = useCallback((id: string) => {
+    const s = saveRef.current
+    if (s.reportedMilestones.includes(id)) return
+    s.reportedMilestones.push(id)
+    persistSave(s)
+    if (vplayRef.current?.mode === 'vplay') VPlay.milestone(id)
+  }, [])
+
+  /** Cloud save with a 15-second throttle (localStorage stays the offline copy). */
+  const saveCloudThrottled = useCallback((force = false) => {
+    if (vplayRef.current?.mode !== 'vplay') return
+    const now = Date.now()
+    if (!force && now - lastCloudSaveRef.current < 15000) return
+    lastCloudSaveRef.current = now
+    const s = saveRef.current
+    VPlay.saveCloud({ cash: s.cash, xp: s.xp, level: s.level, shards: s.shards, owned: s.owned, skin: s.skin, theme: s.theme, achievements: s.achievements, districts: s.districts, landmarks: s.landmarks, tollsPaid: s.tollsPaid, stats: s.stats, tutorialDone: s.tutorialDone })
+  }, [])
+
   const commit = useCallback(() => {
     persistSave(saveRef.current)
     setSave({ ...saveRef.current })
+    // Diff achievements/districts so each new one fires its milestone once.
+    // Purchase achievements are excluded — rewarding a purchase is a loop.
+    const s = saveRef.current
+    for (const id of s.achievements) {
+      if (!lastKnownRef.current.ach.includes(id)) {
+        lastKnownRef.current.ach.push(id)
+        if (id !== 'buy-skin' && id !== 'buy-theme') reportMilestone(`ach.${id}`)
+      }
+    }
+    for (const id of s.districts) {
+      if (!lastKnownRef.current.districts.includes(id)) {
+        lastKnownRef.current.districts.push(id)
+        reportMilestone(`district.${id}`)
+      }
+    }
+    saveCloudThrottled()
+  }, [reportMilestone, saveCloudThrottled])
+
+  // ---- VPlay bootstrap: init, host events, visibility pause, cloud save ----
+  useEffect(() => {
+    let cancelled = false
+    const unsubs: Array<() => void> = []
+    VPlay.init({ gameId: 'neon-harbor', sdkVersion: 1 }).then((init) => {
+      if (cancelled) return
+      setVplay(init)
+      setVcBalance(init.vcoins)
+      setEntitlements(init.entitlements)
+      entitlementsRef.current = init.entitlements
+      // Cloud save wins when it is ahead of the local copy (level/xp compare)
+      if (init.mode === 'vplay' && init.save && typeof init.save === 'object') {
+        const cloud = init.save as Partial<SaveData>
+        const local = saveRef.current
+        const cloudXp = (cloud.level ?? 1) * 1000 + (cloud.xp ?? 0)
+        const localXp = local.level * 1000 + local.xp
+        if (cloudXp > localXp) {
+          const merged: SaveData = {
+            ...local,
+            ...cloud,
+            stats: { ...local.stats, ...(cloud.stats ?? {}) },
+            owned: [...new Set([...(local.owned ?? []), ...(cloud.owned ?? [])])],
+            reportedMilestones: local.reportedMilestones ?? [],
+          }
+          saveRef.current = merged
+          persistSave(merged)
+          setSave({ ...merged })
+        }
+      }
+    })
+    unsubs.push(VPlay.on('pause', () => {
+      // host asked us to freeze — go quiet immediately, no interstitial yet
+      engineRef.current?.setPaused(true)
+      engineRef.current?.suspendAudio()
+      VPlay.gameplayStop()
+      saveCloudThrottled(true)
+    }))
+    unsubs.push(VPlay.on('resume', () => {
+      // host is back — audio needs a user gesture, so show tap-to-continue
+      setHostPaused(true)
+    }))
+    unsubs.push(VPlay.on('mute', () => {
+      saveRef.current.muted = true
+      commit()
+    }))
+    unsubs.push(VPlay.on('unmute', () => {
+      saveRef.current.muted = false
+      commit()
+    }))
+    unsubs.push(VPlay.on('entitlements', (data) => {
+      const list = (data as { entitlements?: string[] } | undefined)?.entitlements ?? []
+      setEntitlements(list)
+      entitlementsRef.current = list
+    }))
+    unsubs.push(VPlay.on('vcoins', (data) => {
+      const bal = (data as { vcoins?: number } | undefined)?.vcoins
+      if (typeof bal === 'number') setVcBalance(bal)
+    }))
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        engineRef.current?.setPaused(true)
+        engineRef.current?.suspendAudio()
+        VPlay.gameplayStop()
+        saveCloudThrottled(true)
+        pausedByHiddenRef.current = true
+      } else if (pausedByHiddenRef.current) {
+        pausedByHiddenRef.current = false
+        setHostPaused(true) // tap-to-continue on return (audio gesture)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', onVisibility)
+      for (const u of unsubs) u()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Gameplay signals: driving vs menus (vplay.gg tracks session state)
+  useEffect(() => {
+    if (vplay?.mode !== 'vplay') return
+    if (screen === 'game' && overlay === null && !hostPaused) VPlay.gameplayStart()
+    else VPlay.gameplayStop()
+  }, [screen, overlay, hostPaused, vplay])
 
   const ensureEngine = useCallback((): GameEngine | null => {
     if (engineRef.current) return engineRef.current
@@ -150,12 +289,15 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     loadGameAssets((done, total) => {
-      if (!cancelled) setLoadPct(Math.round((done / Math.max(total, 1)) * 100))
+      const pct = Math.round((done / Math.max(total, 1)) * 100)
+      if (!cancelled) setLoadPct(pct)
+      VPlay.loading(pct / 100)
     })
       .then((assets) => {
         if (cancelled) return
         assetsRef.current = assets
         setAssetsReady(true)
+        VPlay.loading(1)
         try {
           ensureEngine()
         } catch (err) {
@@ -192,46 +334,32 @@ export default function App() {
 
   enterGameRef.current = enterGame
 
-  // Test hook: ?autostart=1 jumps straight into gameplay (used for automated
-  // screenshot checks; normal players never see a difference)
+  // Dev-only test hooks (?autostart / ?theme / ?hud=0) — never active in the
+  // shipped build. The engine handle is likewise dev-only.
   useEffect(() => {
-    if (!assetsReady) return
+    if (!assetsReady || !import.meta.env.DEV) return
     const params = new URLSearchParams(window.location.search)
-    // Test hook: ?theme=day forces an environment for screenshot checks
     const th = params.get('theme')
     if (th && THEMES.some((t) => t.id === th)) {
       saveRef.current.theme = th
       commit()
       engineRef.current?.applyLoadout()
     }
-    // Test hook: ?hud=0 hides HUD panels for clean cinematic recordings
     if (params.get('hud') === '0') document.body.classList.add('nh-cinema')
-    // Review hook: ?unlock=founder grants the full game on THIS machine only
-    // (owner playtest — sets the same flags the demo checkouts set)
-    if (params.get('unlock') === 'founder') {
-      const s = saveRef.current
-      s.fullAccess = true
-      s.legend = true
-      for (const item of [...SKINS, ...THEMES]) {
-        if (!s.owned.includes(item.id)) s.owned.push(item.id)
-      }
-      commit()
-    }
     if (params.has('autostart')) {
       enterGame()
-      // Test hook: ?autostart&at=beach teleports to the shore for screenshots
       if (params.get('at') === 'beach') {
         engineRef.current?.debugTeleport(8, 226, Math.PI)
       }
-      // Test hook: expose the engine so automated playtests can read state
-      // (positions, heat, tutorial progress) and teleport. Dev-only surface.
       ;(window as unknown as { __nh?: unknown }).__nh = engineRef.current
     }
-  }, [assetsReady, enterGame])
+  }, [assetsReady, enterGame, commit])
 
-  // Always expose the engine handle for live debugging (read-only inspection)
+  // Engine handle for live debugging — development builds only
   useEffect(() => {
-    if (engineRef.current) (window as unknown as { __nh?: unknown }).__nh = engineRef.current
+    if (import.meta.env.DEV && engineRef.current) {
+      (window as unknown as { __nh?: unknown }).__nh = engineRef.current
+    }
   }, [screen])
 
   // Pause only for modal overlays during gameplay — menus keep the city alive
@@ -384,9 +512,9 @@ export default function App() {
   const buyItem = (id: string, price: number, premium: boolean, minLevel: number) => {
     const engine = engineRef.current
     const s = saveRef.current
-    if (premium && !s.fullAccess) {
+    if (premium && !isOwned(id)) {
       engine?.playDenied()
-      setOverlay('checkout')
+      pushToast(vplay?.mode === 'vplay' ? 'Unlock this with VCoins on vplay.gg' : 'Unlock this on vplay.gg', 'warn')
       return
     }
     if (s.owned.includes(id)) return
@@ -409,30 +537,50 @@ export default function App() {
     equipItem(id)
   }
 
-  // Real-money quick buy (demo checkout): unlocks a single item instantly.
-  // Used by the ⚡ price buttons — $0.99 impulse up to $9.99 flagship items.
-  const buyUsd = (id: string) => {
+  // VCoin quick-buy: vplay.gg shows its own confirm sheet and owns the ledger.
+  const buyVc = async (id: string, vcId: string) => {
     const engine = engineRef.current
-    const s = saveRef.current
-    if (s.owned.includes(id)) return
-    s.owned.push(id)
-    engine?.playBuy()
-    engine?.unlockAchievement(SKINS.some((k) => k.id === id) ? 'buy-skin' : 'buy-theme')
-    commit()
-    pushToast('Owned — equipped! (demo checkout, no real payment)', 'good')
-    equipItem(id)
+    if (isOwned(id) || vplay?.mode !== 'vplay') return
+    const result: PurchaseResult = await VPlay.purchase(vcId)
+    if (result.status === 'purchased') {
+      setEntitlements(result.entitlements)
+      entitlementsRef.current = result.entitlements
+      setVcBalance(result.vcoins)
+      engine?.playBuy()
+      engine?.unlockAchievement(SKINS.some((k) => k.id === id) ? 'buy-skin' : 'buy-theme')
+      commit()
+      saveCloudThrottled(true)
+      const isEquipable = SKINS.some((k) => k.id === id) || THEMES.some((t) => t.id === id)
+      pushToast(isEquipable ? 'Owned — equipped!' : 'HARBOR PASS unlocked!', 'good')
+      if (isEquipable) equipItem(id) // the pass itself is not a skin/theme — never equip it
+    } else if (result.status === 'needs_signin') {
+      pushToast('Sign in on vplay.gg to buy with VCoins', 'info')
+    } else if (result.status === 'insufficient') {
+      pushToast('Not enough VCoins — top up on vplay.gg', 'warn')
+    } else if (result.status === 'cancelled') {
+      /* player closed the sheet — nothing happened */
+    } else {
+      pushToast('Purchase unavailable right now — try again soon', 'warn')
+    }
   }
 
-  // Founder's Legend — the $99.99 ultra tier: everything + exclusive Aurora Prime
-  const buyLegend = () => {
-    const s = saveRef.current
-    s.fullAccess = true
-    s.legend = true
-    if (!s.owned.includes('aurora')) s.owned.push('aurora')
-    commit()
-    engineRef.current?.playBuy()
-    pushToast("FOUNDER'S LEGEND unlocked — Aurora Prime is yours. Welcome to the top!", 'good')
-    setOverlay('shop')
+  /** Effective ownership: local (free/cash) OR vplay.gg entitlement OR Harbor Pass. */
+  const isOwned = (id: string): boolean => {
+    if (save.owned.includes(id)) return true
+    const ents = entitlementsRef.current
+    if (id === HARBOR_PASS_ID) return ents.includes(HARBOR_PASS_ID)
+    const item = SKINS.find((k) => k.id === id) ?? THEMES.find((t) => t.id === id)
+    if (!item?.vcId) return false
+    return ents.includes(item.vcId) || (item.premium && ents.includes(HARBOR_PASS_ID))
+  }
+
+  /** Harbor Pass live price from vplay.gg (display only). */
+  const passPrice = vplay?.items.find((i) => i.id === HARBOR_PASS_ID)?.priceVc
+
+  /** VCoin price for a shop item, as advertised by vplay.gg. */
+  const vcPriceOf = (item: { vcId?: string }): number | null => {
+    if (!item.vcId || vplay?.mode !== 'vplay') return null
+    return vplay.items.find((i) => i.id === item.vcId)?.priceVc ?? null
   }
 
   const equipItem = (id: string) => {
@@ -443,8 +591,19 @@ export default function App() {
     engineRef.current?.applyLoadout()
   }
 
-  const owned = (id: string) => save.owned.includes(id)
-  const locked = (item: { premium: boolean }) => item.premium && !save.fullAccess
+  const owned = (id: string) => isOwned(id)
+
+  // Aurora Prime: earned prestige paint — all achievements + level 10
+  useEffect(() => {
+    const s = saveRef.current
+    if (s.achievements.length >= ACHIEVEMENTS.length && s.level >= 10 && !s.owned.includes('aurora')) {
+      s.owned.push('aurora')
+      commit()
+      pushToast('🏆 AURORA PRIME earned — the harbor bows to you!', 'good')
+      engineRef.current?.applyLoadout()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [save.achievements.length, save.level])
 
   const resetProgress = () => {
     if (!confirmReset) {
@@ -460,8 +619,6 @@ export default function App() {
     setConfirmReset(false)
     pushToast('Progress reset', 'info')
   }
-
-  const fullAccess = save.fullAccess
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-black font-game select-none">
@@ -561,9 +718,7 @@ export default function App() {
           <div className="nh-menu-gap flex gap-3 mt-3 menu-in">
             <button onClick={() => { setProgressTab('trophies'); setOverlay('progress') }} className="menu-btn menu-btn-ghost">🏆 TROPHIES</button>
             <button onClick={() => { setProgressTab('districts'); setOverlay('progress') }} className="menu-btn menu-btn-ghost">🗺️ DISTRICTS</button>
-            {!save.fullAccess && (
-              <button onClick={() => setOverlay('checkout')} className="menu-btn menu-btn-ghost border-amber-400/60 text-amber-300 btn-attend-amber">🔓 FULL ACCESS</button>
-            )}
+            <button onClick={() => setOverlay('shop')} className="menu-btn menu-btn-ghost border-amber-400/60 text-amber-300 btn-attend-amber">🔓 HARBOR PASS</button>
           </div>
           <div className="nh-menu-stats mt-10 text-slate-300 text-sm flex gap-8">
             <span>Cash <b className="text-emerald-400">${save.cash}</b></span>
@@ -918,6 +1073,22 @@ export default function App() {
         </div>
       )}
 
+      {/* Host-requested pause (vplay.gg) — tap to resume */}
+      {screen === 'game' && hostPaused && (
+        <button
+          onClick={() => {
+            setHostPaused(false)
+            engineRef.current?.setPaused(false)
+            engineRef.current?.resumeAudio()
+            VPlay.gameplayStart()
+          }}
+          className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm cursor-pointer"
+        >
+          <h2 className="text-3xl font-black text-white tracking-[0.3em] mb-3">PAUSED</h2>
+          <p className="text-cyan-300 text-sm tracking-widest animate-pulse">TAP TO CONTINUE</p>
+        </button>
+      )}
+
       {/* ================= PROGRESS (trophies + districts) ================= */}
       {overlay === 'progress' && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -1051,29 +1222,52 @@ export default function App() {
       {overlay === 'shop' && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm">
           <div className="w-[52rem] max-w-[94vw] max-h-[86vh] overflow-y-auto bg-slate-900/95 border border-fuchsia-500/30 rounded-2xl p-6 shadow-[0_0_60px_rgba(232,121,249,0.15)]">
-            <div className="flex justify-between items-center mb-1">
-              <h2 className="text-2xl font-black text-white tracking-widest">GARAGE SHOP</h2>
+            <h2 className="text-2xl font-black text-white tracking-widest mb-1">GARAGE SHOP</h2>
+            <div className="flex justify-between items-start mb-4">
+              <div className="text-slate-400 text-xs pt-1">
+                Balance: <span className="text-emerald-400 font-bold">${save.cash.toLocaleString()}</span> · Level {save.level}
+                {vplay?.mode === 'vplay' && (
+                  <span className="ml-3">VCoins: <span className="text-amber-300 font-bold">◈ {vcBalance.toLocaleString()}</span></span>
+                )}
+              </div>
               <button onClick={() => setOverlay(null)} className="text-slate-400 hover:text-white text-xl">✕</button>
             </div>
-            <div className="text-slate-400 text-xs mb-4">
-              Balance: <span className="text-emerald-400 font-bold">${save.cash.toLocaleString()}</span> · Level {save.level}
-            </div>
 
-            {/* Full Access banner */}
-            {!fullAccess && (
-              <button onClick={() => setOverlay('checkout')} className="w-full mb-5 p-4 rounded-xl border border-amber-400/50 bg-gradient-to-r from-amber-500/15 to-fuchsia-500/15 hover:from-amber-500/25 hover:to-fuchsia-500/25 transition-all text-left">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-amber-300 font-black tracking-widest">FULL ACCESS PASS — {FULL_ACCESS_PRICE}</div>
-                    <div className="text-slate-300 text-xs mt-1">Unlock all premium cars and exclusive environments (Sakura Dusk, Acid Rain). Founders keep all future content free. Or go <b className="text-fuchsia-300">Founder's Legend — {FOUNDER_LEGEND_PRICE}</b> for the exclusive Aurora Prime.</div>
-                  </div>
-                  <div className="text-2xl">🔓</div>
-                </div>
-              </button>
-            )}
-            {fullAccess && (
+            {/* Harbor Pass banner */}
+            {isOwned(HARBOR_PASS_ID) ? (
               <div className="w-full mb-5 p-3 rounded-xl border border-emerald-400/40 bg-emerald-500/10 text-emerald-300 text-sm text-center">
-                🔓 FULL ACCESS owned — all premium content unlocked. Thank you, Founder!
+                🔓 HARBOR PASS owned — all premium content unlocked
+              </div>
+            ) : vplay?.mode === 'vplay' ? (
+              <div className="w-full mb-5 p-4 rounded-xl border border-amber-400/50 bg-gradient-to-r from-amber-500/15 to-fuchsia-500/15">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-amber-300 font-black tracking-widest">HARBOR PASS</div>
+                    <div className="text-slate-300 text-xs mt-1">Unlocks all {HARBOR_PASS_ITEMS.length} premium cars and environments (Ghost, Royal, Solar, Oni, Sakura Dusk, Acid Rain) in one go.</div>
+                  </div>
+                  <button
+                    onClick={() => buyVc(HARBOR_PASS_ID, HARBOR_PASS_ID)}
+                    disabled={passPrice == null}
+                    className="px-4 py-2 text-sm font-black border border-amber-400 text-amber-200 rounded-lg hover:bg-amber-400/20 whitespace-nowrap disabled:opacity-40"
+                  >
+                    ◈ {passPrice != null ? passPrice.toLocaleString() : '—'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="w-full mb-5 p-4 rounded-xl border border-amber-400/50 bg-gradient-to-r from-amber-500/15 to-fuchsia-500/15">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-amber-300 font-black tracking-widest">HARBOR PASS</div>
+                    <div className="text-slate-300 text-xs mt-1">Unlocks all premium cars and environments with one purchase on vplay.gg.</div>
+                  </div>
+                  <button
+                    onClick={() => VPlay.openOnVplay()}
+                    className="px-4 py-2 text-sm font-black border border-amber-400 text-amber-200 rounded-lg hover:bg-amber-400/20 whitespace-nowrap"
+                  >
+                    UNLOCK ON VPLAY.GG
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1092,16 +1286,16 @@ export default function App() {
                   swatch={item.body}
                   glow={item.glow}
                   price={item.price}
-                  usd={item.usd}
                   premium={item.premium}
-                  legendItem={item.legend ?? false}
+                  earned={item.earned}
                   minLevel={item.minLevel}
                   isOwned={owned(item.id)}
                   isEquipped={save.skin === item.id}
-                  isLocked={item.legend ? !save.legend : locked(item)}
                   level={save.level}
-                  onBuy={() => item.legend ? setOverlay('checkout') : buyItem(item.id, item.price, item.premium, item.minLevel)}
-                  onBuyUsd={() => buyUsd(item.id)}
+                  standalone={vplay?.mode !== 'vplay'}
+                  vcPrice={vcPriceOf(item)}
+                  onBuy={() => buyItem(item.id, item.price, item.premium, item.minLevel)}
+                  onBuyVc={item.vcId ? () => buyVc(item.id, item.vcId!) : undefined}
                   onEquip={() => equipItem(item.id)}
                 />
               ))}
@@ -1113,103 +1307,29 @@ export default function App() {
                   swatch={item.fog}
                   glow={item.moon}
                   price={item.price}
-                  usd={item.usd}
                   premium={item.premium}
                   minLevel={1}
                   isOwned={owned(item.id)}
                   isEquipped={save.theme === item.id}
-                  isLocked={locked(item)}
                   level={save.level}
+                  standalone={vplay?.mode !== 'vplay'}
+                  vcPrice={vcPriceOf(item)}
                   preview={<ThemePreview theme={item} />}
                   onBuy={() => buyItem(item.id, item.price, item.premium, 1)}
-                  onBuyUsd={() => buyUsd(item.id)}
+                  onBuyVc={item.vcId ? () => buyVc(item.id, item.vcId!) : undefined}
                   onEquip={() => equipItem(item.id)}
                 />
               ))}
             </div>
             <p className="text-slate-600 text-[11px] mt-5 text-center">
-              Early Access build — green buttons use in-game cash; ⚡ buttons are instant demo unlocks (no real payment yet). Full Access and Founder's Legend are demo checkouts.
+              {vplay?.mode === 'vplay'
+                ? 'Green buttons use earned cash · ◈ prices are VCoins — purchases are confirmed by vplay.gg'
+                : 'Green buttons use earned cash · Premium items unlock on vplay.gg'}
             </p>
           </div>
         </div>
       )}
 
-      {/* ================= CHECKOUT (DEMO) ================= */}
-      {overlay === 'checkout' && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-          <div className="w-[26rem] max-w-[90vw] bg-slate-900 border border-amber-400/50 rounded-2xl p-6 text-center">
-            <div className="text-4xl mb-3">🔓</div>
-            <h3 className="text-xl font-black text-white tracking-widest">FULL ACCESS PASS</h3>
-            <div className="text-amber-200/80 text-[11px] tracking-[0.25em] mt-1">EARLY ACCESS FOUNDER — LOCKED FOR YOU RIGHT NOW</div>
-            <div className="text-3xl font-black text-amber-300 my-2">{FULL_ACCESS_PRICE}</div>
-            <video
-              src="promo.mp4"
-              autoPlay
-              muted
-              loop
-              playsInline
-              controls
-              className="w-full rounded-lg border border-slate-700 mb-3"
-            />
-            <div className="text-left text-slate-400 text-[11px] tracking-widest mb-1">4 PREMIUM CARS YOU DON'T OWN YET</div>
-            <ul className="text-left text-slate-200 text-sm space-y-1 mb-3">
-              <li>🚗 <b className="text-amber-300">Crimson Ghost</b> — the Patrol hates this one</li>
-              <li>🚗 <b className="text-amber-300">Royal Violet</b> — harbor-night royalty</li>
-              <li>🚗 <b className="text-amber-300">Solar Flare</b> — molten gold, zero subtlety</li>
-              <li>🚗 <b className="text-amber-300">Cyber Oni</b> — matte black, demon neon</li>
-            </ul>
-            <div className="text-left text-slate-400 text-[11px] tracking-widest mb-1">2 ENVIRONMENTS YOU'VE NEVER SEEN</div>
-            <div className="grid grid-cols-2 gap-2 mb-2">
-              {THEMES.filter((t) => t.premium).map((t) => (
-                <div key={t.id} className="rounded-lg border border-slate-700 overflow-hidden">
-                  <ThemePreview theme={t} />
-                  <div className="px-2 pb-1.5 -mt-1">
-                    <div className="text-amber-300 text-[11px] font-bold">{t.name}</div>
-                    <div className="text-slate-400 text-[10px] leading-tight">{t.desc.replace('PREMIUM — ', '')}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="text-left text-slate-200 text-xs mb-3">
-              🌇 <b className="text-amber-300">Golden Hour</b> is now earnable with in-game cash — no pass needed.
-            </div>
-            <div className="text-left text-emerald-300/90 text-xs mb-4">✦ Plus every future theme and car added during Early Access — free, forever</div>
-            <div className="bg-amber-500/10 border border-amber-400/30 rounded p-2 text-amber-200/90 text-[11px] mb-4">
-              DEMO CHECKOUT — no real payment is processed. At launch this button connects to your real payment provider (Stripe, Steam, etc.).
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  saveRef.current.fullAccess = true
-                  commit()
-                  engineRef.current?.playBuy()
-                  pushToast('FULL ACCESS unlocked — welcome, Founder!', 'good')
-                  setOverlay('shop')
-                }}
-                className="flex-1 py-3 bg-amber-500/20 border border-amber-400 text-amber-200 rounded hover:bg-amber-400/30 font-bold tracking-widest"
-              >
-                UNLOCK (DEMO)
-              </button>
-              <button onClick={() => setOverlay('shop')} className="flex-1 py-3 border border-slate-600 text-slate-400 rounded hover:bg-slate-800">
-                Not now
-              </button>
-            </div>
-            {!save.legend && (
-              <button
-                onClick={buyLegend}
-                className="w-full mt-3 py-3 bg-fuchsia-500/15 border border-fuchsia-400/70 text-fuchsia-200 rounded hover:bg-fuchsia-400/25 font-bold tracking-widest text-sm btn-attend-fuchsia"
-              >
-                👑 GO LEGEND — {FOUNDER_LEGEND_PRICE}
-              </button>
-            )}
-            {save.legend && (
-              <div className="w-full mt-3 py-2 border border-fuchsia-400/40 bg-fuchsia-500/10 text-fuchsia-300 rounded text-xs font-bold text-center">
-                👑 FOUNDER'S LEGEND owned — Aurora Prime unlocked
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* ================= HELP ================= */}
       {overlay === 'help' && (
@@ -1233,7 +1353,7 @@ export default function App() {
                 <b>{isTouch ? 'MASH the DRIFT button rapidly to break free' : 'mash SPACE rapidly to break free'}</b> —
                 only a stopped, surrounded car gets BUSTED (15% fine, hauled back to the garage). At 3★+ you hear sirens; drones get faster every star.
               </p>
-              <p><b className="text-cyan-300">Spend & customize.</b> Cash buys car skins and the Golden Hour environment. The Full Access Pass unlocks premium skins and two more city environments (this build demos it for free).</p>
+              <p><b className="text-cyan-300">Spend & customize.</b> Cash buys car skins and the Golden Hour environment. Premium cars and environments (Crimson Ghost, Royal Violet, Solar Flare, Cyber Oni, Sakura Dusk, Acid Rain) unlock with VCoins on vplay.gg — or grab the Harbor Pass for all of them at once.</p>
               <p><b className="text-fuchsia-300">Signature touches.</b>{' '}
                 {isTouch
                   ? <>The 📷 button freezes the world — orbit your car with a finger, apply a color grade, and save the shot. The soundtrack intensifies as Patrol heat rises.</>
@@ -1489,37 +1609,37 @@ function ShopCard(props: {
   desc: string
   swatch: number
   glow: number
-  price: number
-  usd: number
+  price: number // in-game cash; 0 = not sold for cash
   premium: boolean
-  legendItem?: boolean
+  earned?: boolean // prestige item unlocked by in-game feats
   minLevel: number
   isOwned: boolean
   isEquipped: boolean
-  isLocked: boolean
   level: number
+  standalone: boolean // true when running outside vplay.gg
+  vcPrice: number | null // VCoin price advertised by vplay.gg
   preview?: React.ReactNode // replaces the swatch block (e.g. live environment preview)
   onBuy: () => void
-  onBuyUsd: () => void
+  onBuyVc?: () => void
   onEquip: () => void
 }) {
   const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`
   const levelBlocked = props.level < props.minLevel
-  const usdBtn = props.usd > 0 && (
+  const vcBtn = props.vcPrice != null && (
     <button
-      onClick={props.onBuyUsd}
-      title="Instant unlock — demo checkout, no real payment"
-      className="px-2.5 py-1.5 text-xs font-black border border-fuchsia-500/60 text-fuchsia-300 rounded hover:bg-fuchsia-500/10 whitespace-nowrap"
+      onClick={props.onBuyVc}
+      title="Unlock instantly with VCoins on vplay.gg"
+      className="px-2.5 py-1.5 text-xs font-black border border-amber-500/60 text-amber-300 rounded hover:bg-amber-500/10 whitespace-nowrap"
     >
-      ⚡ ${props.usd.toFixed(2)}
+      ◈ {props.vcPrice.toLocaleString()}
     </button>
   )
   return (
     <div className={`relative rounded-xl border p-3 bg-slate-800/60 transition-all ${props.isEquipped ? 'border-cyan-400 shadow-[0_0_16px_rgba(34,211,238,0.35)]' : 'border-slate-700 hover:border-slate-500'}`}>
-      {props.legendItem && (
-        <div className="absolute -top-2 -right-2 bg-fuchsia-500 text-black text-[10px] font-black px-2 py-0.5 rounded-full">👑 LEGEND</div>
+      {props.earned && (
+        <div className="absolute -top-2 -right-2 bg-cyan-400 text-black text-[10px] font-black px-2 py-0.5 rounded-full">🏆 EARNED</div>
       )}
-      {!props.legendItem && props.premium && (
+      {!props.earned && props.premium && (
         <div className="absolute -top-2 -right-2 bg-amber-500 text-black text-[10px] font-black px-2 py-0.5 rounded-full">PREMIUM</div>
       )}
       {props.preview ?? (
@@ -1534,35 +1654,41 @@ function ShopCard(props: {
           <div className="text-center text-cyan-300 text-xs font-bold py-1.5 border border-cyan-500/50 rounded">EQUIPPED</div>
         ) : props.isOwned ? (
           <button onClick={props.onEquip} className="w-full py-1.5 text-xs font-bold border border-slate-500 text-slate-200 rounded hover:bg-slate-700">EQUIP</button>
-        ) : props.legendItem && props.isLocked ? (
-          <button onClick={props.onBuy} className="w-full py-1.5 text-xs font-bold border border-fuchsia-500/70 text-fuchsia-300 rounded hover:bg-fuchsia-500/10">
-            👑 FOUNDER'S LEGEND {FOUNDER_LEGEND_PRICE}
-          </button>
-        ) : props.isLocked ? (
-          <div className="flex gap-1.5">
-            <button onClick={props.onBuy} className="flex-1 py-1.5 text-xs font-bold border border-amber-500/60 text-amber-300 rounded hover:bg-amber-500/10">🔒 FULL ACCESS</button>
-            {usdBtn}
-          </div>
+        ) : props.earned ? (
+          <div className="text-center text-cyan-200/80 text-[11px] py-1.5 border border-cyan-500/30 rounded bg-cyan-500/5">Unlock by playing — earn every trophy, reach level 10</div>
         ) : levelBlocked ? (
           <div className="flex items-center gap-1.5">
             <div className="flex-1 text-center text-slate-500 text-[11px] py-1.5 border border-slate-800 rounded">Requires level {props.minLevel}</div>
-            {props.usd > 0 && (
-              <button
-                onClick={props.onBuyUsd}
-                title="Skip the level gate — instant unlock, demo checkout, no real payment"
-                className="px-2.5 py-1.5 text-xs font-black border border-fuchsia-500/60 text-fuchsia-300 rounded hover:bg-fuchsia-500/10 whitespace-nowrap"
-              >
-                ⚡ ${props.usd.toFixed(2)}
+            {vcBtn}
+          </div>
+        ) : props.vcPrice != null ? (
+          props.price > 0 ? (
+            <div className="flex gap-1.5">
+              <button onClick={props.onBuy} className="flex-1 py-1.5 text-xs font-bold border border-emerald-500/60 text-emerald-300 rounded hover:bg-emerald-500/10">
+                BUY — ${props.price.toLocaleString()}
               </button>
-            )}
-          </div>
+              {vcBtn}
+            </div>
+          ) : (
+            <div className="flex gap-1.5">
+              <button onClick={props.onBuyVc} className="flex-1 py-1.5 text-xs font-black border border-amber-500/70 text-amber-300 rounded hover:bg-amber-500/15">
+                ◈ {props.vcPrice.toLocaleString()}
+              </button>
+            </div>
+          )
+        ) : props.premium && props.standalone ? (
+          <button
+            onClick={() => VPlay.openOnVplay()}
+            className="w-full py-1.5 text-xs font-bold border border-amber-500/60 text-amber-300 rounded hover:bg-amber-500/10"
+          >
+            UNLOCK ON VPLAY.GG
+          </button>
+        ) : props.price > 0 ? (
+          <button onClick={props.onBuy} className="w-full py-1.5 text-xs font-bold border border-emerald-500/60 text-emerald-300 rounded hover:bg-emerald-500/10">
+            BUY — ${props.price.toLocaleString()}
+          </button>
         ) : (
-          <div className="flex gap-1.5">
-            <button onClick={props.onBuy} className="flex-1 py-1.5 text-xs font-bold border border-emerald-500/60 text-emerald-300 rounded hover:bg-emerald-500/10">
-              BUY — ${props.price.toLocaleString()}
-            </button>
-            {usdBtn}
-          </div>
+          <div className="text-center text-slate-600 text-[11px] py-1.5">Available on vplay.gg</div>
         )}
       </div>
     </div>
