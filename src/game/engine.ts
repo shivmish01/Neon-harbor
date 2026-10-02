@@ -4012,6 +4012,16 @@ export class GameEngine {
     this.synth.setMuted(m)
   }
 
+  /** Suspend all audio (vplay.gg host pause / tab hidden). */
+  suspendAudio(): void {
+    this.synth.suspend()
+  }
+
+  /** Resume audio after a host pause. */
+  resumeAudio(): void {
+    this.synth.resume()
+  }
+
   /** Debug/test helper: teleport the car (used by the ?autostart&at= screenshot checks). */
   debugTeleport(x: number, z: number, heading = 0): void {
     this.pos.set(x, 0, z)
@@ -4625,17 +4635,19 @@ export class GameEngine {
   }
 
   private updateLandmarks(dt: number): void {
+    const save = this.hooks.getSave()
     for (const lm of this.landmarks) {
       const spin = lm.mesh.userData.spin as THREE.Mesh | undefined
       if (spin) spin.rotation.y += dt * 0.6
-      if (lm.found) continue
+      if (lm.found || save.landmarks.includes(lm.name)) continue
       if (lm.pos.distanceToSquared(this.pos) < 220) {
         lm.found = true
+        save.landmarks.push(lm.name)
+        this.hooks.commit()
         this.grantCash(150)
         this.grantXp(80)
         this.synth.missionDone()
         this.hooks.onToast(`🏙 Landmark discovered: ${lm.name}  +$150`, 'good')
-        this.hooks.commit()
       }
     }
   }

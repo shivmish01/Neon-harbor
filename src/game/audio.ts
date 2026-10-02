@@ -288,6 +288,16 @@ export class Synth {
     }
   }
 
+  /** Suspend the whole audio graph (host requested pause / tab hidden). */
+  suspend(): void {
+    if (this.ctx && this.ctx.state === 'running') void this.ctx.suspend()
+  }
+
+  /** Resume the audio graph after a host pause / tab return. */
+  resume(): void {
+    if (this.ctx && this.ctx.state === 'suspended') void this.ctx.resume()
+  }
+
   updateEngine(speed01: number, boosting: boolean, dt: number): void {
     if (!this.ctx || !this.engOsc || !this.engGain) return
     const t = this.ctx.currentTime
