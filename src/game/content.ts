@@ -1,29 +1,29 @@
 // ============================================================
 // NEON HARBOR — content catalog
 // Skins (car paints), environment themes, economy constants.
-// Premium = locked behind the Full Access Pass (monetization).
+// Premium = locked; unlocked with VCoins on vplay.gg (prices are
+// owned by vplay.gg and arrive via the SDK) or earned in-game.
 // ============================================================
 
 export interface Skin {
   id: string
   name: string
   desc: string
-  price: number // in-game cash; 0 = free starter
-  usd: number // real-money quick-buy price; 0 = not sold separately
-  premium: boolean // requires Full Access Pass
-  legend?: boolean // Founder's Legend bundle exclusive (never sold separately)
+  price: number // in-game cash; 0 = not sold for cash
+  premium: boolean // locked until unlocked via vplay.gg entitlement
   minLevel: number
   body: number // car paint color (hex)
   glow: number // underglow / trail color (hex)
   model?: string // Kenney car-kit model id (default sedan-sports)
+  vcId?: string // vplay.gg item id; undefined = not sold on vplay.gg
+  earned?: boolean // prestige paint unlocked by in-game feats, never sold
 }
 
 export interface Theme {
   id: string
   name: string
   desc: string
-  price: number
-  usd: number // real-money quick-buy price; 0 = not sold separately
+  price: number // in-game cash; 0 = not sold for cash
   premium: boolean
   sky: number
   fog: number
@@ -35,64 +35,62 @@ export interface Theme {
   ground: number
   water: number
   rain: boolean
+  vcId?: string // vplay.gg item id
 }
 
-export const FULL_ACCESS_PRICE = '$14.99'
-export const FOUNDER_LEGEND_PRICE = '$99.99'
-export const GAME_VERSION = 'v0.15.8'
+export const HARBOR_PASS_ID = 'pass.harbor'
+export const HARBOR_PASS_ITEMS = ['ghost', 'royal', 'solar', 'oni', 'acid', 'sakura']
+export const AURORA_REQUIREMENT = 'Earn all 15 achievements and reach level 10'
+export const GAME_VERSION = 'v0.17.0-vplay'
 export const GAME_TITLE = 'NEON HARBOR'
 
 // ---------- CAR SKINS ----------
-// Price ladder (regional-friendly): $0.99 impulse entry → $1.99/$2.99 low →
-// $4.99 standard premium → $9.99 flagship (most customization lives here) →
-// Full Access $14.99 (everything) → Founder's Legend $99.99 (ultra tier).
-// In-game cash prices reduced ~35% for faster progression.
 export const SKINS: Skin[] = [
-  { id: 'stock',    name: 'Harbor Gray',   desc: 'Factory fresh port-runner coupe.',        price: 0,    usd: 0,    premium: false, minLevel: 1, body: 0x8a93a6, glow: 0x22d3ee },
-  { id: 'blue',     name: 'Midnight Blue', desc: 'Deep-sea metallic with cyan underglow.',  price: 300,  usd: 1.99, premium: false, minLevel: 1, body: 0x1d4ed8, glow: 0x38bdf8 },
-  { id: 'amber',    name: 'Taxi Amber',    desc: 'Ride-share legend. Smells like hustle.',  price: 450,  usd: 0.99, premium: false, minLevel: 2, body: 0xf59e0b, glow: 0xfde047, model: 'taxi' },
-  { id: 'white',    name: 'Rally White',   desc: 'Clean, loud, and gone before the echo.',  price: 600,  usd: 1.99, premium: false, minLevel: 2, body: 0xf1f5f9, glow: 0x4ade80, model: 'hatchback-sports' },
-  { id: 'viper',    name: 'Viper Green',   desc: 'Toxic avenger of the dock district.',     price: 900,  usd: 2.99, premium: false, minLevel: 3, body: 0x16a34a, glow: 0xa3e635, model: 'suv' },
-  { id: 'ghost',    name: 'Crimson Ghost', desc: 'The patrol hates this one.',              price: 0,    usd: 4.99, premium: true,  minLevel: 1, body: 0x9f1239, glow: 0xfb7185, model: 'race' },
-  { id: 'royal',    name: 'Royal Violet',  desc: 'Harbor-night royalty.',                   price: 0,    usd: 4.99, premium: true,  minLevel: 1, body: 0x6d28d9, glow: 0xc084fc, model: 'suv-luxury' },
-  { id: 'solar',    name: 'Solar Flare',   desc: 'Molten gold, zero subtlety.',             price: 0,    usd: 9.99, premium: true,  minLevel: 1, body: 0xd97706, glow: 0xfbbf24, model: 'race' },
-  { id: 'oni',      name: 'Cyber Oni',     desc: 'Matte black, demon neon.',                price: 0,    usd: 9.99, premium: true,  minLevel: 1, body: 0x111114, glow: 0xff2d95, model: 'race' },
-  { id: 'aurora',   name: 'Aurora Prime',  desc: "Legend-exclusive chasing-light paint. Never sold separately.", price: 0, usd: 0, premium: true, legend: true, minLevel: 1, body: 0x0ea5e9, glow: 0xa5f3fc, model: 'race' },
+  { id: 'stock',    name: 'Harbor Gray',   desc: 'Factory fresh port-runner coupe.',        price: 0,   premium: false, minLevel: 1, body: 0x8a93a6, glow: 0x22d3ee },
+  { id: 'blue',     name: 'Midnight Blue', desc: 'Deep-sea metallic with cyan underglow.',  price: 300, premium: false, minLevel: 1, body: 0x1d4ed8, glow: 0x38bdf8, vcId: 'skin.blue' },
+  { id: 'amber',    name: 'Taxi Amber',    desc: 'Ride-share legend. Smells like hustle.',  price: 450, premium: false, minLevel: 2, body: 0xf59e0b, glow: 0xfde047, model: 'taxi', vcId: 'skin.amber' },
+  { id: 'white',    name: 'Rally White',   desc: 'Clean, loud, and gone before the echo.',  price: 600, premium: false, minLevel: 2, body: 0xf1f5f9, glow: 0x4ade80, model: 'hatchback-sports', vcId: 'skin.white' },
+  { id: 'viper',    name: 'Viper Green',   desc: 'Toxic avenger of the dock district.',     price: 900, premium: false, minLevel: 3, body: 0x16a34a, glow: 0xa3e635, model: 'suv', vcId: 'skin.viper' },
+  { id: 'ghost',    name: 'Crimson Ghost', desc: 'The patrol hates this one.',              price: 0,   premium: true,  minLevel: 1, body: 0x9f1239, glow: 0xfb7185, model: 'race', vcId: 'skin.ghost' },
+  { id: 'royal',    name: 'Royal Violet',  desc: 'Harbor-night royalty.',                   price: 0,   premium: true,  minLevel: 1, body: 0x6d28d9, glow: 0xc084fc, model: 'suv-luxury', vcId: 'skin.royal' },
+  { id: 'solar',    name: 'Solar Flare',   desc: 'Molten gold, zero subtlety.',             price: 0,   premium: true,  minLevel: 1, body: 0xd97706, glow: 0xfbbf24, model: 'race', vcId: 'skin.solar' },
+  { id: 'oni',      name: 'Cyber Oni',     desc: 'Matte black, demon neon.',                price: 0,   premium: true,  minLevel: 1, body: 0x111114, glow: 0xff2d95, model: 'race', vcId: 'skin.oni' },
+  { id: 'aurora',   name: 'Aurora Prime',  desc: 'Prestige chasing-light paint. ' + AURORA_REQUIREMENT + '.', price: 0, premium: true, earned: true, minLevel: 1, body: 0x0ea5e9, glow: 0xa5f3fc, model: 'race' },
 ]
 
 // ---------- ENVIRONMENT THEMES ----------
 export const THEMES: Theme[] = [
   {
     id: 'midnight', name: 'Midnight Rain', desc: 'The classic. Neon reflections, warm rain.',
-    price: 0, usd: 0, premium: false,
+    price: 0, premium: false,
     sky: 0x070a18, fog: 0x0d1226, fogDensity: 0.006,
     ambient: 0x41527a, ambientIntensity: 1.55, moon: 0x9cc0ff, moonIntensity: 1.1,
     ground: 0x0d1120, water: 0x0d2c40, rain: true,
   },
   {
     id: 'day', name: 'Harbor Day', desc: 'Bright sun, blue water, the port wide awake.',
-    price: 0, usd: 0, premium: false,
+    price: 0, premium: false,
     sky: 0x8ec8f0, fog: 0xaed4ee, fogDensity: 0.0011,
     ambient: 0xcfe0f5, ambientIntensity: 0.7, moon: 0xfff3da, moonIntensity: 1.7,
     ground: 0x8b95a1, water: 0x3f7fab, rain: false,
   },
   {
     id: 'golden', name: 'Golden Hour', desc: 'The harbor at eternal sunset. Earned, not given.',
-    price: 800, usd: 4.99, premium: false,
+    price: 800, premium: false, vcId: 'theme.golden',
     sky: 0x2a1608, fog: 0x58290a, fogDensity: 0.0065,
     ambient: 0xffb26b, ambientIntensity: 1.2, moon: 0xffd9a0, moonIntensity: 1.05,
     ground: 0x171008, water: 0x3a2410, rain: false,
   },
   {
     id: 'acid', name: 'Acid Rain', desc: 'Something leaked in Sector 7. Green haze, toxic rain.',
-    price: 0, usd: 9.99, premium: true,
+    price: 0, premium: true, vcId: 'theme.acid',
     sky: 0x03130a, fog: 0x062b16, fogDensity: 0.007,
     ambient: 0x3a9160, ambientIntensity: 1.5, moon: 0x7dffa8, moonIntensity: 0.95,
     ground: 0x06120b, water: 0x0a3320, rain: true,
   },
   {
     id: 'sakura', name: 'Sakura Dusk', desc: 'Pink neon festival night under the blossom towers.',
-    price: 0, usd: 9.99, premium: true,
+    price: 0, premium: true, vcId: 'theme.sakura',
     sky: 0x170a1c, fog: 0x2b0f33, fogDensity: 0.0056,
     ambient: 0xa06cc0, ambientIntensity: 1.55, moon: 0xffc2e0, moonIntensity: 1.0,
     ground: 0x120a16, water: 0x2a1030, rain: false,
