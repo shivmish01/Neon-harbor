@@ -295,61 +295,58 @@
 }
 
 
-/* ============ Touch controls (mobile / tablet) ============ */
+/* ============ Touch controls (mobile / tablet) — Asphalt 9 glass style ============
+   Reference: Asphalt Legends TouchDrive HUD — icon-only circular glass buttons,
+   very translucent so the world shows through, thin bright rim that lights up
+   when the action is armed (nitro ready = purple pulse, firing = hard glow). */
 .touch-btn {
   pointer-events: auto;
   position: relative;
   width: 5rem;
   height: 5rem;
   border-radius: 9999px;
-  background: radial-gradient(circle at 30% 25%, rgba(40, 56, 88, 0.85), rgba(8, 14, 28, 0.9) 70%);
-  border: 1.5px solid rgba(103, 232, 249, 0.55);
-  color: #e6f7ff;
+  background: radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.14), rgba(8, 12, 26, 0.38) 62%);
+  border: 1.5px solid rgba(255, 255, 255, 0.34);
+  color: #f2f6ff;
   font-weight: 800;
-  font-size: 1rem;
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 0.1rem;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    0 4px 14px rgba(0, 0, 0, 0.45),
-    0 0 12px rgba(34, 211, 238, 0.22);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 4px 16px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
   -webkit-tap-highlight-color: transparent;
-  transition: transform 0.08s ease, box-shadow 0.08s ease;
+  transition: transform 0.08s ease, box-shadow 0.08s ease, border-color 0.08s ease;
 }
 .touch-btn:active {
-  transform: scale(0.93);
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.4), 0 0 26px rgba(34, 211, 238, 0.85);
-}
-/* Asphalt-style NITRO: big purple-fuchsia circle, lightning icon + label */
-.touch-btn-nitro {
-  width: 5.6rem;
-  height: 5.6rem;
-  font-size: 2rem;
-  background: radial-gradient(circle at 30% 25%, rgba(168, 85, 247, 0.8), rgba(88, 28, 135, 0.92) 70%);
-  border-color: rgba(232, 121, 249, 0.75);
-  color: #fdf4ff;
+  transform: scale(0.92);
+  border-color: rgba(255, 255, 255, 0.75);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.25),
-    0 4px 16px rgba(0, 0, 0, 0.5),
-    0 0 18px rgba(232, 121, 249, 0.45);
+    inset 0 2px 8px rgba(0, 0, 0, 0.35),
+    0 0 24px rgba(140, 220, 255, 0.55);
 }
-.touch-btn-nitro::after {
-  content: 'NITRO';
-  font-size: 0.52rem;
-  letter-spacing: 0.18em;
-  font-weight: 800;
-  color: #f0abfc;
-  margin-top: 0.1rem;
+/* NITRO — the hero button (Asphalt: biggest circle on the right edge) */
+.touch-btn-nitro {
+  width: 6rem;
+  height: 6rem;
+  font-size: 2rem;
+  background: radial-gradient(circle at 32% 28%, rgba(168, 85, 247, 0.28), rgba(24, 10, 40, 0.5) 68%);
+  border-color: rgba(216, 180, 254, 0.5);
+  color: #fdf4ff;
 }
 .touch-btn-nitro:active {
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.4), 0 0 34px rgba(232, 121, 249, 0.95);
+  box-shadow:
+    inset 0 2px 8px rgba(0, 0, 0, 0.35),
+    0 0 30px rgba(192, 132, 252, 0.8);
 }
 /* Nitro fully charged — breathe so the player knows it's ready to fire */
 .touch-btn-nitro.ready {
@@ -357,60 +354,64 @@
 }
 @keyframes nitro-ready {
   0%, 100% {
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.25),
-      0 0 18px rgba(232, 121, 249, 0.45);
+    border-color: rgba(216, 180, 254, 0.55);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 0 16px rgba(192, 132, 252, 0.4);
   }
   50% {
+    border-color: #e9d5ff;
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.35),
-      0 0 40px rgba(232, 121, 249, 0.95),
-      0 0 80px rgba(232, 121, 249, 0.45);
+      inset 0 1px 0 rgba(255, 255, 255, 0.3),
+      0 0 38px rgba(192, 132, 252, 0.9),
+      0 0 76px rgba(168, 85, 247, 0.45);
   }
 }
-/* Nitro actively firing — hard continuous glow */
+/* Nitro actively firing — hard continuous purple glow */
 .touch-btn-nitro.lit {
+  border-color: #f0abfc;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.3),
-    0 0 30px rgba(232, 121, 249, 0.9),
-    0 0 70px rgba(168, 85, 247, 0.55);
-  border-color: #f0abfc;
+    0 0 28px rgba(232, 121, 249, 0.85),
+    0 0 64px rgba(168, 85, 247, 0.5);
 }
-/* Asphalt-style DRIFT: teal rounded-square with label */
+/* DRIFT — glass circle with a teal rim */
 .touch-btn-drift {
-  width: 4.6rem;
-  height: 4.6rem;
-  border-radius: 1.15rem;
-  font-size: 0.72rem;
-  letter-spacing: 0.14em;
-  background: radial-gradient(circle at 30% 25%, rgba(45, 212, 191, 0.7), rgba(15, 70, 64, 0.92) 70%);
-  border-color: rgba(45, 212, 191, 0.6);
-  color: #ccfbf1;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 4px 14px rgba(0, 0, 0, 0.45),
-    0 0 14px rgba(45, 212, 191, 0.35);
+  width: 4.8rem;
+  height: 4.8rem;
+  font-size: 0.58rem;
+  background: radial-gradient(circle at 32% 28%, rgba(45, 212, 191, 0.2), rgba(8, 20, 22, 0.44) 68%);
+  border-color: rgba(94, 234, 212, 0.45);
+  color: #d9fef5;
 }
 .touch-btn-drift:active {
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.4), 0 0 28px rgba(45, 212, 191, 0.9);
+  box-shadow:
+    inset 0 2px 8px rgba(0, 0, 0, 0.35),
+    0 0 24px rgba(45, 212, 191, 0.7);
 }
-/* Asphalt-style pedals: rounded-rect gas / brake */
+/* BRAKE — glass circle with a warm red-orange rim */
 .touch-btn-pedal {
-  width: 4.4rem;
-  height: 4.4rem;
-  border-radius: 0.9rem;
-  font-size: 1.5rem;
-  background: radial-gradient(circle at 30% 25%, rgba(55, 75, 110, 0.92), rgba(10, 16, 34, 0.94) 70%);
-  border-color: rgba(148, 163, 184, 0.5);
-  color: #e2e8f0;
+  width: 4.8rem;
+  height: 4.8rem;
+  border-radius: 9999px;
+  font-size: 0.58rem;
+  background: radial-gradient(circle at 32% 28%, rgba(251, 113, 133, 0.2), rgba(28, 10, 14, 0.46) 68%);
+  border-color: rgba(253, 164, 175, 0.45);
+  color: #ffe4e6;
 }
+.touch-btn-pedal:active {
+  box-shadow:
+    inset 0 2px 8px rgba(0, 0, 0, 0.35),
+    0 0 24px rgba(251, 113, 133, 0.7);
+}
+/* small utility buttons (map / horn / pause) — Asphalt top-bar style:
+   dark translucent rounded square, white glyph, no neon border */
 .touch-btn-sm {
-  width: 3.2rem;
-  height: 3.2rem;
-  border-radius: 0.85rem;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.8rem;
   font-size: 1.05rem;
-  background: rgba(10, 16, 32, 0.62);
-  border-color: rgba(103, 232, 249, 0.4);
+  background: rgba(6, 10, 22, 0.52);
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
 }
 .touch-btn-wide {
   width: 6.5rem;
@@ -428,6 +429,7 @@
   font-size: 1.5rem;
   border-color: rgba(248, 113, 113, 0.8);
   color: #fecaca;
+  background: radial-gradient(circle at 32% 28%, rgba(248, 113, 113, 0.3), rgba(30, 8, 12, 0.55) 68%);
   animation: mash-pulse 0.35s ease-in-out infinite alternate;
 }
 @keyframes mash-pulse {
@@ -441,14 +443,13 @@
   width: 8.5rem;
   height: 8.5rem;
   border-radius: 9999px;
-  background: radial-gradient(circle at 50% 50%, rgba(34, 211, 238, 0.1), rgba(8, 14, 28, 0.6) 65%);
-  border: 2px solid rgba(34, 211, 238, 0.5);
+  background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.07), rgba(8, 12, 26, 0.34) 68%);
+  border: 2px solid rgba(255, 255, 255, 0.3);
   box-shadow:
-    inset 0 0 20px rgba(34, 211, 238, 0.18),
-    0 4px 16px rgba(0, 0, 0, 0.5),
-    0 0 16px rgba(34, 211, 238, 0.22);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 4px 16px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -462,11 +463,11 @@
   height: 3.4rem;
   margin: -1.7rem 0 0 -1.7rem;
   border-radius: 9999px;
-  background: radial-gradient(circle at 35% 30%, rgba(148, 238, 255, 0.98), rgba(34, 211, 238, 0.6) 70%);
-  border: 1px solid rgba(224, 255, 255, 0.9);
+  background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.32), rgba(180, 210, 255, 0.16) 55%, rgba(10, 14, 28, 0.3) 78%);
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
   box-shadow:
-    0 0 18px rgba(34, 211, 238, 0.75),
-    inset 0 1px 2px rgba(255, 255, 255, 0.55);
+    0 0 14px rgba(160, 210, 255, 0.35),
+    inset 0 1px 2px rgba(255, 255, 255, 0.4);
 }
 
 /* ============ Asphalt-style circular speedometer (mobile) ============ */
