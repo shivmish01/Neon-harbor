@@ -2847,7 +2847,13 @@ export class GameEngine {
     this.analogSteer = steer
     this.analogThrottle = throttle
   }
-  /** CoD-style swipe steer: -1..1 while the player drags the right side, null on release */
+  /** CoD-style swipe steer: each horizontal pixel the finger travels adds
+      steering input, which then bleeds off in the update loop. A fast flick
+      = sharp turn, a slow drag = gentle arc, holding the finger still =
+      straight. Pass null on release to clear immediately. */
+  touchSwipeDelta(dx: number): void {
+    this.swipeSteer = THREE.MathUtils.clamp((this.swipeSteer ?? 0) + dx * 0.022, -1, 1)
+  }
   touchSwipeSteer(v: number | null): void {
     this.swipeSteer = v
   }
@@ -3145,7 +3151,16 @@ export class GameEngine {
       if (braking) s -= (s > 1 ? BRAKE : ACCEL * 0.6) * dt
       const maxS = MAX_SPEED * mult
       s = THREE.MathUtils.clamp(s, -10, maxS)
-      const aSt = this.padSteer ?? this.swipeSteer ?? this.analogSteer
+      // Swipe steering is motion-based (CoD-style): finger movement adds steer
+      // input which bleeds off fast — a held-still finger goes straight.
+      if (this.swipeSteer !== null) {
+        this.swipeSteer *= Math.exp(-dt * 6)
+        if (Math.abs(this.swipeSteer) < 0.03) this.swipeSteer = null
+      }
+      // Joystick tilt keeps only partial steering authority — the right-thumb
+      // swipe is the primary steering, like aiming in CoD Mobile.
+      const joySteer = this.analogSteer !== null ? this.analogSteer * 0.55 : null
+      const aSt = this.padSteer ?? this.swipeSteer ?? joySteer
       const steer = aSt !== null ? -aSt : (left ? 1 : 0) - (right ? 1 : 0)
       const grip = handbrake ? 1.4 : 7.5
       const turnRate = steer * 2.1 * THREE.MathUtils.clamp(Math.abs(s) / 10, 0, 1) * (handbrake ? 1.5 : 1)

@@ -1226,7 +1226,7 @@ export default function App() {
               <div className="text-[11px] tracking-[0.3em] text-cyan-300 font-bold">YOUR WHEEL</div>
               <div className="text-white font-bold mt-1 text-sm leading-snug">
                 {isTouch
-                  ? <>Push the joystick <span className="text-cyan-300">UP to speed up</span>. To steer, <span className="text-cyan-300">swipe anywhere on the right side</span> — like aiming in CoD. Both are live now, try it!</>
+                  ? <>Push the joystick <span className="text-cyan-300">UP to speed up</span>. Steer by <span className="text-cyan-300">swiping the right side</span> — flick for sharp turns, like aiming in CoD. Both are live now, try it!</>
                   : <>Hold <span className="key-cap">W</span> to speed up, steer with <span className="key-cap">A</span>/<span className="key-cap">D</span> — try it!</>}
               </div>
               <button className="onboard-next mt-3" onClick={() => setOnboardStep(2)}>GOT IT →</button>
@@ -1799,15 +1799,43 @@ const IcoMash = () => <Ico d="M12 1.8l1.9 5.3 5.3-1.9-2.9 4.5 4.9 2.2-5.9 2.6 2.
 // Floating analog stick: push forward = gas, pull back = brake/reverse,
 // left/right = steering. Pointer capture keeps the hold through thumb drift.
 /** Call of Duty-style swipe steering: the right half of the screen is a drag
-    surface — hold and drag left/right to steer, exactly like swiping to aim in
-    CoD Mobile. The joystick keeps throttle; whichever steer input is active
-    wins, and the wheel centers itself when the thumb lifts. Sits below the
-    on-screen buttons so touches that start on a button never steer. */
+    surface — the car turns WHILE the finger moves, exactly like aiming in CoD
+    Mobile. A fast flick throws the car into the turn, a slow drag eases it,
+    and a held-still finger goes straight. The joystick keeps throttle; the
+    right thumb owns direction. Sits below the on-screen buttons so touches
+    that start on a button never steer. */
 function SwipeSteerZone({ engine, enabled }: { engine: GameEngine | null; enabled: boolean }) {
-  const [steer, setSteer] = useState(0)
   const [active, setActive] = useState(false)
-  const origin = useRef(0)
-  const RANGE = 64 // px of horizontal drag for full steering lock
+  const lastX = useRef(0)
+  const mag = useRef(0)
+  const sign = useRef(1)
+  const trackRef = useRef<HTMLDivElement | null>(null)
+  const fillRef = useRef<HTMLDivElement | null>(null)
+
+  // Indicator decay runs on rAF and writes styles directly — no re-renders.
+  useEffect(() => {
+    if (!enabled) return
+    let raf = 0
+    const tick = () => {
+      mag.current *= 0.8
+      const el = trackRef.current
+      const f = fillRef.current
+      if (el && f) {
+        if (mag.current < 0.04) {
+          el.style.opacity = '0'
+        } else {
+          el.style.opacity = '1'
+          f.style.width = `${Math.min(100, mag.current * 100)}%`
+          f.style.left = sign.current >= 0 ? '50%' : ''
+          f.style.right = sign.current < 0 ? '50%' : ''
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [enabled])
+
   const end = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!active) return
     try {
@@ -1816,7 +1844,6 @@ function SwipeSteerZone({ engine, enabled }: { engine: GameEngine | null; enable
       /* ignore */
     }
     setActive(false)
-    setSteer(0)
     engine?.touchSwipeSteer(null)
   }
   if (!enabled) return null
@@ -1831,33 +1858,27 @@ function SwipeSteerZone({ engine, enabled }: { engine: GameEngine | null; enable
           } catch {
             /* pointer capture unsupported */
           }
-          origin.current = e.clientX
+          lastX.current = e.clientX
           setActive(true)
         }}
         onPointerMove={(e) => {
           if (!active) return
-          const v = Math.max(-1, Math.min(1, (e.clientX - origin.current) / RANGE))
-          setSteer(v)
-          engine?.touchSwipeSteer(Math.abs(v) < 0.08 ? 0 : v)
+          const dx = e.clientX - lastX.current
+          lastX.current = e.clientX
+          if (Math.abs(dx) < 0.5) return
+          engine?.touchSwipeDelta(dx)
+          if (Math.abs(dx) > 1) sign.current = Math.sign(dx)
+          mag.current = Math.min(1, mag.current + Math.abs(dx) / 16)
         }}
         onPointerUp={end}
         onPointerCancel={end}
         onContextMenu={(e) => e.preventDefault()}
       />
-      {active && (
-        <div className="steer-indicator" aria-hidden="true">
-          <div className="steer-indicator-track">
-            <div
-              className="steer-indicator-fill"
-              style={{
-                left: steer >= 0 ? '50%' : undefined,
-                right: steer < 0 ? '50%' : undefined,
-                width: `${Math.abs(steer) * 50}%`,
-              }}
-            />
-          </div>
+      <div className="steer-indicator" ref={trackRef} style={{ opacity: 0 }} aria-hidden="true">
+        <div className="steer-indicator-track">
+          <div className="steer-indicator-fill" ref={fillRef} />
         </div>
-      )}
+      </div>
     </>
   )
 }
@@ -1949,8 +1970,8 @@ function touchTitle(t: string) {
   return t
 }
 function touchHint(h: string) {
-  if (/WASD|arrow keys|HOLD W/i.test(h)) return 'Push the joystick UP to drive — or swipe anywhere on the RIGHT side to steer'
-  if (/Tap A or D/i.test(h)) return 'Swipe LEFT or RIGHT on the right side of the screen to turn. Try a corner'
+  if (/WASD|arrow keys|HOLD W/i.test(h)) return 'Push the joystick UP to drive — steer by swiping the RIGHT side of the screen'
+  if (/Tap A or D/i.test(h)) return 'Swipe LEFT or RIGHT on the right side to turn — flick for sharp turns. Try a corner'
   if (/SHIFT/i.test(h)) return 'Tap NITRO on the right to boost — it recharges on its own'
   if (/SPACE|Handbrake/i.test(h)) return 'Hold DRIFT in a turn to slide. Drifts earn cash chains'
   if (/press E/i.test(h)) return 'Tap the E button at the garage — jobs, races, taxi fares and getaways await'
