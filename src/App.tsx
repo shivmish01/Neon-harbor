@@ -16,7 +16,7 @@ import { loadSave, persistSave, defaultSave, type SaveData } from './game/save'
 import { VPlay, type VPlayInit, type PurchaseResult } from './vplay/sdk'
 
 type Screen = 'boot' | 'menu' | 'game'
-type Overlay = null | 'shop' | 'jobs' | 'pause' | 'help' | 'progress'
+type Overlay = null | 'shop' | 'jobs' | 'pause' | 'help' | 'progress' | 'map'
 
 interface Toast {
   id: number
@@ -346,6 +346,16 @@ export default function App() {
       engineRef.current?.applyLoadout()
     }
     if (params.get('hud') === '0') document.body.classList.add('nh-cinema')
+    if (params.has('unlock')) {
+      // DEV-ONLY test hook: ?unlock=all grants every car, environment and max
+      // level so testers skip the progression. Never active in shipped builds.
+      const s = saveRef.current
+      s.owned = [...new Set([...s.owned, ...SKINS.map((k) => k.id), ...THEMES.map((t) => t.id), 'aurora'])]
+      s.level = Math.max(s.level, 10)
+      s.cash = Math.max(s.cash, 99999)
+      commit()
+      engineRef.current?.applyLoadout()
+    }
     if (params.has('autostart')) {
       enterGame()
       if (params.get('at') === 'beach') {
@@ -362,6 +372,22 @@ export default function App() {
     }
   }, [screen])
 
+  // Tactical map: size the canvas to its box and paint one frame on open
+  // (the engine pauses while the map is up, so a static frame stays correct)
+  const tacMapRef = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    if (overlay !== 'map') return
+    const canvas = tacMapRef.current
+    const engine = engineRef.current
+    if (!canvas || !engine) return
+    const rect = canvas.getBoundingClientRect()
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const px = Math.max(Math.round(Math.min(rect.width, rect.height) * dpr), 320)
+    canvas.width = px
+    canvas.height = px
+    engine.drawTacMap(canvas)
+  }, [overlay])
+
   // Pause only for modal overlays during gameplay — menus keep the city alive
   useEffect(() => {
     engineRef.current?.setPaused(screen === 'game' && (overlay !== null || (isTouch && isPortrait)))
@@ -375,12 +401,23 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overlay, screen, isTouch, isPortrait])
 
-  // Escape opens/closes pause
+  // Escape opens/closes pause (or dismisses the tactical map first)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (screenRef.current !== 'game') return
-      setOverlay((o) => (o === null ? 'pause' : o === 'pause' ? null : o))
+      setOverlay((o) => (o === 'map' ? null : o === null ? 'pause' : o === 'pause' ? null : o))
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // M toggles the PUBG-style tactical map (desktop)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'm' && e.key !== 'M') return
+      if (screenRef.current !== 'game') return
+      setOverlay((o) => (o === null ? 'map' : o === 'map' ? null : o))
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -862,7 +899,7 @@ export default function App() {
           {!isTouch && (
             <div className="absolute bottom-4 right-4 z-20 hud-panel text-[11px] text-slate-400 leading-relaxed">
               <b className="text-slate-200">WASD</b> drive · <b className="text-slate-200">SHIFT</b> nitro · <b className="text-slate-200">SPACE</b> handbrake · <b className="text-slate-200">R</b> unstuck<br />
-              <b className="text-slate-200">E</b> job board · <b className="text-slate-200">H</b> horn · <b className="text-slate-200">C</b> camera · <b className="text-slate-200">ESC</b> menu
+              <b className="text-slate-200">E</b> job board · <b className="text-slate-200">H</b> horn · <b className="text-slate-200">C</b> camera · <b className="text-slate-200">M</b> map · <b className="text-slate-200">ESC</b> menu
             </div>
           )}
 
@@ -884,6 +921,7 @@ export default function App() {
                     {(hud.nearGarage || hud.nearToll) && <TouchBtn engine={engineRef.current} label="E" tap="e" small />}
                     {hud.stuck && <TouchBtn engine={engineRef.current} label="RESET" tap="r" small />}
                     <button onClick={togglePhoto} className="touch-btn touch-btn-sm" aria-label="Photo mode">📷</button>
+                    <button onClick={() => setOverlay('map')} className="touch-btn touch-btn-sm" aria-label="Map">🗺️</button>
                     <TouchBtn engine={engineRef.current} label="📯" tap="h" small />
                     <button
                       onClick={() => setOverlay('pause')}
@@ -928,6 +966,7 @@ export default function App() {
                     {(hud.nearGarage || hud.nearToll) && <TouchBtn engine={engineRef.current} label="E" tap="e" small />}
                     {hud.stuck && <TouchBtn engine={engineRef.current} label="RESET" tap="r" small />}
                     <button onClick={togglePhoto} className="touch-btn touch-btn-sm" aria-label="Photo mode">📷</button>
+                    <button onClick={() => setOverlay('map')} className="touch-btn touch-btn-sm" aria-label="Map">🗺️</button>
                     <TouchBtn engine={engineRef.current} label="📯" tap="h" small />
                     <button
                       onClick={() => setOverlay('pause')}
@@ -1087,6 +1126,26 @@ export default function App() {
           <h2 className="text-3xl font-black text-white tracking-[0.3em] mb-3">PAUSED</h2>
           <p className="text-cyan-300 text-sm tracking-widest animate-pulse">TAP TO CONTINUE</p>
         </button>
+      )}
+
+      {/* ================= TACTICAL MAP (PUBG style) ================= */}
+      {overlay === 'map' && screen === 'game' && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="relative flex items-center justify-center w-full h-full p-3 sm:p-6">
+            <canvas
+              ref={tacMapRef}
+              className="rounded-xl border border-slate-600/80 shadow-[0_0_60px_rgba(34,211,238,0.15)]"
+              style={{ width: 'min(94vw, 86vh)', height: 'min(94vw, 86vh)' }}
+            />
+            <button
+              onClick={() => setOverlay(null)}
+              className="absolute top-3 right-3 sm:top-5 sm:right-5 w-10 h-10 rounded-full bg-slate-900/80 border border-slate-600 text-slate-300 hover:text-white text-xl"
+              aria-label="Close map"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ================= PROGRESS (trophies + districts) ================= */}
