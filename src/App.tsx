@@ -944,20 +944,24 @@ export default function App() {
             </div>
           )}
 
-          {/* mobile: Asphalt-style bottom-center cluster — big digital speed + nitro bar, clear of joystick and nitro/drift buttons */}
+          {/* mobile: compact odometer speed just above the joystick — the digits
+              roll like a mechanical counter; slim nitro line underneath */}
           {isTouch && (
-            <div className="absolute left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1" style={{ bottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}>
-              <div className="text-center">
-                <div className="text-4xl font-black text-white font-mono leading-none drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]">{hud.speedKmh}</div>
-                <div className="text-[9px] text-slate-300 tracking-[0.3em] text-center mt-0.5">KM/H</div>
+            <div
+              className="absolute left-4 z-20 flex flex-col items-start gap-0.5 pointer-events-none"
+              style={{ bottom: 'calc(max(3.5rem, env(safe-area-inset-bottom)) + 9rem)' }}
+            >
+              <div className="flex items-baseline gap-1">
+                <SpeedDigits value={hud.speedKmh} boosting={hud.boosting} />
+                <span className="text-[9px] text-slate-300/90 tracking-[0.25em] font-semibold">KM/H</span>
               </div>
-              <div className="w-36 h-2 bg-slate-900/70 border border-slate-600/80 rounded-full overflow-hidden">
+              <div className="w-24 h-1 bg-white/10 rounded-full overflow-hidden">
                 <div
-                  className={`h-full rounded-full ${hud.boosting ? 'bg-fuchsia-400 shadow-[0_0_12px_rgba(232,121,249,0.9)]' : hud.boost >= 95 ? 'bg-cyan-300 shadow-[0_0_10px_rgba(103,232,249,0.8)]' : 'bg-cyan-600'}`}
+                  className={`h-full rounded-full transition-all duration-300 ${hud.boosting ? 'bg-fuchsia-400 shadow-[0_0_10px_rgba(232,121,249,0.9)]' : hud.boost >= 95 ? 'bg-cyan-300 shadow-[0_0_8px_rgba(103,232,249,0.8)]' : 'bg-cyan-500/80'}`}
                   style={{ width: `${hud.boost}%` }}
                 />
               </div>
-              {hud.drift > 0 && <div className="text-yellow-300 text-xs font-black drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]">DRIFT +{hud.drift}</div>}
+              {hud.drift > 0 && <div className="text-yellow-300 text-[11px] font-black drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]">DRIFT +{hud.drift}</div>}
             </div>
           )}
 
@@ -997,11 +1001,9 @@ export default function App() {
                     </button>
                   </div>
                   <div className="flex items-end gap-2">
-                    <div className="flex flex-col gap-2">
-                      <TouchBtn engine={engineRef.current} label="⚡" hold="shift" variant="nitro" ready={hud.boost >= 95} lit={hud.boosting} />
-                      <TouchBtn engine={engineRef.current} label="🌀" hold=" " variant="drift" />
-                      <TouchBtn engine={engineRef.current} label="🛑" hold="s" variant="pedal" />
-                    </div>
+                    <TouchBtn engine={engineRef.current} label="🌀" hold=" " variant="drift" />
+                    <TouchBtn engine={engineRef.current} label="⚡" hold="shift" variant="nitro" ready={hud.boost >= 95} lit={hud.boosting} />
+                    <TouchBtn engine={engineRef.current} label="🛑" hold="s" variant="pedal" />
                   </div>
                 </div>
               </div>
@@ -1107,7 +1109,7 @@ export default function App() {
 
           {/* mission-complete result banner — the 📷 photo button lives here on mobile */}
           {winBanner && !overlay && !photoMode && (
-            <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
+            <div className={`absolute left-1/2 -translate-x-1/2 z-30 pointer-events-auto ${isTouch ? 'top-44' : 'top-24'}`}>
               <div className="hud-panel border-emerald-400/70 shadow-[0_0_28px_rgba(52,211,153,0.35)] flex items-center gap-3 px-4 py-2.5">
                 <div>
                   <div className="text-[10px] tracking-[0.25em] text-emerald-300">MISSION COMPLETE</div>
@@ -1664,6 +1666,25 @@ function Joystick({ engine }: { engine: GameEngine | null }) {
 
 
 // ---------- Touch-aware tutorial text (mobile shows touch controls, not keys) ----------
+/** Rolling mechanical-counter speed: each digit is a 0-9 column that springs
+    into place when the speed changes — small, fixed width, no layout shift. */
+function SpeedDigits({ value, boosting }: { value: number; boosting: boolean }) {
+  const digits = String(Math.min(Math.max(Math.round(value), 0), 999)).padStart(3, '0').slice(-3).split('')
+  return (
+    <div className={`speed-digits ${boosting ? 'speed-digits-boost' : ''}`} aria-label={`${value} km/h`}>
+      {digits.map((d, i) => (
+        <div className="speed-digit" key={i}>
+          <div className="speed-digit-col" style={{ transform: `translateY(-${Number(d)}em)` }}>
+            {'0123456789'.split('').map((n) => (
+              <span key={n}>{n}</span>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function touchTitle(t: string) {
   if (/HOLD W|accelerate/i.test(t)) return 'DRIVE'
   if (/STEER/i.test(t)) return 'STEER'

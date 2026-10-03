@@ -100,6 +100,12 @@
   padding: 0.5rem 0.75rem;
   backdrop-filter: blur(6px);
   width: fit-content;
+  animation: hud-in 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+}
+@keyframes hud-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .menu-btn {
@@ -468,6 +474,39 @@
   box-shadow:
     0 0 14px rgba(160, 210, 255, 0.35),
     inset 0 1px 2px rgba(255, 255, 255, 0.4);
+}
+
+/* ============ Rolling odometer speed (mobile) ============ */
+.speed-digits {
+  display: flex;
+  align-items: baseline;
+  height: 1em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.75rem;
+  font-weight: 800;
+  line-height: 1;
+  color: #f1f5ff;
+  text-shadow: 0 0 10px rgba(103, 232, 249, 0.45), 0 2px 6px rgba(0, 0, 0, 0.8);
+  transition: text-shadow 0.25s ease;
+}
+.speed-digits-boost {
+  color: #fdf4ff;
+  text-shadow: 0 0 14px rgba(232, 121, 249, 0.85), 0 2px 6px rgba(0, 0, 0, 0.8);
+}
+.speed-digit {
+  height: 1em;
+  overflow: hidden;
+}
+.speed-digit-col {
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.5s cubic-bezier(0.22, 1.35, 0.32, 1);
+  will-change: transform;
+}
+.speed-digit-col span {
+  height: 1em;
+  line-height: 1;
+  display: block;
 }
 
 /* ============ Asphalt-style circular speedometer (mobile) ============ */
