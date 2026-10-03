@@ -184,6 +184,7 @@ function seededRand(seed: number): () => number {
 // ---------- Engine ----------
 export class GameEngine {
   private renderer: THREE.WebGLRenderer
+  private canvas: HTMLCanvasElement
   private composer: EffectComposer
   private bloomPass!: UnrealBloomPass
   // MOB-3: FPS watchdog — on touch devices, sustained low FPS steps quality
@@ -321,6 +322,7 @@ export class GameEngine {
     this.mmCanvas = minimap
     this.hooks = hooks
     this.assets = assets
+    this.canvas = canvas
 
     let renderer: THREE.WebGLRenderer
     try {
@@ -2753,8 +2755,11 @@ export class GameEngine {
   }
 
   private resize = (): void => {
-    const w = window.innerWidth
-    const h = window.innerHeight
+    // Follow the canvas box, not the window: on phones held in portrait the
+    // root div is CSS-rotated into a landscape box, and the renderer must
+    // match what the player actually sees.
+    const w = this.canvas.clientWidth || window.innerWidth
+    const h = this.canvas.clientHeight || window.innerHeight
     this.renderer.setSize(w, h, false)
     this.composer.setSize(w, h)
     this.camera.aspect = w / h

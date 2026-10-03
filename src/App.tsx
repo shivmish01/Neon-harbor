@@ -71,14 +71,21 @@ export default function App() {
   const [isTouch] = useState(
     () => typeof window !== 'undefined' && (window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window),
   )
-  // Mobile plays in landscape — portrait shows a "rotate your device" screen
+  // Mobile plays in landscape. We never ask the player to rotate: Android
+  // Chrome gets a real orientation lock from the entry tap, and everything
+  // else (iOS Safari…) gets the root div CSS-rotated into landscape below.
   const [isPortrait, setIsPortrait] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches,
   )
   useEffect(() => {
     if (!isTouch) return
     const mq = window.matchMedia('(orientation: portrait)')
-    const update = () => setIsPortrait(mq.matches)
+    const update = () => {
+      setIsPortrait(mq.matches)
+      // the rotated root changes the canvas box without a window resize —
+      // nudge the engine so it re-sizes to what the player now sees
+      requestAnimationFrame(() => window.dispatchEvent(new Event('resize')))
+    }
     update()
     mq.addEventListener('change', update)
     return () => mq.removeEventListener('change', update)
@@ -319,6 +326,35 @@ export default function App() {
     }
   }, [ensureEngine, pushToast])
 
+  // Fullscreen + landscape lock in one call. Must run inside a user gesture
+  // (tap). Android Chrome honors both; iOS Safari silently ignores them (the
+  // CSS-rotated root covers that case), so this never throws.
+  const goImmersive = useCallback(() => {
+    try {
+      const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }
+      const p = el.requestFullscreen?.() ?? el.webkitRequestFullscreen?.()
+      if (p && typeof p.catch === 'function') p.catch(() => {})
+    } catch { /* fullscreen not permitted — fine */ }
+    try {
+      const so = window.screen.orientation as unknown as { lock?: (o: string) => Promise<void> }
+      const lp = so.lock?.('landscape')
+      if (lp && typeof lp.catch === 'function') lp.catch(() => {})
+    } catch { /* orientation lock unsupported */ }
+  }, [])
+
+  // First tap anywhere on a phone (splash card, menu, anywhere) goes immersive
+  // immediately — launching feels instant, like the PC build opening maximized.
+  useEffect(() => {
+    if (!isTouch) return
+    const onFirstTap = () => {
+      if (vplayRef.current?.mode === 'vplay') return
+      goImmersive()
+      window.removeEventListener('pointerdown', onFirstTap)
+    }
+    window.addEventListener('pointerdown', onFirstTap)
+    return () => window.removeEventListener('pointerdown', onFirstTap)
+  }, [isTouch, goImmersive])
+
   // Enter the game world
   const enterGame = useCallback(() => {
     try {
@@ -331,10 +367,11 @@ export default function App() {
       }
       engine.setMuted(saveRef.current.muted)
       engine.setAttract(false)
-      // Phones/tablets: go truly fullscreen (hide browser chrome) — needs the
-      // user-gesture context of this click. Never in vplay.gg iframe mode.
+      // Phones/tablets: go truly fullscreen AND lock landscape (hide browser
+      // chrome) — needs the user-gesture context of this click. Never in
+      // vplay.gg iframe mode.
       if (isTouch && vplayRef.current?.mode !== 'vplay') {
-        document.documentElement.requestFullscreen?.().catch(() => {})
+        goImmersive()
       }
       setScreen('game')
     } catch (err) {
@@ -344,25 +381,13 @@ export default function App() {
   }, [ensureEngine, pushToast, isTouch])
 
   // Phones: rotating to landscape while playing should also hide the browser
-  // chrome (URL bar). The initial requestFullscreen happens on the entry tap;
-  // this catches later rotations. iOS Safari silently ignores it — its chrome
-  // collapses on its own — so this is a no-op there, never an error.
+  // chrome (URL bar). iOS Safari silently ignores it — the CSS-rotated root
+  // covers portrait there — so this is a no-op, never an error.
   useEffect(() => {
     if (!isTouch || screen !== 'game') return
     const goFullscreen = () => {
       if (vplayRef.current?.mode === 'vplay') return
-      if (window.innerWidth <= window.innerHeight) return
-      if (document.fullscreenElement) return
-      try {
-        const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }
-        const p = el.requestFullscreen?.() ?? el.webkitRequestFullscreen?.()
-        if (p && typeof p.catch === 'function') p.catch(() => {})
-      } catch { /* not permitted — fine, game still runs */ }
-      try {
-        const so = window.screen.orientation as unknown as { lock?: (o: string) => Promise<void> }
-        const lp = so.lock?.('landscape')
-        if (lp && typeof lp.catch === 'function') lp.catch(() => {})
-      } catch { /* orientation lock unsupported */ }
+      if (window.innerWidth <= window.innerHeight) goImmersive()
     }
     window.addEventListener('orientationchange', goFullscreen)
     window.addEventListener('resize', goFullscreen)
@@ -370,7 +395,7 @@ export default function App() {
       window.removeEventListener('orientationchange', goFullscreen)
       window.removeEventListener('resize', goFullscreen)
     }
-  }, [isTouch, screen])
+  }, [isTouch, screen, goImmersive])
 
   enterGameRef.current = enterGame
 
@@ -432,7 +457,7 @@ export default function App() {
   // Exception: the tactical map on touch is a non-modal side panel — the game
   // keeps running so the player can navigate while driving.
   useEffect(() => {
-    engineRef.current?.setPaused(screen === 'game' && ((overlay !== null && !(isTouch && overlay === 'map')) || (isTouch && isPortrait)))
+    engineRef.current?.setPaused(screen === 'game' && (overlay !== null && !(isTouch && overlay === 'map')))
     // Never leave a held touch button "stuck" when a menu opens over the game
     if (overlay !== null) engineRef.current?.touchReset()
     // Any menu opening exits photo mode cleanly
@@ -441,7 +466,7 @@ export default function App() {
       setPhotoMode(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overlay, screen, isTouch, isPortrait])
+  }, [overlay, screen, isTouch])
 
   // Escape opens/closes pause (or dismisses the tactical map first)
   useEffect(() => {
@@ -700,7 +725,24 @@ export default function App() {
   }
 
   return (
-    <div className="fixed inset-0 overflow-hidden bg-black font-game select-none">
+    <div
+      className="fixed inset-0 overflow-hidden bg-black font-game select-none"
+      style={
+        isTouch && isPortrait
+          ? {
+              // Present the game in landscape even while the phone is held
+              // upright — the player never has to do anything.
+              inset: 'auto',
+              top: 0,
+              left: 0,
+              width: window.innerHeight,
+              height: window.innerWidth,
+              transform: 'rotate(90deg) translateY(-100%)',
+              transformOrigin: 'left top',
+            }
+          : undefined
+      }
+    >
       {/* 3D canvas (live behind every screen) — photo filters tint only in photo mode */}
       <canvas
         ref={canvasRef}
@@ -1544,16 +1586,8 @@ export default function App() {
         </div>
       )}
 
-      {/* ================= ROTATE DEVICE (mobile portrait) ================= */}
-      {isTouch && isPortrait && (
-        <div className="absolute inset-0 z-[60] flex flex-col items-center justify-center bg-[#05060f]">
-          <div className="rotate-phone text-5xl mb-6">📱</div>
-          <div className="text-cyan-300 tracking-[0.35em] text-sm font-bold">ROTATE YOUR DEVICE</div>
-          <div className="text-slate-400 text-xs mt-3 max-w-[16rem] text-center leading-relaxed">
-            {GAME_TITLE} plays in landscape — turn your phone sideways for the full harbor
-          </div>
-        </div>
-      )}
+      {/* Mobile portrait: no "rotate your device" wall — the root div above is
+          already CSS-rotated into landscape, so the game just launches. */}
     </div>
   )
 }
