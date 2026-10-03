@@ -41,7 +41,7 @@ export interface Theme {
 export const HARBOR_PASS_ID = 'pass.harbor'
 export const HARBOR_PASS_ITEMS = ['ghost', 'royal', 'solar', 'oni', 'acid', 'sakura']
 export const AURORA_REQUIREMENT = 'Earn all 15 achievements and reach level 10'
-export const GAME_VERSION = 'v0.17.0-vplay'
+export const GAME_VERSION = 'v1.0.0'
 export const GAME_TITLE = 'NEON HARBOR'
 
 // ---------- CAR SKINS ----------

@@ -794,7 +794,7 @@ export default function App() {
       {/* ================= BOOT ================= */}
       {screen === 'boot' && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-gradient-to-b from-[#05060f]/85 via-[#0a0d1f]/70 to-[#05060f]/85">
-          <div className="text-cyan-400 tracking-[0.5em] text-sm mb-3 animate-pulse">EARLY ACCESS {GAME_VERSION}</div>
+          <div className="text-cyan-400 tracking-[0.5em] text-sm mb-3 animate-pulse">{GAME_VERSION} — FULL RELEASE</div>
           <h1 className="nh-title text-6xl md:text-8xl font-black text-white neon-cyan tracking-wider">{GAME_TITLE}</h1>
           <div className="text-fuchsia-500 tracking-[0.4em] mt-2 text-sm md:text-base">FIRST LIGHT</div>
           <img src="logos/vplaygg.svg" alt="vplay.gg exclusive" className="h-7 md:h-8 mt-4 opacity-95" draggable={false} />
@@ -828,7 +828,7 @@ export default function App() {
       {/* ================= MAIN MENU ================= */}
       {screen === 'menu' && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/55 backdrop-blur-[2px]">
-          <div className="text-cyan-400 tracking-[0.5em] text-xs mb-2">EARLY ACCESS {GAME_VERSION}</div>
+          <div className="text-cyan-400 tracking-[0.5em] text-xs mb-2">{GAME_VERSION} — FULL RELEASE</div>
           <h1 className="nh-menu-title text-5xl md:text-7xl font-black text-white neon-cyan tracking-wider">{GAME_TITLE}</h1>
           <img src="logos/vplaygg.svg" alt="vplay.gg exclusive" className="nh-menu-tag h-5 mt-3 opacity-90" draggable={false} />
           <div className={`nh-menu-gap flex menu-in ${isTouch ? 'flex-col w-64 items-stretch gap-2 mt-6' : 'gap-3 mt-10'}`}>
@@ -1125,10 +1125,10 @@ export default function App() {
             </div>
           )}
 
-          {/* early access badge (desktop only; mobile keeps the view clean) */}
+          {/* save badge (desktop only; mobile keeps the view clean) */}
           {!isTouch && (
             <div className="absolute bottom-1 left-1/2 -translate-x-1/2 z-10 text-[10px] tracking-[0.4em] text-slate-600">
-              EARLY ACCESS — progress is saved locally
+              {GAME_VERSION} — progress is saved locally
             </div>
           )}
 
