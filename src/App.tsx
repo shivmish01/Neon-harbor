@@ -325,12 +325,17 @@ export default function App() {
       }
       engine.setMuted(saveRef.current.muted)
       engine.setAttract(false)
+      // Phones/tablets: go truly fullscreen (hide browser chrome) — needs the
+      // user-gesture context of this click. Never in vplay.gg iframe mode.
+      if (isTouch && vplayRef.current?.mode !== 'vplay') {
+        document.documentElement.requestFullscreen?.().catch(() => {})
+      }
       setScreen('game')
     } catch (err) {
       pushToast(`Could not start: ${err instanceof Error ? err.message : String(err)}`, 'warn')
       throw err
     }
-  }, [ensureEngine, pushToast])
+  }, [ensureEngine, pushToast, isTouch])
 
   enterGameRef.current = enterGame
 
@@ -671,7 +676,7 @@ export default function App() {
         ref={minimapRef}
         width={180}
         height={180}
-        className={`nh-minimap absolute top-4 right-4 z-20 rounded-lg border border-cyan-500/30 shadow-[0_0_20px_rgba(34,211,238,0.25)] ${screen === 'game' && hud ? '' : 'hidden'}`}
+        className={`nh-minimap absolute z-20 rounded-lg border border-cyan-500/30 shadow-[0_0_20px_rgba(34,211,238,0.25)] ${isTouch ? 'top-2 right-2 w-24 h-24 opacity-85' : 'top-4 right-4'} ${screen === 'game' && hud ? '' : 'hidden'}`}
       />
 
       {/* ================= OPENING SPLASH (logos, tap to skip) ================= */}
@@ -747,17 +752,17 @@ export default function App() {
           <div className="text-cyan-400 tracking-[0.5em] text-xs mb-2">EARLY ACCESS {GAME_VERSION}</div>
           <h1 className="nh-menu-title text-5xl md:text-7xl font-black text-white neon-cyan tracking-wider">{GAME_TITLE}</h1>
           <img src="logos/vplaygg.svg" alt="vplay.gg exclusive" className="nh-menu-tag h-5 mt-3 opacity-90" draggable={false} />
-          <div className="nh-menu-gap flex gap-3 mt-10 menu-in">
+          <div className={`nh-menu-gap flex menu-in ${isTouch ? 'flex-col w-64 items-stretch gap-2 mt-6' : 'gap-3 mt-10'}`}>
             <button onClick={enterGame} className="menu-btn menu-btn-primary btn-attend">DRIVE</button>
             <button onClick={() => setOverlay('shop')} className="menu-btn">GARAGE SHOP</button>
             <button onClick={() => setOverlay('help')} className="menu-btn">HOW TO PLAY</button>
           </div>
-          <div className="nh-menu-gap flex gap-3 mt-3 menu-in">
+          <div className={`nh-menu-gap flex menu-in ${isTouch ? 'flex-col w-64 items-stretch gap-2 mt-3' : 'gap-3 mt-3'}`}>
             <button onClick={() => { setProgressTab('trophies'); setOverlay('progress') }} className="menu-btn menu-btn-ghost">🏆 TROPHIES</button>
             <button onClick={() => { setProgressTab('districts'); setOverlay('progress') }} className="menu-btn menu-btn-ghost">🗺️ DISTRICTS</button>
             <button onClick={() => setOverlay('shop')} className="menu-btn menu-btn-ghost border-amber-400/60 text-amber-300 btn-attend-amber">🔓 HARBOR PASS</button>
           </div>
-          <div className="nh-menu-stats mt-10 text-slate-300 text-sm flex gap-8">
+          <div className={`nh-menu-stats ${isTouch ? 'mt-6 text-xs flex flex-wrap justify-center gap-x-4 gap-y-1 px-3' : 'mt-10 text-sm flex gap-8'} text-slate-300`}>
             <span>Cash <b className="text-emerald-400">${save.cash}</b></span>
             <span>Level <b className="text-cyan-400">{save.level}</b></span>
             <span>Shards <b className="text-cyan-400">{save.shards.length}/24</b></span>
@@ -776,27 +781,34 @@ export default function App() {
       {/* ================= HUD ================= */}
       {screen === 'game' && hud && !photoMode && (
         <>
-          {/* top-left: cash / level */}
-          <div className="absolute top-4 left-4 z-20 space-y-2">
-            <div className="hud-panel text-2xl font-bold text-emerald-400">${hud.cash.toLocaleString()}</div>
+          {/* top-left: cash / level — one slim chip on mobile, full panel on desktop */}
+          <div className={`absolute top-4 left-4 z-20 ${isTouch ? 'flex items-center gap-1.5' : 'space-y-2'}`}>
+            <div className={`hud-panel font-bold text-emerald-400 ${isTouch ? 'text-sm px-2.5 py-1.5' : 'text-2xl'}`}>${hud.cash.toLocaleString()}</div>
             {hud.chainMult > 1 && (
               <div className="hud-panel border-fuchsia-400/60 text-fuchsia-300 text-xs font-black tracking-widest animate-pulse">
                 STREET CRED ×{hud.chainMult.toFixed(2)}
               </div>
             )}
-            <div className="hud-panel">
-              <div className="flex justify-between text-[11px] text-slate-300">
-                <span>LVL {hud.level}</span>
-                <span>{hud.xp}/{hud.xpNext} XP</span>
+            {isTouch ? (
+              <div className="hud-panel text-[11px] text-slate-300 px-2.5 py-1.5">
+                LVL <b className="text-cyan-300">{hud.level}</b>
+                <span className="mx-1 text-slate-600">|</span>◆ <b className="text-cyan-300">{hud.shards}/{hud.totalShards}</b>
               </div>
-              <div className="w-44 h-2 bg-slate-800 rounded mt-1">
-                <div className="h-full bg-cyan-400 rounded" style={{ width: `${Math.min((hud.xp / hud.xpNext) * 100, 100)}%` }} />
+            ) : (
+              <div className="hud-panel">
+                <div className="flex justify-between text-[11px] text-slate-300">
+                  <span>LVL {hud.level}</span>
+                  <span>{hud.xp}/{hud.xpNext} XP</span>
+                </div>
+                <div className="w-44 h-2 bg-slate-800 rounded mt-1">
+                  <div className="h-full bg-cyan-400 rounded" style={{ width: `${Math.min((hud.xp / hud.xpNext) * 100, 100)}%` }} />
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
-          {/* top-center: mission tracker */}
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 w-[26rem] max-w-[80vw]">
+          {/* top-center: mission tracker — slim Asphalt-style strip on mobile */}
+          <div className={`absolute left-1/2 -translate-x-1/2 z-20 ${isTouch ? 'top-2 w-60 max-w-[52vw]' : 'top-4 w-[26rem] max-w-[80vw]'}`}>
             {hud.mission ? (
               <div className="hud-panel border-yellow-400/40 w-full">
                 <div className="flex justify-between items-center">
@@ -814,9 +826,9 @@ export default function App() {
                   {hud.mission.timer >= 0 && <span>{Math.round(hud.mission.dist)}m</span>}
                 </div>
               </div>
-            ) : (
+            ) : !isTouch && (
               <div className="hud-panel text-center text-[13px] text-slate-300">
-                {isTouch ? <>Free roam — head to the <span className="text-cyan-300">glowing garage beam</span> for jobs</> : <>Free roam — visit the <span className="text-cyan-300">glowing garage beam</span> and press <span className="key-cap">E</span> for jobs</>}
+                <>Free roam — visit the <span className="text-cyan-300">glowing garage beam</span> and press <span className="key-cap">E</span> for jobs</>
               </div>
             )}
           </div>
@@ -826,9 +838,9 @@ export default function App() {
           {hud.tutorial && !tutorialHidden && (
             <div
               key={hud.tutorial.step}
-              className="absolute top-24 left-1/2 -translate-x-1/2 z-20 w-[24rem] max-w-[80vw] animate-pulse tutorial-dim"
+              className={`absolute left-1/2 -translate-x-1/2 z-20 animate-pulse tutorial-dim ${isTouch ? 'top-14 w-72 max-w-[68vw]' : 'top-24 w-[24rem] max-w-[80vw]'}`}
             >
-              <div className="hud-panel border-cyan-400/70 shadow-[0_0_28px_rgba(34,211,238,0.3)] w-full">
+              <div className="hud-panel border-cyan-400/70 shadow-[0_0_28px_rgba(34,211,238,0.3)] w-full" style={isTouch ? { background: 'rgba(2,6,18,0.9)' } : undefined}>
                 <div className="flex justify-between text-[12px] tracking-[0.2em] text-cyan-300">
                   <span>FIRST NIGHT — {hud.tutorial.step}/{hud.tutorial.total}</span>
                   <span className="flex items-center gap-2">
@@ -840,23 +852,23 @@ export default function App() {
                     >✕</button>
                   </span>
                 </div>
-                <div className="text-white font-bold text-base mt-1 leading-snug">{isTouch ? touchTitle(hud.tutorial.title) : hud.tutorial.title}</div>
-                <div className="text-[13px] text-slate-200 mt-1 leading-relaxed">{isTouch ? touchHint(hud.tutorial.hint) : hintWithKeys(hud.tutorial.hint)}</div>
+                <div className={`text-white font-bold leading-snug ${isTouch ? 'text-sm mt-0.5' : 'text-base mt-1'}`}>{isTouch ? touchTitle(hud.tutorial.title) : hud.tutorial.title}</div>
+                <div className={`text-slate-200 leading-relaxed ${isTouch ? 'text-xs mt-0.5' : 'text-[13px] mt-1'}`}>{isTouch ? touchHint(hud.tutorial.hint) : hintWithKeys(hud.tutorial.hint)}</div>
               </div>
             </div>
           )}
 
-          {/* top-right (below minimap): heat with live police instructions */}
-          <div className="absolute top-[196px] right-4 z-20 flex flex-col items-end gap-2">
-            <div className={`hud-panel flex flex-col items-end gap-1 ${hud.heatStars > 0 ? 'border-red-500/70 shadow-[0_0_18px_rgba(255,50,80,0.4)]' : ''}`}>
+          {/* top-right (below minimap): heat with live police instructions — slim on mobile */}
+          <div className={`absolute z-20 flex flex-col items-end gap-2 ${isTouch ? 'top-[7.5rem] right-2' : 'top-[196px] right-4'}`}>
+            <div className={`hud-panel flex flex-col items-end gap-1 ${isTouch ? 'px-2 py-1' : ''} ${hud.heatStars > 0 ? 'border-red-500/70 shadow-[0_0_18px_rgba(255,50,80,0.4)]' : ''}`}>
               <div className="flex gap-1 items-center">
-                <span className="text-xs text-slate-400 mr-1 tracking-widest">PATROL</span>
+                <span className={`text-slate-400 mr-1 tracking-widest ${isTouch ? 'text-[10px]' : 'text-xs'}`}>PATROL</span>
                 {[1, 2, 3, 4, 5].map((i) => (
-                  <span key={i} className={`text-base ${hud.heat >= i ? 'text-red-500 drop-shadow-[0_0_6px_rgba(255,50,80,0.9)]' : 'text-slate-700'}`}>★</span>
+                  <span key={i} className={`${isTouch ? 'text-sm' : 'text-base'} ${hud.heat >= i ? 'text-red-500 drop-shadow-[0_0_6px_rgba(255,50,80,0.9)]' : 'text-slate-700'}`}>★</span>
                 ))}
               </div>
               {hud.heatStars > 0 && (
-                <div className="text-xs text-red-200 text-right leading-snug max-w-[13rem]">
+                <div className={`text-xs text-red-200 text-right leading-snug ${isTouch ? 'max-w-[9.5rem] text-[11px]' : 'max-w-[13rem]'}`}>
                   {hud.bustedProgress > 0.25 ? (
                     <span className="text-red-400 font-bold animate-pulse text-[13px]">
                       {isTouch ? '⚠ GRABBED — MASH THE BUTTON!' : <>⚠ GRABBED — MASH <span className="key-cap key-cap-amber" style={{ animationDuration: '0.4s' }}>SPACE</span> to break free!</>}
@@ -875,16 +887,16 @@ export default function App() {
                 </div>
               )}
             </div>
-            <div className="hud-panel text-xs text-slate-400">
-              Shards <span className="text-cyan-300 font-bold">{hud.shards}/{hud.totalShards}</span>
-            </div>
+            {!isTouch && (
+              <div className="hud-panel text-xs text-slate-400">
+                Shards <span className="text-cyan-300 font-bold">{hud.shards}/{hud.totalShards}</span>
+              </div>
+            )}
           </div>
 
-          {/* bottom-left: Asphalt-style circular speedometer + nitro ring (raised on touch so it never sits under the joystick) */}
-          <div className={`absolute left-4 z-20 ${isTouch ? 'bottom-44' : 'bottom-4'}`}>
-            {isTouch ? (
-              <Speedo speed={hud.speedKmh} boost={hud.boost} boosting={hud.boosting} drift={hud.drift} />
-            ) : (
+          {/* bottom-left: desktop speed panel (mobile: joystick owns this corner, speed sits bottom-right) */}
+          {!isTouch && (
+            <div className="absolute left-4 bottom-4 z-20">
               <div className="hud-panel">
                 <div className="text-4xl font-black text-white font-mono">{hud.speedKmh}<span className="text-base text-slate-400 font-normal"> km/h</span></div>
                 <div className="w-48 h-2 bg-slate-800 rounded mt-2">
@@ -892,8 +904,25 @@ export default function App() {
                 </div>
                 <div className="text-[10px] text-slate-400 mt-1">NITRO — hold SHIFT{hud.drift > 0 && <span className="text-yellow-300 ml-2">DRIFT {hud.drift}</span>}</div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
+
+          {/* mobile: Asphalt-style bottom-center cluster — big digital speed + nitro bar, clear of joystick and nitro/drift buttons */}
+          {isTouch && (
+            <div className="absolute left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1" style={{ bottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}>
+              <div className="text-center">
+                <div className="text-4xl font-black text-white font-mono leading-none drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]">{hud.speedKmh}</div>
+                <div className="text-[9px] text-slate-300 tracking-[0.3em] text-center mt-0.5">KM/H</div>
+              </div>
+              <div className="w-36 h-2 bg-slate-900/70 border border-slate-600/80 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full ${hud.boosting ? 'bg-fuchsia-400 shadow-[0_0_12px_rgba(232,121,249,0.9)]' : hud.boost >= 95 ? 'bg-cyan-300 shadow-[0_0_10px_rgba(103,232,249,0.8)]' : 'bg-cyan-600'}`}
+                  style={{ width: `${hud.boost}%` }}
+                />
+              </div>
+              {hud.drift > 0 && <div className="text-yellow-300 text-xs font-black drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]">DRIFT +{hud.drift}</div>}
+            </div>
+          )}
 
           {/* bottom-right: keyboard hints (desktop only) */}
           {!isTouch && (
@@ -1555,49 +1584,6 @@ function Joystick({ engine }: { engine: GameEngine | null }) {
   )
 }
 
-// ---------- Asphalt-style circular speedometer (mobile) ----------
-// Glass dial with a sweeping needle, a glowing speed arc, tick marks,
-// a nitro charge ring around the dial, and a live km/h readout.
-function Speedo({ speed, boost, boosting, drift }: { speed: number; boost: number; boosting: boolean; drift: number }) {
-  const MAX = 260
-  const pct = Math.min(1, Math.max(0, speed / MAX))
-  const angle = -120 + pct * 240 // 240° sweep, starting bottom-left
-  return (
-    <div className="speedo">
-      <svg viewBox="0 0 120 120" className="speedo-dial">
-        <circle cx="60" cy="60" r="54" className="speedo-bg" />
-        <circle cx="60" cy="60" r="45" pathLength="100" strokeDasharray={`${pct * 100} 100`} className="speedo-arc" />
-        {Array.from({ length: 25 }).map((_, i) => {
-          const a = ((-120 + i * 10) * Math.PI) / 180
-          const r1 = 39
-          const r2 = i % 5 === 0 ? 32 : 36
-          return (
-            <line
-              key={i}
-              x1={60 + r1 * Math.cos(a)}
-              y1={60 + r1 * Math.sin(a)}
-              x2={60 + r2 * Math.cos(a)}
-              y2={60 + r2 * Math.sin(a)}
-              className={i % 5 === 0 ? 'speedo-tick-major' : 'speedo-tick'}
-            />
-          )
-        })}
-        <g transform={`rotate(${angle} 60 60)`}>
-          <line x1="60" y1="62" x2="60" y2="26" className="speedo-needle" />
-        </g>
-        <circle cx="60" cy="60" r="4.5" className="speedo-hub" />
-      </svg>
-      <svg viewBox="0 0 120 120" className="speedo-nitro-ring">
-        <circle cx="60" cy="60" r="51" pathLength="100" strokeDasharray={`${boost} 100`} className={boosting ? 'speedo-nitro-boost' : 'speedo-nitro-idle'} />
-      </svg>
-      <div className="speedo-readout">
-        <div className="speedo-val">{Math.round(speed)}</div>
-        <div className="speedo-unit">km/h</div>
-      </div>
-      {drift > 0 && <div className="speedo-drift">DRIFT +{drift}</div>}
-    </div>
-  )
-}
 
 // ---------- Touch-aware tutorial text (mobile shows touch controls, not keys) ----------
 function touchTitle(t: string) {
