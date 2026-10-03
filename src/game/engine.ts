@@ -197,6 +197,9 @@ export class GameEngine {
   private fpsWindow = 0
   // MOB-1: analog touch input from the virtual joystick (null = keyboard/digital)
   private analogSteer: number | null = null
+  // CoD-style swipe steering: horizontal drag on the right half of the screen.
+  // Takes priority over joystick tilt while a swipe is in progress.
+  private swipeSteer: number | null = null
   private analogThrottle: number | null = null
   // Gamepad (Xbox/PS/Switch controller): polled every frame, overrides nothing
   // until a stick/pedal actually moves — keyboard and touch keep working
@@ -2837,11 +2840,16 @@ export class GameEngine {
     this.keys.clear()
     this.analogSteer = null
     this.analogThrottle = null
+    this.swipeSteer = null
   }
   /** Virtual joystick: steer/throttle in -1..1; pass null to return to digital keys */
   touchAnalog(steer: number | null, throttle: number | null): void {
     this.analogSteer = steer
     this.analogThrottle = throttle
+  }
+  /** CoD-style swipe steer: -1..1 while the player drags the right side, null on release */
+  touchSwipeSteer(v: number | null): void {
+    this.swipeSteer = v
   }
   /** One-shot action buttons reuse the keyboard handler (E / mash SPACE / C / H / T) */
   touchTap(k: string): void { this.onKeyDown(new KeyboardEvent('keydown', { key: k })) }
@@ -3137,7 +3145,7 @@ export class GameEngine {
       if (braking) s -= (s > 1 ? BRAKE : ACCEL * 0.6) * dt
       const maxS = MAX_SPEED * mult
       s = THREE.MathUtils.clamp(s, -10, maxS)
-      const aSt = this.padSteer ?? this.analogSteer
+      const aSt = this.padSteer ?? this.swipeSteer ?? this.analogSteer
       const steer = aSt !== null ? -aSt : (left ? 1 : 0) - (right ? 1 : 0)
       const grip = handbrake ? 1.4 : 7.5
       const turnRate = steer * 2.1 * THREE.MathUtils.clamp(Math.abs(s) / 10, 0, 1) * (handbrake ? 1.5 : 1)

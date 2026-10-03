@@ -1067,6 +1067,13 @@ export default function App() {
             </div>
           )}
 
+          {/* CoD-style swipe steering — right half of the screen is a drag surface.
+              Only for the joystick scheme; sits under the buttons so button
+              touches never steer. */}
+          {isTouch && (!overlay || overlay === 'map') && save.controls !== 'buttons' && !photoMode && (
+            <SwipeSteerZone engine={engineRef.current} enabled />
+          )}
+
           {/* classic button scheme (opt-in from the pause menu) */}
           {isTouch && (!overlay || overlay === 'map') && save.controls === 'buttons' && (
             <div className="absolute inset-0 z-30 pointer-events-none">
@@ -1221,7 +1228,7 @@ export default function App() {
               <div className="text-[11px] tracking-[0.3em] text-cyan-300 font-bold">YOUR WHEEL</div>
               <div className="text-white font-bold mt-1 text-sm leading-snug">
                 {isTouch
-                  ? <>The joystick is <span className="text-cyan-300">live right now</span> — push it UP to speed up, tilt LEFT / RIGHT to steer.</>
+                  ? <>Push the joystick <span className="text-cyan-300">UP to speed up</span>. To steer, <span className="text-cyan-300">swipe anywhere on the right side</span> — like aiming in CoD. Both are live now, try it!</>
                   : <>Hold <span className="key-cap">W</span> to speed up, steer with <span className="key-cap">A</span>/<span className="key-cap">D</span> — try it!</>}
               </div>
               <button className="onboard-next mt-3" onClick={() => setOnboardStep(2)}>GOT IT →</button>
@@ -1682,7 +1689,7 @@ export default function App() {
               <div className="text-slate-500 text-xs pt-2 border-t border-slate-800">
                 {isTouch ? (
                   save.controls === 'joystick'
-                    ? 'Joystick: push forward to drive · tilt to steer · pull back or tap the brake icon to slow — bolt / drift / brake icons on the right · map icon opens a live tactical map · horn icon · pause is top-center · the camera appears when you complete a mission'
+                    ? 'Joystick: push UP to drive, pull back to slow — or steer Call-of-Duty style by swiping anywhere on the RIGHT half of the screen · bolt = nitro, skid = drift, ring = brake · map icon opens a live tactical map · pause is top-center · the camera appears when you complete a mission'
                     : '◀ ▶ steer · ▲ gas · ▼ brake/reverse · bolt = nitro · skid icon = drift — E jobs · map / horn / pause icons'
                 ) : (
                   'Controls: WASD/arrows drive · SHIFT nitro · SPACE handbrake · E job board · P photo mode · C camera · H horn · ESC pause · gamepad supported'
@@ -1793,8 +1800,71 @@ const IcoMash = () => <Ico d="M12 1.8l1.9 5.3 5.3-1.9-2.9 4.5 4.9 2.2-5.9 2.6 2.
 // ---------- Virtual joystick (MOB-1) ----------
 // Floating analog stick: push forward = gas, pull back = brake/reverse,
 // left/right = steering. Pointer capture keeps the hold through thumb drift.
-function Joystick({ engine }: { engine: GameEngine | null }) {
-  const R = 44
+/** Call of Duty-style swipe steering: the right half of the screen is a drag
+    surface — hold and drag left/right to steer, exactly like swiping to aim in
+    CoD Mobile. The joystick keeps throttle; whichever steer input is active
+    wins, and the wheel centers itself when the thumb lifts. Sits below the
+    on-screen buttons so touches that start on a button never steer. */
+function SwipeSteerZone({ engine, enabled }: { engine: GameEngine | null; enabled: boolean }) {
+  const [steer, setSteer] = useState(0)
+  const [active, setActive] = useState(false)
+  const origin = useRef(0)
+  const RANGE = 64 // px of horizontal drag for full steering lock
+  const end = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!active) return
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
+    setActive(false)
+    setSteer(0)
+    engine?.touchSwipeSteer(null)
+  }
+  if (!enabled) return null
+  return (
+    <>
+      <div
+        className="swipe-zone"
+        onPointerDown={(e) => {
+          e.preventDefault()
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId)
+          } catch {
+            /* pointer capture unsupported */
+          }
+          origin.current = e.clientX
+          setActive(true)
+        }}
+        onPointerMove={(e) => {
+          if (!active) return
+          const v = Math.max(-1, Math.min(1, (e.clientX - origin.current) / RANGE))
+          setSteer(v)
+          engine?.touchSwipeSteer(Math.abs(v) < 0.08 ? 0 : v)
+        }}
+        onPointerUp={end}
+        onPointerCancel={end}
+        onContextMenu={(e) => e.preventDefault()}
+      />
+      {active && (
+        <div className="steer-indicator" aria-hidden="true">
+          <div className="steer-indicator-track">
+            <div
+              className="steer-indicator-fill"
+              style={{
+                left: steer >= 0 ? '50%' : undefined,
+                right: steer < 0 ? '50%' : undefined,
+                width: `${Math.abs(steer) * 50}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+function Joystick({ engine }: { engine: GameEngine | null }) {  const R = 44
   const [knob, setKnob] = useState({ x: 0, y: 0, active: false })
   const apply = (e: React.PointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -1881,8 +1951,8 @@ function touchTitle(t: string) {
   return t
 }
 function touchHint(h: string) {
-  if (/WASD|arrow keys|HOLD W/i.test(h)) return 'Push the joystick forward to drive — tilt it left and right to steer'
-  if (/Tap A or D/i.test(h)) return 'Tilt the joystick while moving to turn. Try a corner'
+  if (/WASD|arrow keys|HOLD W/i.test(h)) return 'Push the joystick UP to drive — or swipe anywhere on the RIGHT side to steer'
+  if (/Tap A or D/i.test(h)) return 'Swipe LEFT or RIGHT on the right side of the screen to turn. Try a corner'
   if (/SHIFT/i.test(h)) return 'Tap NITRO on the right to boost — it recharges on its own'
   if (/SPACE|Handbrake/i.test(h)) return 'Hold DRIFT in a turn to slide. Drifts earn cash chains'
   if (/press E/i.test(h)) return 'Tap the E button at the garage — jobs, races, taxi fares and getaways await'

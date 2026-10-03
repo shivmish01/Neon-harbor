@@ -304,6 +304,55 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ============ CoD-style swipe steering (right-half drag surface) ============ */
+.swipe-zone {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 55%;
+  z-index: 15;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.steer-indicator {
+  position: absolute;
+  left: 50%;
+  bottom: 7.2rem;
+  transform: translateX(-50%);
+  z-index: 25;
+  pointer-events: none;
+}
+.steer-indicator-track {
+  position: relative;
+  width: 7rem;
+  height: 0.35rem;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.steer-indicator-track::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: rgba(255, 255, 255, 0.35);
+}
+.steer-indicator-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: #22d3ee;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.8);
+  border-radius: 9999px;
+}
+
 /* ============ First-run onboarding overlay ============ */
 .onboard-dim {
   background: rgba(2, 6, 18, 0.62);
