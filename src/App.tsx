@@ -999,8 +999,8 @@ export default function App() {
                   <div className="flex items-end gap-2">
                     <div className="flex flex-col gap-2">
                       <TouchBtn engine={engineRef.current} label="⚡" hold="shift" variant="nitro" ready={hud.boost >= 95} lit={hud.boosting} />
-                      <TouchBtn engine={engineRef.current} label="DRIFT" hold=" " variant="drift" />
-                      <TouchBtn engine={engineRef.current} label="BRAKE" hold="s" variant="pedal" />
+                      <TouchBtn engine={engineRef.current} label="🌀" hold=" " variant="drift" />
+                      <TouchBtn engine={engineRef.current} label="🛑" hold="s" variant="pedal" />
                     </div>
                   </div>
                 </div>
@@ -1044,7 +1044,7 @@ export default function App() {
                   <div className="flex items-end gap-2">
                     <div className="flex flex-col gap-2">
                       <TouchBtn engine={engineRef.current} label="⚡" hold="shift" variant="nitro" ready={hud.boost >= 95} lit={hud.boosting} />
-                      <TouchBtn engine={engineRef.current} label="DRIFT" hold=" " variant="drift" />
+                      <TouchBtn engine={engineRef.current} label="🌀" hold=" " variant="drift" />
                     </div>
                     <div className="flex flex-col gap-2">
                       <TouchBtn engine={engineRef.current} label="▲" hold="w" variant="pedal" tall />
