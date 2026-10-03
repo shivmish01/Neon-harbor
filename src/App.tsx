@@ -47,6 +47,8 @@ export default function App() {
   const [hud, setHud] = useState<HudState | null>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [bustedFlash, setBustedFlash] = useState(false)
+  // Mission-complete result banner — carries the 📷 photo button on mobile
+  const [winBanner, setWinBanner] = useState<{ name: string; reward: number } | null>(null)
   const [confirmReset, setConfirmReset] = useState(false)
   // Opening splash: Vary Gaming "PRESENTS" → vplay.gg "EXCLUSIVE" → title screen.
   // 0 = Vary Gaming, 1 = vplay.gg, 2 = splash finished. Skipped by ?autostart
@@ -259,7 +261,11 @@ export default function App() {
         window.setTimeout(() => setBustedFlash(false), 1800)
       },
       onLevelUp: (level) => pushToast(`LEVEL UP — you reached level ${level}!`, 'good'),
-      onMissionDone: (name, reward) => pushToast(`${name} complete!  +$${reward}`, 'good'),
+      onMissionDone: (name, reward) => {
+        pushToast(`${name} complete!  +$${reward}`, 'good')
+        setWinBanner({ name, reward })
+        window.setTimeout(() => setWinBanner((w) => (w && w.name === name ? null : w)), 10000)
+      },
       onPressE: () => {
         if (screenRef.current === 'game' && overlayRef.current === null) setOverlay('jobs')
       },
@@ -337,6 +343,35 @@ export default function App() {
     }
   }, [ensureEngine, pushToast, isTouch])
 
+  // Phones: rotating to landscape while playing should also hide the browser
+  // chrome (URL bar). The initial requestFullscreen happens on the entry tap;
+  // this catches later rotations. iOS Safari silently ignores it — its chrome
+  // collapses on its own — so this is a no-op there, never an error.
+  useEffect(() => {
+    if (!isTouch || screen !== 'game') return
+    const goFullscreen = () => {
+      if (vplayRef.current?.mode === 'vplay') return
+      if (window.innerWidth <= window.innerHeight) return
+      if (document.fullscreenElement) return
+      try {
+        const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }
+        const p = el.requestFullscreen?.() ?? el.webkitRequestFullscreen?.()
+        if (p && typeof p.catch === 'function') p.catch(() => {})
+      } catch { /* not permitted — fine, game still runs */ }
+      try {
+        const so = window.screen.orientation as unknown as { lock?: (o: string) => Promise<void> }
+        const lp = so.lock?.('landscape')
+        if (lp && typeof lp.catch === 'function') lp.catch(() => {})
+      } catch { /* orientation lock unsupported */ }
+    }
+    window.addEventListener('orientationchange', goFullscreen)
+    window.addEventListener('resize', goFullscreen)
+    return () => {
+      window.removeEventListener('orientationchange', goFullscreen)
+      window.removeEventListener('resize', goFullscreen)
+    }
+  }, [isTouch, screen])
+
   enterGameRef.current = enterGame
 
   // Dev-only test hooks (?autostart / ?theme / ?hud=0) — never active in the
@@ -393,9 +428,11 @@ export default function App() {
     engine.drawTacMap(canvas)
   }, [overlay])
 
-  // Pause only for modal overlays during gameplay — menus keep the city alive
+  // Pause only for modal overlays during gameplay — menus keep the city alive.
+  // Exception: the tactical map on touch is a non-modal side panel — the game
+  // keeps running so the player can navigate while driving.
   useEffect(() => {
-    engineRef.current?.setPaused(screen === 'game' && (overlay !== null || (isTouch && isPortrait)))
+    engineRef.current?.setPaused(screen === 'game' && ((overlay !== null && !(isTouch && overlay === 'map')) || (isTouch && isPortrait)))
     // Never leave a held touch button "stuck" when a menu opens over the game
     if (overlay !== null) engineRef.current?.touchReset()
     // Any menu opening exits photo mode cleanly
@@ -934,7 +971,7 @@ export default function App() {
 
           {/* ======== TOUCH CONTROLS (mobile / tablet) ========
               Two schemes: virtual joystick (default) or classic buttons */}
-          {isTouch && !overlay && save.controls !== 'buttons' && (
+          {isTouch && (!overlay || overlay === 'map') && save.controls !== 'buttons' && (
             <div className="absolute inset-0 z-30 pointer-events-none">
               <div
                 className="absolute inset-x-0 bottom-0 flex justify-between items-end gap-3 px-3 sm:px-4"
@@ -944,13 +981,12 @@ export default function App() {
                 <div className="pointer-events-auto">
                   <Joystick engine={engineRef.current} />
                 </div>
-                {/* actions + nitro/drift */}
+                {/* actions + nitro/drift/brake */}
                 <div className="flex flex-col items-end gap-2 pointer-events-auto">
                   <div className="flex gap-2">
                     {(hud.nearGarage || hud.nearToll) && <TouchBtn engine={engineRef.current} label="E" tap="e" small />}
                     {hud.stuck && <TouchBtn engine={engineRef.current} label="RESET" tap="r" small />}
-                    <button onClick={togglePhoto} className="touch-btn touch-btn-sm" aria-label="Photo mode">📷</button>
-                    <button onClick={() => setOverlay('map')} className="touch-btn touch-btn-sm" aria-label="Map">🗺️</button>
+                    <button onClick={() => setOverlay(overlay === 'map' ? null : 'map')} className="touch-btn touch-btn-sm" aria-label="Map">🗺️</button>
                     <TouchBtn engine={engineRef.current} label="📯" tap="h" small />
                     <button
                       onClick={() => setOverlay('pause')}
@@ -964,6 +1000,7 @@ export default function App() {
                     <div className="flex flex-col gap-2">
                       <TouchBtn engine={engineRef.current} label="⚡" hold="shift" variant="nitro" ready={hud.boost >= 95} lit={hud.boosting} />
                       <TouchBtn engine={engineRef.current} label="DRIFT" hold=" " variant="drift" />
+                      <TouchBtn engine={engineRef.current} label="BRAKE" hold="s" variant="pedal" />
                     </div>
                   </div>
                 </div>
@@ -978,7 +1015,7 @@ export default function App() {
           )}
 
           {/* classic button scheme (opt-in from the pause menu) */}
-          {isTouch && !overlay && save.controls === 'buttons' && (
+          {isTouch && (!overlay || overlay === 'map') && save.controls === 'buttons' && (
             <div className="absolute inset-0 z-30 pointer-events-none">
               <div
                 className="absolute inset-x-0 bottom-0 flex justify-between items-end gap-3 px-3 sm:px-4"
@@ -994,8 +1031,7 @@ export default function App() {
                   <div className="flex gap-2">
                     {(hud.nearGarage || hud.nearToll) && <TouchBtn engine={engineRef.current} label="E" tap="e" small />}
                     {hud.stuck && <TouchBtn engine={engineRef.current} label="RESET" tap="r" small />}
-                    <button onClick={togglePhoto} className="touch-btn touch-btn-sm" aria-label="Photo mode">📷</button>
-                    <button onClick={() => setOverlay('map')} className="touch-btn touch-btn-sm" aria-label="Map">🗺️</button>
+                    <button onClick={() => setOverlay(overlay === 'map' ? null : 'map')} className="touch-btn touch-btn-sm" aria-label="Map">🗺️</button>
                     <TouchBtn engine={engineRef.current} label="📯" tap="h" small />
                     <button
                       onClick={() => setOverlay('pause')}
@@ -1065,6 +1101,25 @@ export default function App() {
                       : 'Next time: when a drone grabs you, MASH SPACE to break free — and never stop moving.'}
                   </span>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* mission-complete result banner — the 📷 photo button lives here on mobile */}
+          {winBanner && !overlay && !photoMode && (
+            <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
+              <div className="hud-panel border-emerald-400/70 shadow-[0_0_28px_rgba(52,211,153,0.35)] flex items-center gap-3 px-4 py-2.5">
+                <div>
+                  <div className="text-[10px] tracking-[0.25em] text-emerald-300">MISSION COMPLETE</div>
+                  <div className="text-white font-bold text-sm leading-tight">{winBanner.name} <span className="text-emerald-400">+${winBanner.reward}</span></div>
+                </div>
+                <button
+                  onClick={() => { setWinBanner(null); togglePhoto() }}
+                  className="touch-btn touch-btn-sm shrink-0"
+                  aria-label="Photo mode"
+                >
+                  📷
+                </button>
               </div>
             </div>
           )}
@@ -1157,24 +1212,47 @@ export default function App() {
         </button>
       )}
 
-      {/* ================= TACTICAL MAP (PUBG style) ================= */}
+      {/* ================= TACTICAL MAP (PUBG style) =================
+          Touch: a large side panel — the game keeps running behind it, so you
+          can navigate while driving. Desktop: fullscreen modal (pauses). */}
       {overlay === 'map' && screen === 'game' && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-          <div className="relative flex items-center justify-center w-full h-full p-3 sm:p-6">
-            <canvas
-              ref={tacMapRef}
-              className="rounded-xl border border-slate-600/80 shadow-[0_0_60px_rgba(34,211,238,0.15)]"
-              style={{ width: 'min(94vw, 86vh)', height: 'min(94vw, 86vh)' }}
-            />
-            <button
-              onClick={() => setOverlay(null)}
-              className="absolute top-3 right-3 sm:top-5 sm:right-5 w-10 h-10 rounded-full bg-slate-900/80 border border-slate-600 text-slate-300 hover:text-white text-xl"
-              aria-label="Close map"
+        isTouch ? (
+          <div className="absolute inset-0 z-40 pointer-events-none">
+            <div
+              className="absolute left-2 top-14 pointer-events-auto rounded-xl border border-slate-500/80 bg-slate-950/70 shadow-[0_0_40px_rgba(34,211,238,0.2)] overflow-hidden"
+              style={{ width: 'min(58vw, 52vh)' }}
             >
-              ✕
-            </button>
+              <div className="flex items-center justify-between px-2 py-1 bg-slate-900/80 border-b border-slate-700">
+                <span className="text-[10px] tracking-[0.25em] text-cyan-300">TACTICAL MAP</span>
+                <button
+                  onClick={() => setOverlay(null)}
+                  className="text-slate-400 hover:text-white text-base leading-none px-1"
+                  aria-label="Close map"
+                >
+                  ✕
+                </button>
+              </div>
+              <canvas ref={tacMapRef} className="block w-full" style={{ aspectRatio: '1 / 1' }} />
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+            <div className="relative flex items-center justify-center w-full h-full p-3 sm:p-6">
+              <canvas
+                ref={tacMapRef}
+                className="rounded-xl border border-slate-600/80 shadow-[0_0_60px_rgba(34,211,238,0.15)]"
+                style={{ width: 'min(94vw, 86vh)', height: 'min(94vw, 86vh)' }}
+              />
+              <button
+                onClick={() => setOverlay(null)}
+                className="absolute top-3 right-3 sm:top-5 sm:right-5 w-10 h-10 rounded-full bg-slate-900/80 border border-slate-600 text-slate-300 hover:text-white text-xl"
+                aria-label="Close map"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )
       )}
 
       {/* ================= PROGRESS (trophies + districts) ================= */}
@@ -1453,7 +1531,7 @@ export default function App() {
               <div className="text-slate-500 text-xs pt-2 border-t border-slate-800">
                 {isTouch ? (
                   save.controls === 'joystick'
-                    ? 'Joystick: push forward to drive · tilt to steer · pull back to brake — NITRO and DRIFT buttons on the right · E jobs · 📷 photo mode · 📯 horn · II pause'
+                    ? 'Joystick: push forward to drive · tilt to steer · pull back or tap BRAKE to slow — NITRO / DRIFT / BRAKE buttons on the right · 🗺️ map (game keeps running) · 📯 horn · II pause · 📷 appears when you complete a mission'
                     : '◀ ▶ steer · ▲ gas · ▼ brake/reverse · NITRO · DRIFT — E jobs · 📷 photo mode · 📯 horn · II pause'
                 ) : (
                   'Controls: WASD/arrows drive · SHIFT nitro · SPACE handbrake · E job board · P photo mode · C camera · H horn · ESC pause · gamepad supported'
