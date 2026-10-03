@@ -314,8 +314,8 @@
 .touch-btn {
   pointer-events: auto;
   position: relative;
-  width: 5rem;
-  height: 5rem;
+  width: 4.3rem;
+  height: 4.3rem;
   border-radius: 9999px;
   background: radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.14), rgba(8, 12, 26, 0.38) 62%);
   border: 1.5px solid rgba(255, 255, 255, 0.34);
@@ -339,6 +339,13 @@
   -webkit-tap-highlight-color: transparent;
   transition: transform 0.08s ease, box-shadow 0.08s ease, border-color 0.08s ease;
 }
+/* white HUD icons inside buttons (CoD-mobile style) */
+.btn-ico {
+  width: 52%;
+  height: 52%;
+  display: block;
+  flex: none;
+}
 .touch-btn:active {
   transform: scale(0.92);
   border-color: rgba(255, 255, 255, 0.75);
@@ -348,12 +355,15 @@
 }
 /* NITRO — the hero button (Asphalt: biggest circle on the right edge) */
 .touch-btn-nitro {
-  width: 6rem;
-  height: 6rem;
-  font-size: 2rem;
+  width: 5rem;
+  height: 5rem;
   background: radial-gradient(circle at 32% 28%, rgba(168, 85, 247, 0.28), rgba(24, 10, 40, 0.5) 68%);
   border-color: rgba(216, 180, 254, 0.5);
   color: #fdf4ff;
+}
+.touch-btn-nitro .btn-ico {
+  width: 58%;
+  height: 58%;
 }
 .touch-btn-nitro:active {
   box-shadow:
@@ -387,9 +397,8 @@
 }
 /* DRIFT — glass circle with a teal rim, icon only */
 .touch-btn-drift {
-  width: 4.8rem;
-  height: 4.8rem;
-  font-size: 1.7rem;
+  width: 4.3rem;
+  height: 4.3rem;
   background: radial-gradient(circle at 32% 28%, rgba(45, 212, 191, 0.2), rgba(8, 20, 22, 0.44) 68%);
   border-color: rgba(94, 234, 212, 0.45);
   color: #d9fef5;
@@ -401,10 +410,9 @@
 }
 /* BRAKE — glass circle with a warm red-orange rim, icon only */
 .touch-btn-pedal {
-  width: 4.8rem;
-  height: 4.8rem;
+  width: 4.3rem;
+  height: 4.3rem;
   border-radius: 9999px;
-  font-size: 1.6rem;
   background: radial-gradient(circle at 32% 28%, rgba(251, 113, 133, 0.2), rgba(28, 10, 14, 0.46) 68%);
   border-color: rgba(253, 164, 175, 0.45);
   color: #ffe4e6;
@@ -414,16 +422,19 @@
     inset 0 2px 8px rgba(0, 0, 0, 0.35),
     0 0 24px rgba(251, 113, 133, 0.7);
 }
-/* small utility buttons (map / horn / pause) — Asphalt top-bar style:
-   dark translucent rounded square, white glyph, no neon border */
+/* small utility buttons (map / horn / reset) — dark translucent rounded
+   square with a clean white glyph */
 .touch-btn-sm {
-  width: 3rem;
-  height: 3rem;
-  border-radius: 0.8rem;
-  font-size: 1.05rem;
+  width: 2.7rem;
+  height: 2.7rem;
+  border-radius: 0.75rem;
   background: rgba(6, 10, 22, 0.52);
   border-color: rgba(255, 255, 255, 0.22);
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
+}
+.touch-btn-sm .btn-ico {
+  width: 58%;
+  height: 58%;
 }
 .touch-btn-wide {
   width: 6.5rem;
@@ -436,17 +447,20 @@
   height: 5.5rem;
 }
 .touch-btn-mash {
-  width: 8.5rem;
-  height: 8.5rem;
-  font-size: 1.5rem;
+  width: 6.6rem;
+  height: 6.6rem;
   border-color: rgba(248, 113, 113, 0.8);
   color: #fecaca;
   background: radial-gradient(circle at 32% 28%, rgba(248, 113, 113, 0.3), rgba(30, 8, 12, 0.55) 68%);
   animation: mash-pulse 0.35s ease-in-out infinite alternate;
 }
+.touch-btn-mash .btn-ico {
+  width: 40%;
+  height: 40%;
+}
 @keyframes mash-pulse {
   from { transform: scale(1); box-shadow: 0 0 12px rgba(248, 113, 113, 0.4); }
-  to { transform: scale(1.12); box-shadow: 0 0 30px rgba(248, 113, 113, 0.8); }
+  to { transform: scale(1.1); box-shadow: 0 0 26px rgba(248, 113, 113, 0.8); }
 }
 
 /* ============ Asphalt-style virtual joystick ============ */
@@ -481,6 +495,18 @@
     0 0 14px rgba(160, 210, 255, 0.35),
     inset 0 1px 2px rgba(255, 255, 255, 0.4);
 }
+/* gamepad-style direction chevrons around the rim */
+.joy-chev {
+  position: absolute;
+  width: 0.85rem;
+  height: 0.5rem;
+  color: rgba(255, 255, 255, 0.4);
+  pointer-events: none;
+}
+.joy-chev-n { top: 0.55rem; left: 50%; margin-left: -0.425rem; }
+.joy-chev-s { bottom: 0.55rem; left: 50%; margin-left: -0.425rem; }
+.joy-chev-w { left: 0.55rem; top: 50%; margin-top: -0.25rem; width: 0.5rem; height: 0.85rem; }
+.joy-chev-e { right: 0.55rem; top: 50%; margin-top: -0.25rem; width: 0.5rem; height: 0.85rem; }
 
 /* ============ Rolling odometer speed (mobile) ============ */
 .speed-digits {

@@ -887,7 +887,7 @@ export default function App() {
           </div>
 
           {/* top-center: mission tracker — slim Asphalt-style strip on mobile */}
-          <div className={`absolute left-1/2 -translate-x-1/2 z-20 ${isTouch ? 'top-2 w-60 max-w-[52vw]' : 'top-4 w-[26rem] max-w-[80vw]'}`}>
+          <div className={`absolute left-1/2 -translate-x-1/2 z-20 ${isTouch ? 'top-12 w-56 max-w-[48vw]' : 'top-4 w-[26rem] max-w-[80vw]'}`}>
             {hud.mission ? (
               <div className="hud-panel border-yellow-400/40 w-full">
                 <div className="flex justify-between items-center">
@@ -917,7 +917,7 @@ export default function App() {
           {hud.tutorial && !tutorialHidden && (
             <div
               key={hud.tutorial.step}
-              className={`absolute left-1/2 -translate-x-1/2 z-20 animate-pulse tutorial-dim ${isTouch ? 'top-14 w-72 max-w-[68vw]' : 'top-24 w-[24rem] max-w-[80vw]'}`}
+              className={`absolute left-1/2 -translate-x-1/2 z-20 animate-pulse tutorial-dim ${isTouch ? 'top-[6.9rem] w-72 max-w-[68vw]' : 'top-24 w-[24rem] max-w-[80vw]'}`}
             >
               <div className="hud-panel border-cyan-400/70 shadow-[0_0_28px_rgba(34,211,238,0.3)] w-full" style={isTouch ? { background: 'rgba(2,6,18,0.9)' } : undefined}>
                 <div className="flex justify-between text-[12px] tracking-[0.2em] text-cyan-300">
@@ -946,11 +946,11 @@ export default function App() {
                   <span key={i} className={`${isTouch ? 'text-sm' : 'text-base'} ${hud.heat >= i ? 'text-red-500 drop-shadow-[0_0_6px_rgba(255,50,80,0.9)]' : 'text-slate-700'}`}>★</span>
                 ))}
               </div>
-              {hud.heatStars > 0 && (
+              {hud.heatStars > 0 && !(isTouch && hud.bustedProgress > 0.08) && (
                 <div className={`text-xs text-red-200 text-right leading-snug ${isTouch ? 'max-w-[9.5rem] text-[11px]' : 'max-w-[13rem]'}`}>
                   {hud.bustedProgress > 0.25 ? (
                     <span className="text-red-400 font-bold animate-pulse text-[13px]">
-                      {isTouch ? '⚠ GRABBED — MASH THE BUTTON!' : <>⚠ GRABBED — MASH <span className="key-cap key-cap-amber" style={{ animationDuration: '0.4s' }}>SPACE</span> to break free!</>}
+                      {isTouch ? '⚠ MASH THE BUTTON!' : <>⚠ GRABBED — MASH <span className="key-cap key-cap-amber" style={{ animationDuration: '0.4s' }}>SPACE</span> to break free!</>}
                     </span>
                   ) : hud.bustedProgress > 0.08 ? (
                     <span className="text-red-400 font-bold animate-pulse text-[13px]">
@@ -1030,29 +1030,22 @@ export default function App() {
                 {/* actions + nitro/drift/brake */}
                 <div className="flex flex-col items-end gap-2 pointer-events-auto">
                   <div className="flex gap-2">
-                    {(hud.nearGarage || hud.nearToll) && <TouchBtn engine={engineRef.current} label="E" tap="e" small />}
-                    {hud.stuck && <TouchBtn engine={engineRef.current} label="RESET" tap="r" small />}
-                    <button onClick={() => setOverlay(overlay === 'map' ? null : 'map')} className="touch-btn touch-btn-sm" aria-label="Map">🗺️</button>
-                    <TouchBtn engine={engineRef.current} label="📯" tap="h" small />
-                    <button
-                      onClick={() => setOverlay('pause')}
-                      className="touch-btn touch-btn-sm"
-                      aria-label="Pause"
-                    >
-                      II
-                    </button>
+                    {(hud.nearGarage || hud.nearToll) && <TouchBtn engine={engineRef.current} label="E" aria="Jobs / pay toll" tap="e" small />}
+                    {hud.stuck && <TouchBtn engine={engineRef.current} label={<IcoReset />} aria="Reset car" tap="r" small />}
+                    <button onClick={() => setOverlay(overlay === 'map' ? null : 'map')} className="touch-btn touch-btn-sm" aria-label="Map"><IcoMap /></button>
+                    <TouchBtn engine={engineRef.current} label={<IcoHorn />} aria="Horn" tap="h" small />
                   </div>
                   <div className="flex items-end gap-2">
-                    <TouchBtn engine={engineRef.current} label="🌀" hold=" " variant="drift" />
-                    <TouchBtn engine={engineRef.current} label="⚡" hold="shift" variant="nitro" ready={hud.boost >= 95} lit={hud.boosting} />
-                    <TouchBtn engine={engineRef.current} label="🛑" hold="s" variant="pedal" />
+                    <TouchBtn engine={engineRef.current} label={<IcoDrift />} aria="Drift" hold=" " variant="drift" />
+                    <TouchBtn engine={engineRef.current} label={<IcoBolt />} aria="Nitro" hold="shift" variant="nitro" ready={hud.boost >= 95} lit={hud.boosting} />
+                    <TouchBtn engine={engineRef.current} label={<IcoBrake />} aria="Brake" hold="s" variant="pedal" />
                   </div>
                 </div>
               </div>
               {/* big mash button when the Patrol grabs the car */}
               {hud.bustedProgress > 0.2 && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-auto">
-                  <TouchBtn engine={engineRef.current} label="MASH!" tap=" " mash />
+                  <TouchBtn engine={engineRef.current} label={<><IcoMash /><span className="text-[9px] tracking-[0.2em] font-black mt-0.5">MASH</span></>} aria="Mash to break free" tap=" " mash />
                 </div>
               )}
             </div>
@@ -1073,22 +1066,15 @@ export default function App() {
                 {/* actions (top-right) + pedals (2x2 grid, bottom-right) */}
                 <div className="flex flex-col items-end gap-2 pointer-events-auto">
                   <div className="flex gap-2">
-                    {(hud.nearGarage || hud.nearToll) && <TouchBtn engine={engineRef.current} label="E" tap="e" small />}
-                    {hud.stuck && <TouchBtn engine={engineRef.current} label="RESET" tap="r" small />}
-                    <button onClick={() => setOverlay(overlay === 'map' ? null : 'map')} className="touch-btn touch-btn-sm" aria-label="Map">🗺️</button>
-                    <TouchBtn engine={engineRef.current} label="📯" tap="h" small />
-                    <button
-                      onClick={() => setOverlay('pause')}
-                      className="touch-btn touch-btn-sm"
-                      aria-label="Pause"
-                    >
-                      II
-                    </button>
+                    {(hud.nearGarage || hud.nearToll) && <TouchBtn engine={engineRef.current} label="E" aria="Jobs / pay toll" tap="e" small />}
+                    {hud.stuck && <TouchBtn engine={engineRef.current} label={<IcoReset />} aria="Reset car" tap="r" small />}
+                    <button onClick={() => setOverlay(overlay === 'map' ? null : 'map')} className="touch-btn touch-btn-sm" aria-label="Map"><IcoMap /></button>
+                    <TouchBtn engine={engineRef.current} label={<IcoHorn />} aria="Horn" tap="h" small />
                   </div>
                   <div className="flex items-end gap-2">
                     <div className="flex flex-col gap-2">
-                      <TouchBtn engine={engineRef.current} label="⚡" hold="shift" variant="nitro" ready={hud.boost >= 95} lit={hud.boosting} />
-                      <TouchBtn engine={engineRef.current} label="🌀" hold=" " variant="drift" />
+                      <TouchBtn engine={engineRef.current} label={<IcoBolt />} aria="Nitro" hold="shift" variant="nitro" ready={hud.boost >= 95} lit={hud.boosting} />
+                      <TouchBtn engine={engineRef.current} label={<IcoDrift />} aria="Drift" hold=" " variant="drift" />
                     </div>
                     <div className="flex flex-col gap-2">
                       <TouchBtn engine={engineRef.current} label="▲" hold="w" variant="pedal" tall />
@@ -1100,10 +1086,21 @@ export default function App() {
               {/* big mash button when the Patrol grabs the car */}
               {hud.bustedProgress > 0.2 && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-auto">
-                  <TouchBtn engine={engineRef.current} label="MASH!" tap=" " mash />
+                  <TouchBtn engine={engineRef.current} label={<><IcoMash /><span className="text-[9px] tracking-[0.2em] font-black mt-0.5">MASH</span></>} aria="Mash to break free" tap=" " mash />
                 </div>
               )}
             </div>
+          )}
+
+          {/* pause — top CENTER on mobile (CoD-style), keyboard ESC on desktop */}
+          {isTouch && !hostPaused && (
+            <button
+              onClick={() => setOverlay(overlay === 'pause' ? null : 'pause')}
+              className="touch-btn touch-btn-sm absolute top-2 left-1/2 -translate-x-1/2 z-30"
+              aria-label="Pause"
+            >
+              <IcoPause />
+            </button>
           )}
 
           {/* E prompt — job board at the garage, or toll booth at a locked border */}
@@ -1151,7 +1148,7 @@ export default function App() {
 
           {/* mission-complete result banner — the 📷 photo button lives here on mobile */}
           {winBanner && !overlay && !photoMode && (
-            <div className={`absolute left-1/2 -translate-x-1/2 z-30 pointer-events-auto ${isTouch ? 'top-44' : 'top-24'}`}>
+            <div className={`absolute left-1/2 -translate-x-1/2 z-30 pointer-events-auto ${isTouch ? 'top-[15rem]' : 'top-24'}`}>
               <div className="hud-panel border-emerald-400/70 shadow-[0_0_28px_rgba(52,211,153,0.35)] flex items-center gap-3 px-4 py-2.5">
                 <div>
                   <div className="text-[10px] tracking-[0.25em] text-emerald-300">MISSION COMPLETE</div>
@@ -1162,7 +1159,7 @@ export default function App() {
                   className="touch-btn touch-btn-sm shrink-0"
                   aria-label="Photo mode"
                 >
-                  📷
+                  <IcoCam />
                 </button>
               </div>
             </div>
@@ -1566,7 +1563,7 @@ export default function App() {
               <p><b className="text-cyan-300">Spend & customize.</b> Cash buys car skins and the Golden Hour environment. Premium cars and environments (Crimson Ghost, Royal Violet, Solar Flare, Cyber Oni, Sakura Dusk, Acid Rain) unlock with VCoins on vplay.gg — or grab the Harbor Pass for all of them at once.</p>
               <p><b className="text-fuchsia-300">Signature touches.</b>{' '}
                 {isTouch
-                  ? <>The 📷 button freezes the world — orbit your car with a finger, apply a color grade, and save the shot. The soundtrack intensifies as Patrol heat rises.</>
+                  ? <>The camera button (after any win) freezes the world — orbit your car with a finger, apply a color grade, and save the shot. The soundtrack intensifies as Patrol heat rises.</>
                   : <>Press <b>P</b> for photo mode: the world freezes, drag to orbit your car, scroll to zoom, grade the shot, and save a PNG. The soundtrack builds with Patrol heat. Plug in a gamepad and it just works.</>}
               </p>
               <div className="text-slate-600 text-[10px] pt-2 border-t border-slate-800">
@@ -1575,8 +1572,8 @@ export default function App() {
               <div className="text-slate-500 text-xs pt-2 border-t border-slate-800">
                 {isTouch ? (
                   save.controls === 'joystick'
-                    ? 'Joystick: push forward to drive · tilt to steer · pull back or tap BRAKE to slow — NITRO / DRIFT / BRAKE buttons on the right · 🗺️ map (game keeps running) · 📯 horn · II pause · 📷 appears when you complete a mission'
-                    : '◀ ▶ steer · ▲ gas · ▼ brake/reverse · NITRO · DRIFT — E jobs · 📷 photo mode · 📯 horn · II pause'
+                    ? 'Joystick: push forward to drive · tilt to steer · pull back or tap the brake icon to slow — bolt / drift / brake icons on the right · map icon opens a live tactical map · horn icon · pause is top-center · the camera appears when you complete a mission'
+                    : '◀ ▶ steer · ▲ gas · ▼ brake/reverse · bolt = nitro · skid icon = drift — E jobs · map / horn / pause icons'
                 ) : (
                   'Controls: WASD/arrows drive · SHIFT nitro · SPACE handbrake · E job board · P photo mode · C camera · H horn · ESC pause · gamepad supported'
                 )}
@@ -1595,7 +1592,8 @@ export default function App() {
 // ---------- On-screen touch button (mobile controls) ----------
 function TouchBtn(props: {
   engine: GameEngine | null
-  label: string
+  label: React.ReactNode
+  aria?: string
   hold?: string // key fed to the engine while pressed
   tap?: string // one-shot action fired on press
   small?: boolean
@@ -1631,6 +1629,7 @@ function TouchBtn(props: {
   return (
     <button
       className={cls}
+      aria-label={props.aria}
       onPointerDown={start}
       onPointerUp={end}
       onPointerLeave={end}
@@ -1641,6 +1640,45 @@ function TouchBtn(props: {
     </button>
   )
 }
+
+// ---------- Clean white HUD icons (CoD-mobile style — icons, not emoji) ----------
+function Ico({ d, children, filled = true }: { d?: string; children?: React.ReactNode; filled?: boolean }) {
+  return (
+    <svg className="btn-ico" viewBox="0 0 24 24" aria-hidden="true">
+      {d && <path d={d} fill={filled ? 'currentColor' : 'none'} stroke={filled ? 'none' : 'currentColor'} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />}
+      {children}
+    </svg>
+  )
+}
+const IcoBolt = () => <Ico d="M13 2 4.6 13.4h5.8L9.6 22l8.4-11.4h-5.8L13 2z" />
+const IcoDrift = () => <Ico d="M6.5 3.5c-2.2 5-2.2 12 0 17M12 3.5c-2.2 5-2.2 12 0 17M17.5 3.5c-2.2 5-2.2 12 0 17" filled={false} />
+const IcoBrake = () => (
+  <Ico>
+    <circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" strokeWidth="2.4" />
+    <circle cx="12" cy="12" r="3.1" fill="currentColor" />
+  </Ico>
+)
+const IcoMap = () => <Ico d="M9 3 3 5.4v15.2L9 18.2l6 2.4 6-2.4V3.2L15 5.6 9 3zm0 .2v15m6-12.4v15" filled={false} />
+const IcoHorn = () => (
+  <Ico>
+    <path d="M4 9.2v5.6h3.6L13 19.4V4.6L7.6 9.2H4z" fill="currentColor" />
+    <path d="M16.4 8.6a5 5 0 0 1 0 6.8M19 6a8.6 8.6 0 0 1 0 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </Ico>
+)
+const IcoPause = () => <Ico d="M7 4.5h3.6v15H7zM13.4 4.5H17v15h-3.6z" />
+const IcoCam = () => (
+  <Ico>
+    <path d="M8.6 6.4 10 4.5h4l1.4 1.9H19a1.6 1.6 0 0 1 1.6 1.6v9.4A1.6 1.6 0 0 1 19 19H5a1.6 1.6 0 0 1-1.6-1.6V8A1.6 1.6 0 0 1 5 6.4h3.6z" fill="currentColor" />
+    <circle cx="12" cy="12.6" r="3.6" fill="rgba(6,10,22,0.55)" />
+  </Ico>
+)
+const IcoReset = () => (
+  <Ico>
+    <path d="M20.4 12a8.4 8.4 0 1 1-2.5-6" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" />
+    <path d="M20.7 3.4v5h-5" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" />
+  </Ico>
+)
+const IcoMash = () => <Ico d="M12 1.8l1.9 5.3 5.3-1.9-2.9 4.5 4.9 2.2-5.9 2.6 2.9 4.8-5.3-2.1L12 22.2l-1.9-4-5.3 2.1 2.9-4.8L2.8 13l4.9-2.2-2.9-4.5 5.3 1.9L12 1.8z" />
 
 // ---------- Virtual joystick (MOB-1) ----------
 // Floating analog stick: push forward = gas, pull back = brake/reverse,
@@ -1694,6 +1732,11 @@ function Joystick({ engine }: { engine: GameEngine | null }) {
         className="joy-knob"
         style={{ transform: `translate(${knob.x}px, ${knob.y}px)` }}
       />
+      {/* gamepad-style direction chevrons around the rim */}
+      <svg className="joy-chev joy-chev-n" viewBox="0 0 10 6" aria-hidden="true"><path d="M5 0l5 6H0z" fill="currentColor" /></svg>
+      <svg className="joy-chev joy-chev-s" viewBox="0 0 10 6" aria-hidden="true"><path d="M5 6L0 0h10z" fill="currentColor" /></svg>
+      <svg className="joy-chev joy-chev-w" viewBox="0 0 6 10" aria-hidden="true"><path d="M0 5l6-5v10z" fill="currentColor" /></svg>
+      <svg className="joy-chev joy-chev-e" viewBox="0 0 6 10" aria-hidden="true"><path d="M6 5L0 0v10z" fill="currentColor" /></svg>
     </div>
   )
 }
