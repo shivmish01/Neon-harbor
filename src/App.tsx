@@ -41,6 +41,11 @@ export default function App() {
   const [shopTab, setShopTab] = useState<'skins' | 'themes'>('skins')
   const [progressTab, setProgressTab] = useState<'trophies' | 'districts'>('trophies')
   const [tutorialHidden, setTutorialHidden] = useState(false)
+  // First-run tap-through onboarding overlay (separate localStorage flag —
+  // never touches the save format). Shown once before the FIRST NIGHT steps.
+  const [onboardStep, setOnboardStep] = useState<number | null>(null)
+  const ONBOARD_KEY = 'nh-onboard-v1'
+  const skipOnboard = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('skipOnboard')
   const [photoMode, setPhotoMode] = useState(false)
   const [photoFilter, setPhotoFilter] = useState(0)
   const [save, setSave] = useState<SaveData>(() => loadSave())
@@ -374,11 +379,20 @@ export default function App() {
         goImmersive()
       }
       setScreen('game')
+      // First-run onboarding: once per device, tap-through spotlight tour.
+      // Separate flag from the save file — save format untouched.
+      if (!skipOnboard) {
+        try {
+          if (!window.localStorage.getItem(ONBOARD_KEY)) setOnboardStep(0)
+        } catch {
+          /* private mode — show it anyway */
+        }
+      }
     } catch (err) {
       pushToast(`Could not start: ${err instanceof Error ? err.message : String(err)}`, 'warn')
       throw err
     }
-  }, [ensureEngine, pushToast, isTouch])
+  }, [ensureEngine, pushToast, isTouch, skipOnboard])
 
   // Phones: rotating to landscape while playing should also hide the browser
   // chrome (URL bar). iOS Safari silently ignores it — the CSS-rotated root
@@ -886,10 +900,11 @@ export default function App() {
             )}
           </div>
 
-          {/* top-center: mission tracker — slim Asphalt-style strip on mobile */}
-          <div className={`absolute left-1/2 -translate-x-1/2 z-20 ${isTouch ? 'top-12 w-56 max-w-[48vw]' : 'top-4 w-[26rem] max-w-[80vw]'}`}>
+          {/* top-center notification stack — mission tracker, FIRST NIGHT guide and
+              toasts all flow here in order, notification-style. Never covers the car. */}
+          <div className={`absolute left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1.5 w-full px-3 pointer-events-none ${isTouch ? 'top-14' : 'top-4'}`}>
             {hud.mission ? (
-              <div className="hud-panel border-yellow-400/40 w-full">
+              <div className="hud-panel border-yellow-400/40 w-56 max-w-[62vw] sm:w-[26rem] sm:max-w-[80vw]">
                 <div className="flex justify-between items-center">
                   <span className="text-yellow-300 font-bold text-sm">{hud.mission.name}</span>
                   {hud.mission.timer >= 0 ? (
@@ -910,32 +925,33 @@ export default function App() {
                 <>Free roam — visit the <span className="text-cyan-300">glowing garage beam</span> and press <span className="key-cap">E</span> for jobs</>
               </div>
             )}
-          </div>
 
-          {/* first-night tutorial objective — dims after a few seconds so it stops
-              hogging the screen; ✕ dismisses it for this run (T skips forever) */}
-          {hud.tutorial && !tutorialHidden && (
-            <div
-              key={hud.tutorial.step}
-              className={`absolute left-1/2 -translate-x-1/2 z-20 animate-pulse tutorial-dim ${isTouch ? 'top-[6.9rem] w-72 max-w-[68vw]' : 'top-24 w-[24rem] max-w-[80vw]'}`}
-            >
-              <div className="hud-panel border-cyan-400/70 shadow-[0_0_28px_rgba(34,211,238,0.3)] w-full" style={isTouch ? { background: 'rgba(2,6,18,0.9)' } : undefined}>
-                <div className="flex justify-between text-[12px] tracking-[0.2em] text-cyan-300">
-                  <span>FIRST NIGHT — {hud.tutorial.step}/{hud.tutorial.total}</span>
-                  <span className="flex items-center gap-2">
-                    {!isTouch && <span className="text-slate-500 hidden sm:inline">press T to skip</span>}
-                    <button
-                      onClick={() => setTutorialHidden(true)}
-                      className="text-slate-400 hover:text-white leading-none"
-                      aria-label="Hide tutorial"
-                    >✕</button>
-                  </span>
+            {/* FIRST NIGHT objective — compact notification pill; ✕ dismisses for this run */}
+            {hud.tutorial && !tutorialHidden && (
+              <div key={hud.tutorial.step} className="tutorial-dim">
+                <div className="hud-panel border-cyan-400/70 shadow-[0_0_28px_rgba(34,211,238,0.3)] w-64 max-w-[62vw] sm:w-[24rem] sm:max-w-[80vw]" style={isTouch ? { background: 'rgba(2,6,18,0.88)' } : undefined}>
+                  <div className="flex justify-between items-center text-[10px] tracking-[0.2em] text-cyan-300">
+                    <span>FIRST NIGHT {hud.tutorial.step}/{hud.tutorial.total}</span>
+                    <span className="flex items-center gap-2">
+                      {!isTouch && <span className="text-slate-500 hidden sm:inline">press T to skip</span>}
+                      <button
+                        onClick={() => setTutorialHidden(true)}
+                        className="text-slate-400 hover:text-white leading-none pointer-events-auto"
+                        aria-label="Hide tutorial"
+                      >✕</button>
+                    </span>
+                  </div>
+                  <div className="text-white font-bold leading-snug text-xs mt-0.5 sm:text-base">{isTouch ? touchTitle(hud.tutorial.title) : hud.tutorial.title}</div>
+                  <div className="text-slate-200 leading-relaxed text-[11px] sm:text-[13px]">{isTouch ? touchHint(hud.tutorial.hint) : hintWithKeys(hud.tutorial.hint)}</div>
                 </div>
-                <div className={`text-white font-bold leading-snug ${isTouch ? 'text-sm mt-0.5' : 'text-base mt-1'}`}>{isTouch ? touchTitle(hud.tutorial.title) : hud.tutorial.title}</div>
-                <div className={`text-slate-200 leading-relaxed ${isTouch ? 'text-xs mt-0.5' : 'text-[13px] mt-1'}`}>{isTouch ? touchHint(hud.tutorial.hint) : hintWithKeys(hud.tutorial.hint)}</div>
               </div>
-            </div>
-          )}
+            )}
+
+            {/* toasts — slide in from the top, auto-dismiss */}
+            {toasts.map((t) => (
+              <div key={t.id} className={`toast toast-${t.kind}`}>{t.msg}</div>
+            ))}
+          </div>
 
           {/* top-right (below minimap): heat with live police instructions — slim on mobile */}
           <div className={`absolute z-20 flex flex-col items-end gap-2 ${isTouch ? 'top-[7.5rem] right-2' : 'top-[196px] right-4'}`}>
@@ -1164,14 +1180,108 @@ export default function App() {
               </div>
             </div>
           )}
-
-          {/* toasts */}
-          <div className="absolute bottom-32 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1 pointer-events-none">
-            {toasts.map((t) => (
-              <div key={t.id} className={`toast toast-${t.kind}`}>{t.msg}</div>
-            ))}
-          </div>
         </>
+      )}
+
+      {/* ================= FIRST-RUN ONBOARDING (once per device) ================= */}
+      {screen === 'game' && onboardStep !== null && (
+        <div className="absolute inset-0 z-40 pointer-events-none select-none">
+          {/* dim layer — controls stay live beneath (pointer-events none) */}
+          {onboardStep > 0 && onboardStep < 4 && (
+            <div className="absolute inset-0 onboard-dim" />
+          )}
+          {/* spotlight rings over the live controls */}
+          {onboardStep === 1 && (
+            <div className="spotlight" style={{ left: '0.6rem', bottom: '0.6rem', width: '9.6rem', height: '9.6rem', borderRadius: '9999px' }} />
+          )}
+          {onboardStep === 2 && (
+            <div className="spotlight" style={{ right: '0.6rem', bottom: '0.6rem', width: isTouch ? '15.5rem' : '12rem', height: '6rem', borderRadius: '1.2rem' }} />
+          )}
+
+          {/* step 0 — welcome */}
+          {onboardStep === 0 && (
+            <div className="onboard-card">
+              <div className="text-[11px] tracking-[0.35em] text-cyan-300 font-bold">WELCOME TO</div>
+              <div className="text-3xl font-black text-white tracking-wide mt-1">NEON HARBOR</div>
+              <div className="text-slate-300 text-sm mt-2 leading-relaxed">
+                One city. One night. Your legend.<br />Drive, earn, unlock — and don't stop when the patrol shows up.
+              </div>
+              <div className="flex gap-2 mt-4 text-[11px] font-bold text-slate-200">
+                <span className="px-2.5 py-1.5 rounded-lg bg-cyan-500/10 border border-cyan-400/40">JOBS &amp; RACES</span>
+                <span className="px-2.5 py-1.5 rounded-lg bg-red-500/10 border border-red-400/40">PATROL CHASES</span>
+                <span className="px-2.5 py-1.5 rounded-lg bg-fuchsia-500/10 border border-fuchsia-400/40">24 SHARDS</span>
+              </div>
+              <button className="onboard-next mt-5" onClick={() => setOnboardStep(1)}>LET'S RIDE →</button>
+            </div>
+          )}
+
+          {/* step 1 — joystick spotlight */}
+          {onboardStep === 1 && (
+            <div className="onboard-card onboard-card-low">
+              <div className="text-[11px] tracking-[0.3em] text-cyan-300 font-bold">YOUR WHEEL</div>
+              <div className="text-white font-bold mt-1 text-sm leading-snug">
+                {isTouch
+                  ? <>The joystick is <span className="text-cyan-300">live right now</span> — push it UP to speed up, tilt LEFT / RIGHT to steer.</>
+                  : <>Hold <span className="key-cap">W</span> to speed up, steer with <span className="key-cap">A</span>/<span className="key-cap">D</span> — try it!</>}
+              </div>
+              <button className="onboard-next mt-3" onClick={() => setOnboardStep(2)}>GOT IT →</button>
+            </div>
+          )}
+
+          {/* step 2 — action buttons spotlight */}
+          {onboardStep === 2 && (
+            <div className="onboard-card onboard-card-low">
+              <div className="text-[11px] tracking-[0.3em] text-cyan-300 font-bold">POWER BUTTONS</div>
+              <div className="mt-2 space-y-1.5 text-left">
+                <div className="flex items-center gap-2.5 text-slate-200 text-sm">
+                  <span className="onboard-ico text-fuchsia-300"><IcoBolt /></span>
+                  <span><b className="text-white">NITRO</b> — a burst of speed. Drifting refills it.</span>
+                </div>
+                <div className="flex items-center gap-2.5 text-slate-200 text-sm">
+                  <span className="onboard-ico text-amber-300"><IcoDrift /></span>
+                  <span><b className="text-white">DRIFT</b> — slide around corners, builds nitro.</span>
+                </div>
+                <div className="flex items-center gap-2.5 text-slate-200 text-sm">
+                  <span className="onboard-ico text-sky-300"><IcoBrake /></span>
+                  <span><b className="text-white">BRAKE</b> — stop hard, swing the car around.</span>
+                </div>
+              </div>
+              {!isTouch && <div className="text-[11px] text-slate-500 mt-2">SHIFT = nitro · SPACE = handbrake/drift · S = brake</div>}
+              <button className="onboard-next mt-3" onClick={() => setOnboardStep(3)}>GOT IT →</button>
+            </div>
+          )}
+
+          {/* step 3 — your goal */}
+          {onboardStep === 3 && (
+            <div className="onboard-card">
+              <div className="text-[11px] tracking-[0.3em] text-cyan-300 font-bold">YOUR GOAL</div>
+              <div className="text-slate-200 text-sm mt-2 leading-relaxed text-left">
+                • Take <b className="text-cyan-300">jobs</b> at the glowing garage beam — earn cash, level up<br />
+                • Locked districts open as you grow — or pay the <b className="text-amber-300">toll</b><br />
+                • <b className="text-fuchsia-300">Map icon</b> = tactical view · pause sits top-center<br />
+                • If the <b className="text-red-400">PATROL ★</b> light up… <b className="text-red-300">don't stop</b>
+              </div>
+              <button className="onboard-next mt-4" onClick={() => setOnboardStep(4)}>ALMOST THERE →</button>
+            </div>
+          )}
+
+          {/* step 4 — tap to start */}
+          {onboardStep === 4 && (
+            <div className="onboard-card items-center">
+              <div className="text-2xl font-black text-white tracking-wide">READY?</div>
+              <div className="text-slate-300 text-sm mt-1">The FIRST NIGHT guide will walk you through it, live.</div>
+              <button
+                className="onboard-next onboard-start mt-5"
+                onClick={() => {
+                  try { window.localStorage.setItem(ONBOARD_KEY, '1') } catch { /* ignore */ }
+                  setOnboardStep(null)
+                }}
+              >
+                TAP TO START
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       {/* ================= PHOTO MODE ================= */}
