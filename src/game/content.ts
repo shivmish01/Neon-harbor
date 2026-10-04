@@ -44,6 +44,26 @@ export const AURORA_REQUIREMENT = 'Earn all 15 achievements and reach level 10'
 export const GAME_VERSION = 'v1.0.0'
 export const GAME_TITLE = 'NEON HARBOR'
 
+// ---------- PERFORMANCE UPGRADES (cash-only — earned in-game, never VCoins) ----------
+export type UpgradeId = 'engine' | 'nitro' | 'tires'
+export interface UpgradeDef {
+  id: UpgradeId
+  name: string
+  desc: string
+  icon: string
+  prices: number[] // cash price of the NEXT level (index = current level)
+  max: number
+}
+export const UPGRADES: UpgradeDef[] = [
+  { id: 'engine', name: 'Engine Tune', desc: 'More top speed, harder acceleration', icon: '🔧', prices: [800, 1800, 3500], max: 3 },
+  { id: 'nitro',  name: 'Nitro Kit',   desc: 'Boost lasts longer, refills faster',  icon: '⚡', prices: [600, 1500, 3000], max: 3 },
+  { id: 'tires',  name: 'Grip Tires',  desc: 'Sharper cornering, less slide',       icon: '🛞', prices: [500, 1200, 2500], max: 3 },
+]
+export const ENGINE_MUL = (lv: number) => 1 + 0.09 * lv
+export const NITRO_REGEN_MUL = (lv: number) => 1 + 0.35 * lv
+export const NITRO_DRAIN_MUL = (lv: number) => 1 / (1 + 0.22 * lv)
+export const TIRES_MUL = (lv: number) => 1 + 0.07 * lv
+
 // ---------- CAR SKINS ----------
 export const SKINS: Skin[] = [
   { id: 'stock',    name: 'Harbor Gray',   desc: 'Factory fresh port-runner coupe.',        price: 0,   premium: false, minLevel: 1, body: 0x8a93a6, glow: 0x22d3ee },

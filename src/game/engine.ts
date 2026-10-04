@@ -9,7 +9,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { getSkin, getTheme, ACHIEVEMENTS, DISTRICTS, districtAt } from './content'
+import { getSkin, getTheme, ACHIEVEMENTS, DISTRICTS, districtAt, ENGINE_MUL, NITRO_REGEN_MUL, NITRO_DRAIN_MUL, TIRES_MUL } from './content'
 import { grantXp, xpForLevel, type SaveData } from './save'
 import { Synth } from './audio'
 import { cloneCar, cloneCharacter, CITY_BY_KIND, type GameAssets } from './assets'
@@ -381,11 +381,13 @@ export class GameEngine {
     this.scene.add(this.moon.target)
 
     // Car headlight spots (created here, targets added later)
-    this.headL = new THREE.SpotLight(0xcfe8ff, 60, 60, 0.5, 0.4, 1.6)
-    this.headR = new THREE.SpotLight(0xcfe8ff, 60, 60, 0.5, 0.4, 1.6)
+    // Tamed: the old 60/85 intensities blew out through bloom into a white
+    // wall ahead of the car — players couldn't see the road at night.
+    this.headL = new THREE.SpotLight(0xcfe8ff, 18, 42, 0.46, 0.55, 1.7)
+    this.headR = new THREE.SpotLight(0xcfe8ff, 18, 42, 0.46, 0.55, 1.7)
     this.scene.add(this.headL, this.headL.target, this.headR, this.headR.target)
     // The one real beam: shadow-casting, lights the tarmac ahead of the car
-    this.headSpot = new THREE.SpotLight(0xfff3d6, 85, 48, 0.36, 0.55, 1.35)
+    this.headSpot = new THREE.SpotLight(0xfff3d6, 34, 38, 0.34, 0.65, 1.5)
     this.headSpot.castShadow = true
     this.headSpot.shadow.mapSize.set(1024, 1024)
     this.headSpot.shadow.camera.near = 2
@@ -1657,7 +1659,10 @@ export class GameEngine {
   private splashTimes = new Float32Array(0)
   private stallSpots: number[] = []
   private stallSteam: { sprite: THREE.Sprite; phase: number; base: THREE.Vector3 }[] = []
-  private idlers: { mesh: THREE.Object3D; mixer: THREE.AnimationMixer }[] = []
+  private idlers: { mesh: THREE.Object3D; mixer: THREE.AnimationMixer; baseY?: number }[] = []
+  // Beach life: animated beach balls + campfire light flicker
+  private beachBalls: { mesh: THREE.Mesh; a: THREE.Vector3; b: THREE.Vector3; phase: number; dur: number }[] = []
+  private fireLights: { light: THREE.PointLight; phase: number; glow: THREE.Sprite }[] = []
   private moonTrackMat: THREE.MeshBasicMaterial | null = null
   private foamNight = 1
 
@@ -2036,7 +2041,23 @@ export class GameEngine {
     for (const id of this.idlers) {
       id.mixer.update(dt)
       // subtle life: a gentle idle bob so the crowd never looks frozen
-      id.mesh.position.y = Math.abs(Math.sin(this.time * 0.9 + id.mesh.position.x * 0.7)) * 0.02
+      id.mesh.position.y = (id.baseY ?? 0) + Math.abs(Math.sin(this.time * 0.9 + id.mesh.position.x * 0.7)) * 0.02
+    }
+  }
+
+  /** Beach life: beach balls arc between players, campfires flicker. */
+  private updateBeachLife(): void {
+    for (const b of this.beachBalls) {
+      const p = ((this.time / b.dur + b.phase) % 1 + 1) % 1
+      b.mesh.position.lerpVectors(b.a, b.b, p)
+      b.mesh.position.y += Math.sin(p * Math.PI) * 1.6 // parabolic toss
+      b.mesh.rotation.x += 0.04
+    }
+    for (const f of this.fireLights) {
+      const w = Math.sin(this.time * 9 + f.phase) * 0.5 + Math.sin(this.time * 23 + f.phase * 2) * 0.3
+      f.light.intensity = 7 + w * 2.2
+      ;(f.glow.material as THREE.SpriteMaterial).opacity = 0.7 + w * 0.18
+      f.glow.scale.setScalar(1.6 + w * 0.18)
     }
   }
 
@@ -2265,6 +2286,217 @@ export class GameEngine {
       })
     }
     this.scene.add(this.birdMesh)
+
+    // ================= BUSY BEACH =================
+    // Sunbathers, couples, beach-ball games, campfire guitar circles and a
+    // promenade food row — the shore should feel like a real evening beach.
+    const charKeys = Object.keys(this.assets.chars)
+    if (charKeys.length > 0) {
+      // Bright beach-wear palette (vs the muted street tints)
+      const swimTints = [0xe8a2b4, 0x9fd8e8, 0xf6e2a8, 0xffd166, 0xef8354, 0xb8f2e6, 0xf9f6f0, 0xff9e7d, 0xa0c4ff, 0xfdffb6]
+      const makeBeacher = (px: number, pz: number, rotY: number, lie: boolean): THREE.Group => {
+        const key = charKeys[Math.floor(rand() * charKeys.length)]
+        const { obj, clips } = cloneCharacter(this.assets, key)
+        const bb = new THREE.Box3().setFromObject(obj)
+        const h = bb.max.y - bb.min.y
+        const s = h > 0.01 ? (1.6 + rand() * 0.28) / h : 1
+        obj.scale.setScalar(s)
+        const tint = new THREE.Color(swimTints[Math.floor(rand() * swimTints.length)])
+        tint.multiplyScalar(0.85 + rand() * 0.3)
+        obj.traverse((o) => {
+          const m = o as THREE.Mesh
+          if (m.isMesh) {
+            const mat = (m.material as THREE.MeshStandardMaterial).clone()
+            mat.color = tint.clone()
+            m.material = mat
+          }
+        })
+        obj.position.y = -bb.min.y * s
+        const mixer = new THREE.AnimationMixer(obj)
+        const idleClip = clips.find((c) => /idle|stand/i.test(c.name)) ?? clips[0]
+        const action = mixer.clipAction(idleClip)
+        action.play()
+        action.timeScale = lie ? 0.25 + rand() * 0.2 : 0.85 + rand() * 0.35 // slow breathing when lying
+        const wrap = new THREE.Group()
+        wrap.add(obj)
+        wrap.position.set(px, 0, pz)
+        wrap.rotation.y = rotY
+        if (lie) {
+          // On their back on a towel, face to the sky
+          wrap.rotation.x = -Math.PI / 2
+          wrap.position.y = 0.17
+        }
+        this.scene.add(wrap)
+        this.idlers.push({ mesh: wrap, mixer, baseY: wrap.position.y })
+        return wrap
+      }
+      const towelG = new THREE.BoxGeometry(1.15, 0.05, 2.05)
+      const towelCols = [0xff6b9d, 0x4ecdc4, 0xffe66d, 0x95e1d3, 0xf38181, 0xa8e6cf, 0xff9e7d, 0xa0c4ff]
+      const putTowel = (px: number, pz: number, rotY: number, wide = false): void => {
+        const t = new THREE.Mesh(towelG, new THREE.MeshStandardMaterial({ color: towelCols[Math.floor(rand() * towelCols.length)], roughness: 0.95 }))
+        t.scale.x = wide ? 1.9 : 1
+        t.position.set(px, 0.08, pz)
+        t.rotation.y = rotY
+        this.scene.add(t)
+      }
+      // Random free sand spot, any side of the ring, away from the shore spawn
+      const sandSpot = (): { x: number; z: number } => {
+        for (let tries = 0; tries < 20; tries++) {
+          const side = Math.floor(rand() * 4)
+          const along = (rand() * 2 - 1) * (HALF - 2)
+          const out = HALF + 10 + rand() * 30
+          const x = side === 2 ? -out : side === 3 ? out : along
+          const z = side === 0 ? -out : side === 1 ? out : along
+          if ((x - 8) ** 2 + (z - 226) ** 2 < 20 * 20) continue
+          return { x, z }
+        }
+        return { x: 0, z: -(HALF + 20) }
+      }
+      // --- Sunbathers lying on towels (singles) ---
+      for (let i = 0; i < 14; i++) {
+        const { x, z } = sandSpot()
+        const rotY = rand() * Math.PI * 2
+        putTowel(x, z, rotY)
+        makeBeacher(x, z, rotY + Math.PI, true)
+      }
+      // --- Couples sharing a wide towel ---
+      for (let i = 0; i < 5; i++) {
+        const { x, z } = sandSpot()
+        const rotY = rand() * Math.PI * 2
+        putTowel(x, z, rotY, true)
+        const ox = Math.cos(rotY) * 0.62
+        const oz = -Math.sin(rotY) * 0.62
+        makeBeacher(x + ox, z + oz, rotY + Math.PI, true)
+        makeBeacher(x - ox, z - oz, rotY + Math.PI + (rand() - 0.5) * 0.5, true)
+      }
+      // --- Beach-ball games: two players facing off, ball arcs between them ---
+      const ballTex = (() => {
+        const c = document.createElement('canvas')
+        c.width = c.height = 64
+        const g = c.getContext('2d')
+        if (!g) return null
+        const cols = ['#ef4444', '#f8fafc', '#3b82f6', '#f8fafc', '#facc15', '#f8fafc']
+        cols.forEach((col, i) => { g.fillStyle = col; g.fillRect((i * 64) / cols.length, 0, 64 / cols.length + 1, 64) })
+        const t = new THREE.CanvasTexture(c)
+        return t
+      })()
+      const ballGeom = new THREE.SphereGeometry(0.34, 18, 14)
+      for (let i = 0; i < 4; i++) {
+        const { x, z } = sandSpot()
+        const ang = rand() * Math.PI * 2
+        const dx = Math.cos(ang) * 2.3
+        const dz = Math.sin(ang) * 2.3
+        makeBeacher(x + dx, z + dz, Math.atan2(-dx, -dz), false)
+        makeBeacher(x - dx, z - dz, Math.atan2(dx, dz), false)
+        const ball = new THREE.Mesh(ballGeom, new THREE.MeshStandardMaterial({ map: ballTex ?? undefined, color: 0xffffff, roughness: 0.5 }))
+        this.scene.add(ball)
+        this.beachBalls.push({
+          mesh: ball,
+          a: new THREE.Vector3(x + dx, 1.15, z + dz),
+          b: new THREE.Vector3(x - dx, 1.15, z - dz),
+          phase: rand(),
+          dur: 1.5 + rand() * 0.5,
+        })
+      }
+      // --- Campfire guitar circles: logs, firelight, a guitarist, friends around ---
+      const logGeom = new THREE.CylinderGeometry(0.09, 0.11, 0.9, 6)
+      const logMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 0.9 })
+      const stoneGeom = new THREE.SphereGeometry(0.14, 7, 5)
+      const stoneMat = new THREE.MeshStandardMaterial({ color: 0x8d8d94, roughness: 0.95 })
+      const guitarBody = new THREE.BoxGeometry(0.36, 0.46, 0.1)
+      const guitarNeck = new THREE.BoxGeometry(0.07, 0.55, 0.05)
+      const guitarMat = new THREE.MeshStandardMaterial({ color: 0x9c6642, roughness: 0.55 })
+      const guitarDark = new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 0.6 })
+      const glowTex = makeGlowTexture()
+      for (let i = 0; i < 3; i++) {
+        const { x, z } = sandSpot()
+        // fire pit: crossed logs + stone ring + flickering light
+        for (let l = 0; l < 3; l++) {
+          const log = new THREE.Mesh(logGeom, logMat)
+          log.position.set(x, 0.12 + l * 0.07, z)
+          log.rotation.set(Math.PI / 2, 0, (l * Math.PI) / 3)
+          this.scene.add(log)
+        }
+        for (let sN = 0; sN < 7; sN++) {
+          const a = (sN / 7) * Math.PI * 2
+          const st = new THREE.Mesh(stoneGeom, stoneMat)
+          st.position.set(x + Math.cos(a) * 0.75, 0.08, z + Math.sin(a) * 0.75)
+          this.scene.add(st)
+        }
+        const fire = new THREE.PointLight(0xff8a3d, 7, 13, 2)
+        fire.position.set(x, 0.8, z)
+        this.scene.add(fire)
+        const fglow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xff9a4d, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }))
+        fglow.position.set(x, 0.55, z)
+        fglow.scale.setScalar(1.6)
+        this.scene.add(fglow)
+        this.fireLights.push({ light: fire, phase: rand() * Math.PI * 2, glow: fglow })
+        // friends around the fire; one holds the guitar
+        const n = 4 + Math.floor(rand() * 2)
+        for (let k = 0; k < n; k++) {
+          const a = (k / n) * Math.PI * 2 + rand() * 0.3
+          const px = x + Math.cos(a) * 1.9
+          const pz = z + Math.sin(a) * 1.9
+          const w = makeBeacher(px, pz, -a - Math.PI / 2, false)
+          if (k === 0) {
+            // guitar held across the body
+            const gtr = new THREE.Group()
+            const body = new THREE.Mesh(guitarBody, guitarMat)
+            const neck = new THREE.Mesh(guitarNeck, guitarDark)
+            neck.position.set(-0.28, 0.28, 0)
+            neck.rotation.z = 0.7
+            gtr.add(body, neck)
+            gtr.position.set(0.05, 0.85, 0.34)
+            gtr.rotation.set(0.15, 0, -0.25)
+            w.add(gtr)
+          }
+        }
+      }
+      // --- Promenade food row: 3 glowing stalls on the sand, vendors + queues ---
+      const stallRow: [number, number][] = [[60, 228], [110, 231], [160, 228]]
+      const counterG = new THREE.BoxGeometry(2.6, 1.0, 1.0)
+      const awnG = new THREE.BoxGeometry(3.2, 0.08, 1.6)
+      const postG = new THREE.CylinderGeometry(0.05, 0.05, 2.3, 6)
+      const bulbG = new THREE.SphereGeometry(0.06, 6, 5)
+      const stallCols = [0xff5964, 0x35c4b5, 0xffb627]
+      stallRow.forEach(([sx, sz], si) => {
+        const col = stallCols[si % stallCols.length]
+        const counter = new THREE.Mesh(counterG, new THREE.MeshStandardMaterial({ color: 0x3a3f4d, roughness: 0.8 }))
+        counter.position.set(sx, 0.5, sz)
+        this.scene.add(counter)
+        const awn = new THREE.Mesh(awnG, new THREE.MeshStandardMaterial({ color: col, roughness: 0.7, emissive: col, emissiveIntensity: 0.25 }))
+        awn.position.set(sx, 2.35, sz + 0.15)
+        awn.rotation.x = 0.18
+        this.scene.add(awn)
+        for (const pxo of [-1.45, 1.45]) {
+          const post = new THREE.Mesh(postG, new THREE.MeshStandardMaterial({ color: 0x2b2f3a, roughness: 0.7 }))
+          post.position.set(sx + pxo, 1.15, sz + 0.75)
+          this.scene.add(post)
+        }
+        // string of warm bulbs under the awning edge
+        for (let bN = 0; bN < 7; bN++) {
+          const bulb = new THREE.Mesh(bulbG, new THREE.MeshBasicMaterial({ color: 0xffd9a0 }))
+          bulb.position.set(sx - 1.35 + bN * 0.45, 2.18 - Math.sin((bN / 6) * Math.PI) * 0.1, sz + 0.85)
+          this.scene.add(bulb)
+        }
+        const stallLight = new THREE.PointLight(col, 5, 9, 2)
+        stallLight.position.set(sx, 2.0, sz + 0.8)
+        this.scene.add(stallLight)
+        // vendor behind the counter, customers in front
+        makeBeacher(sx, sz - 1.05, 0, false)
+        const nc = 1 + Math.floor(rand() * 2)
+        for (let cN = 0; cN < nc; cN++) makeBeacher(sx - 0.7 + cN * 1.3, sz + 1.5, Math.PI, false)
+        // steam plume, animated by the existing stall-steam loop
+        const sm = new THREE.SpriteMaterial({ map: glowTex, color: 0xd8f0ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false })
+        const steam = new THREE.Sprite(sm)
+        steam.position.set(sx + 0.6, 2.1, sz)
+        steam.scale.setScalar(1.1)
+        this.scene.add(steam)
+        this.stallSteam.push({ sprite: steam, phase: rand() * Math.PI * 2, base: new THREE.Vector3(sx + 0.6, 2.1, sz) })
+        // cars can drive on the sand — make the counter a real obstacle
+        this.buildings.push({ minX: sx - 1.3, maxX: sx + 1.3, minZ: sz - 0.5, maxZ: sz + 0.5 })
+      })
+    }
   }
 
   private updateBirds(dt: number): void {
@@ -2342,7 +2574,7 @@ export class GameEngine {
 
     // Headlight pools — warm light thrown on the tarmac ahead of the car
     const poolGeom = new THREE.PlaneGeometry(3.0, 5.2)
-    const poolMat = new THREE.MeshBasicMaterial({ color: 0xffe9b0, transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false })
+    const poolMat = new THREE.MeshBasicMaterial({ color: 0xffe9b0, transparent: true, opacity: 0.07, blending: THREE.AdditiveBlending, depthWrite: false })
     const poolL = new THREE.Mesh(poolGeom, poolMat)
     poolL.position.set(-0.55, 0.045, 3.2)
     poolL.rotation.x = -Math.PI / 2
@@ -2911,6 +3143,7 @@ export class GameEngine {
     this.updateTrafficLights()
     this.updateTheme(dt)
     this.updateIdlers(dt)
+    this.updateBeachLife()
     this.updateCrates(dt)
     this.updateLandmarks(dt)
     this.updateDistricts(dt)
@@ -3063,6 +3296,11 @@ export class GameEngine {
     const dir = new THREE.Vector3(Math.sin(this.heading), 0, Math.cos(this.heading))
     let s = this.vel.dot(dir)
 
+    // Performance upgrades from the shop (cash-bought levels, 0-3 each)
+    const upg = this.hooks.getSave().upgrades ?? { engine: 0, nitro: 0, tires: 0 }
+    const engineMul = ENGINE_MUL(upg.engine)
+    const tiresMul = TIRES_MUL(upg.tires)
+
     this.boosting = false
     if (this.bustedCooldown > 0) {
       this.bustedCooldown -= dt
@@ -3072,9 +3310,9 @@ export class GameEngine {
 
     if (!frozen && wantBoost && this.boost > 0 && s > 4) {
       this.boosting = true
-      this.boost = Math.max(0, this.boost - 32 * dt)
+      this.boost = Math.max(0, this.boost - 32 * NITRO_DRAIN_MUL(upg.nitro) * dt)
     } else {
-      this.boost = Math.min(100, this.boost + 11 * dt)
+      this.boost = Math.min(100, this.boost + 11 * NITRO_REGEN_MUL(upg.nitro) * dt)
     }
 
     if (!frozen) {
@@ -3083,9 +3321,9 @@ export class GameEngine {
       const aThr = effThr
       const gas = aThr !== null ? aThr > 0.12 : up
       const braking = aThr !== null ? aThr < -0.12 : down
-      if (gas) s += ACCEL * (aThr !== null ? Math.min(1, aThr) : 1) * mult * dt
-      if (braking) s -= (s > 1 ? BRAKE : ACCEL * 0.6) * dt
-      const maxS = MAX_SPEED * mult
+      if (gas) s += ACCEL * engineMul * (aThr !== null ? Math.min(1, aThr) : 1) * mult * dt
+      if (braking) s -= (s > 1 ? BRAKE : ACCEL * engineMul * 0.6) * dt
+      const maxS = MAX_SPEED * engineMul * mult
       s = THREE.MathUtils.clamp(s, -10, maxS)
       // Swipe steering is motion-based (CoD-style): finger movement adds steer
       // input which bleeds off fast — a held-still finger goes straight.
@@ -3098,8 +3336,8 @@ export class GameEngine {
       const joySteer = this.analogSteer !== null ? this.analogSteer * 0.55 : null
       const aSt = this.padSteer ?? this.swipeSteer ?? joySteer
       const steer = aSt !== null ? -aSt : (left ? 1 : 0) - (right ? 1 : 0)
-      const grip = handbrake ? 1.4 : 7.5
-      const turnRate = steer * 2.1 * THREE.MathUtils.clamp(Math.abs(s) / 10, 0, 1) * (handbrake ? 1.5 : 1)
+      const grip = handbrake ? 1.4 : 7.5 * tiresMul
+      const turnRate = steer * 2.1 * tiresMul * THREE.MathUtils.clamp(Math.abs(s) / 10, 0, 1) * (handbrake ? 1.5 : 1)
       this.heading += turnRate * dt * Math.sign(s >= 0 ? 1 : -1)
       const newDir = new THREE.Vector3(Math.sin(this.heading), 0, Math.cos(this.heading))
       const lat = this.vel.clone().sub(newDir.clone().multiplyScalar(this.vel.dot(newDir)))
@@ -4510,7 +4748,7 @@ export class GameEngine {
 
   private spawnPedestrians(): void {
     const STREET = 88
-    const BEACH = 22
+    const BEACH = 42
     const rand = seededRand(4321)
     const charKeys = Object.keys(this.assets.chars)
     if (charKeys.length === 0) return

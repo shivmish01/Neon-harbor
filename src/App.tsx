@@ -9,8 +9,8 @@ import { GameEngine, type HudState } from './game/engine'
 import { loadGameAssets, type GameAssets } from './game/assets'
 import {
   SKINS, THEMES, HARBOR_PASS_ID, HARBOR_PASS_ITEMS, GAME_VERSION, GAME_TITLE,
-  ACHIEVEMENTS, DISTRICTS,
-  type Skin, type Theme,
+  ACHIEVEMENTS, DISTRICTS, UPGRADES,
+  type Skin, type Theme, type UpgradeId,
 } from './game/content'
 import { loadSave, persistSave, defaultSave, type SaveData } from './game/save'
 import { VPlay, type VPlayInit, type PurchaseResult } from './vplay/sdk'
@@ -39,7 +39,7 @@ const PHOTO_FILTERS = [
 export default function App() {
   const [screen, setScreen] = useState<Screen>('boot')
   const [overlay, setOverlay] = useState<Overlay>(null)
-  const [shopTab, setShopTab] = useState<'skins' | 'themes'>('skins')
+  const [shopTab, setShopTab] = useState<'skins' | 'themes' | 'upgrades'>('skins')
   const [progressTab, setProgressTab] = useState<'trophies' | 'districts'>('trophies')
   const [tutorialHidden, setTutorialHidden] = useState(false)
   // First-run tap-through onboarding overlay (separate localStorage flag —
@@ -717,6 +717,28 @@ export default function App() {
     commit()
     pushToast('Purchased — equipped!', 'good')
     equipItem(id)
+  }
+
+  // Performance upgrades: cash-only, levels persist in the save. The engine
+  // reads save.upgrades every frame, so buying takes effect immediately.
+  const buyUpgrade = (id: UpgradeId) => {
+    const engine = engineRef.current
+    const s = saveRef.current
+    const def = UPGRADES.find((u) => u.id === id)
+    if (!def) return
+    const lv = s.upgrades[id] ?? 0
+    if (lv >= def.max) return
+    const price = def.prices[lv]
+    if (s.cash < price) {
+      engine?.playDenied()
+      pushToast('Not enough cash — take on more jobs!', 'warn')
+      return
+    }
+    s.cash -= price
+    s.upgrades[id] = lv + 1
+    engine?.playBuy()
+    commit()
+    pushToast(`${def.icon} ${def.name} Lv${lv + 1} installed!`, 'good')
   }
 
   // VCoin quick-buy: vplay.gg shows its own confirm sheet and owns the ledger.
@@ -1761,7 +1783,38 @@ export default function App() {
             <div className="flex gap-2 mb-4">
               <button onClick={() => setShopTab('skins')} className={`shop-tab ${shopTab === 'skins' ? 'shop-tab-on' : ''}`}>CAR SKINS</button>
               <button onClick={() => setShopTab('themes')} className={`shop-tab ${shopTab === 'themes' ? 'shop-tab-on' : ''}`}>CITY THEMES</button>
+              <button onClick={() => setShopTab('upgrades')} className={`shop-tab ${shopTab === 'upgrades' ? 'shop-tab-on' : ''}`}>UPGRADES</button>
             </div>
+
+            {shopTab === 'upgrades' && (
+              <div className="grid md:grid-cols-3 gap-3 mb-1">
+                {UPGRADES.map((u) => {
+                  const lv = save.upgrades[u.id] ?? 0
+                  const maxed = lv >= u.max
+                  const price = maxed ? null : u.prices[lv]
+                  return (
+                    <div key={u.id} className="rounded-xl border border-cyan-400/25 bg-slate-800/70 p-4 flex flex-col">
+                      <div className="text-3xl">{u.icon}</div>
+                      <div className="text-white font-black tracking-wide mt-2">{u.name}</div>
+                      <div className="text-slate-400 text-xs mt-1 flex-1">{u.desc}</div>
+                      {/* level pips */}
+                      <div className="flex gap-1.5 mt-3">
+                        {Array.from({ length: u.max }, (_, i) => (
+                          <div key={i} className={`h-1.5 flex-1 rounded-full ${i < lv ? 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.8)]' : 'bg-slate-700'}`} />
+                        ))}
+                      </div>
+                      <button
+                        onClick={() => buyUpgrade(u.id)}
+                        disabled={maxed || (price != null && save.cash < price)}
+                        className="mt-3 w-full py-2 rounded-lg text-sm font-black border border-emerald-400 text-emerald-300 hover:bg-emerald-400/15 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {maxed ? 'MAXED OUT' : `BUY Lv${lv + 1} — $${price!.toLocaleString()}`}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
 
             <div className="grid md:grid-cols-3 gap-3">
               {shopTab === 'skins' && SKINS.map((item: Skin) => (

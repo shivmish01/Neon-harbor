@@ -32,6 +32,7 @@ export interface SaveData {
   achievements: string[] // unlocked achievement ids
   districts: string[] // districts the player has entered at least once
   landmarks: string[] // discovered landmark names (persisted so reloads don't re-pay)
+  upgrades: Record<'engine' | 'nitro' | 'tires', number> // bought performance levels (0-3)
   controls: 'joystick' | 'buttons' // touch control scheme
   /** vplay.gg milestone ids already reported — each is sent at most once */
   reportedMilestones: string[]
@@ -57,6 +58,7 @@ export function defaultSave(): SaveData {
     achievements: [],
     districts: [],
     landmarks: [],
+    upgrades: { engine: 0, nitro: 0, tires: 0 },
     controls: 'joystick',
     reportedMilestones: [],
     stats: { deliveries: 0, races: 0, bestRace: 0, bestDrift: 0, busts: 0, fares: 0, getaways: 0 },
@@ -75,6 +77,7 @@ export function loadSave(): SaveData {
       stats: { ...base.stats, ...(parsed.stats ?? {}) },
       shards: [...new Set(parsed.shards ?? [])],
       owned: parsed.owned ?? base.owned,
+      upgrades: { ...base.upgrades, ...(parsed.upgrades ?? {}) },
       landmarks: parsed.landmarks ?? [],
       legend: parsed.legend ?? false,
       reportedMilestones: parsed.reportedMilestones ?? [],
