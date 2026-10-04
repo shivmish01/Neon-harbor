@@ -32,7 +32,6 @@ export interface SaveData {
   achievements: string[] // unlocked achievement ids
   districts: string[] // districts the player has entered at least once
   landmarks: string[] // discovered landmark names (persisted so reloads don't re-pay)
-  tollsPaid: string[] // districts unlocked early by paying the border toll
   controls: 'joystick' | 'buttons' // touch control scheme
   /** vplay.gg milestone ids already reported — each is sent at most once */
   reportedMilestones: string[]
@@ -58,7 +57,6 @@ export function defaultSave(): SaveData {
     achievements: [],
     districts: [],
     landmarks: [],
-    tollsPaid: [],
     controls: 'joystick',
     reportedMilestones: [],
     stats: { deliveries: 0, races: 0, bestRace: 0, bestDrift: 0, busts: 0, fares: 0, getaways: 0 },
@@ -77,7 +75,6 @@ export function loadSave(): SaveData {
       stats: { ...base.stats, ...(parsed.stats ?? {}) },
       shards: [...new Set(parsed.shards ?? [])],
       owned: parsed.owned ?? base.owned,
-      tollsPaid: parsed.tollsPaid ?? [],
       landmarks: parsed.landmarks ?? [],
       legend: parsed.legend ?? false,
       reportedMilestones: parsed.reportedMilestones ?? [],

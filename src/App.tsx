@@ -208,7 +208,7 @@ export default function App() {
     if (!force && now - lastCloudSaveRef.current < 15000) return
     lastCloudSaveRef.current = now
     const s = saveRef.current
-    VPlay.saveCloud({ cash: s.cash, xp: s.xp, level: s.level, shards: s.shards, owned: s.owned, skin: s.skin, theme: s.theme, achievements: s.achievements, districts: s.districts, landmarks: s.landmarks, tollsPaid: s.tollsPaid, stats: s.stats, tutorialDone: s.tutorialDone })
+    VPlay.saveCloud({ cash: s.cash, xp: s.xp, level: s.level, shards: s.shards, owned: s.owned, skin: s.skin, theme: s.theme, achievements: s.achievements, districts: s.districts, landmarks: s.landmarks, stats: s.stats, tutorialDone: s.tutorialDone })
   }, [])
 
   const commit = useCallback(() => {
