@@ -14,6 +14,7 @@ import {
 } from './game/content'
 import { loadSave, persistSave, defaultSave, type SaveData } from './game/save'
 import { VPlay, type VPlayInit, type PurchaseResult } from './vplay/sdk'
+import HowToPlay from './components/HowToPlay'
 
 type Screen = 'boot' | 'menu' | 'game'
 type Overlay = null | 'shop' | 'jobs' | 'pause' | 'help' | 'progress' | 'map'
@@ -1653,50 +1654,8 @@ export default function App() {
       )}
 
 
-      {/* ================= HELP ================= */}
-      {overlay === 'help' && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-          <div className="w-[34rem] max-w-[92vw] bg-slate-900/95 border border-cyan-500/30 rounded-2xl p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-2xl font-black text-white tracking-widest">HOW TO PLAY</h2>
-              <button onClick={() => setOverlay(null)} className="text-slate-400 hover:text-white text-xl">✕</button>
-            </div>
-            <div className="text-slate-300 text-sm space-y-3 leading-relaxed">
-              <p><b className="text-cyan-300">Drive & earn.</b>{' '}
-                {isTouch
-                  ? <>Take courier jobs and races from the Job Board — drive into the <b>glowing cyan beam</b> in the city center and tap the <b>E</b> button. Finish fast for bigger payouts.</>
-                  : <>Take courier jobs and races from the Job Board (glowing cyan beam in the city center, press E). Finish fast for bigger payouts.</>}
-              </p>
-              <p><b className="text-cyan-300">Explore.</b> 24 data shards glow around the city. Orange ramps pay airtime bonuses. Handbrake drifts around corners pay too. Five districts open as you level — or pay the border toll (press E at the gate) to enter early with cash.</p>
-              <p>
-                <b className="text-red-300">The Patrol — read this!</b> Speeding near red patrol drones raises your ★ heat.
-                <b> What to do when attacked:</b> keep driving FAST and get 60m+ away from every drone — the stars fade and they give up.
-                If a drone sticks to your bumper, <b>never stop</b>. And if one grabs you,{' '}
-                <b>{isTouch ? 'MASH the DRIFT button rapidly to break free' : 'mash SPACE rapidly to break free'}</b> —
-                only a stopped, surrounded car gets BUSTED (15% fine, hauled back to the garage). At 3★+ you hear sirens; drones get faster every star.
-              </p>
-              <p><b className="text-cyan-300">Spend & customize.</b> Cash buys car skins and the Golden Hour environment. Premium cars and environments (Crimson Ghost, Royal Violet, Solar Flare, Cyber Oni, Sakura Dusk, Acid Rain) unlock with VCoins on vplay.gg — or grab the Harbor Pass for all of them at once.</p>
-              <p><b className="text-fuchsia-300">Signature touches.</b>{' '}
-                {isTouch
-                  ? <>The camera button (after any win) freezes the world — orbit your car with a finger, apply a color grade, and save the shot. The soundtrack intensifies as Patrol heat rises.</>
-                  : <>Press <b>P</b> for photo mode: the world freezes, drag to orbit your car, scroll to zoom, grade the shot, and save a PNG. The soundtrack builds with Patrol heat. Plug in a gamepad and it just works.</>}
-              </p>
-              <div className="text-slate-600 text-[10px] pt-2 border-t border-slate-800">
-                Character models: Quaternius (CC0) · City & cars: Kenney (CC0)
-              </div>
-              <div className="text-slate-500 text-xs pt-2 border-t border-slate-800">
-                {isTouch ? (
-                  save.controls === 'joystick'
-                    ? 'Joystick: push UP to drive, pull back to slow — or steer Call-of-Duty style by swiping anywhere on the RIGHT half of the screen · bolt = nitro, skid = drift, ring = brake · map icon opens a live tactical map · pause is top-center · the camera appears when you complete a mission'
-                    : '◀ ▶ steer · ▲ gas · ▼ brake/reverse · bolt = nitro · skid icon = drift — E jobs · map / horn / pause icons'
-                ) : (
-                  'Controls: WASD/arrows drive · SHIFT nitro · SPACE handbrake · E job board · P photo mode · C camera · H horn · ESC pause · gamepad supported'
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ================= HELP — interactive guide (AAA-style FTUE) ================= */}
+      {overlay === 'help' && <HowToPlay isTouch={isTouch} onClose={() => setOverlay(null)} />}
 
       {/* Mobile portrait: no "rotate your device" wall — the root div above is
           already CSS-rotated into landscape, so the game just launches. */}
