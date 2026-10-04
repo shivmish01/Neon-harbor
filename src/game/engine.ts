@@ -253,6 +253,9 @@ export class GameEngine {
   private heading = Math.PI
   private stuckTime = 0
   private stuckLatch = 0 // keeps the RESET offer alive briefly after gas is released
+  private stuckRef = new THREE.Vector3() // position sample for bounce-proof stuck detection
+  private stuckRefTimer = 0
+  private stuckAuto = 0 // continuous wedge time → triggers auto-respawn
   private vy = 0
   private grounded = true
   private boost = 100
@@ -2064,6 +2067,9 @@ export class GameEngine {
         // Keep the central garage plaza clean — the player spawns there and
         // their very first drive must not be a slalom of concrete
         if (Math.abs(t) < 45 && Math.abs(c) < 45) continue
+        // Keep the downtown border (±82) clear — locked-district bounces happen
+        // there, and concrete right at the wall wedged cars permanently
+        if (Math.abs(Math.abs(t) - 82) < 9) continue
         placements.push(ai === 0 ? { x: t, z: c, rot: 0 } : { x: c, z: t, rot: Math.PI / 2 })
       }
     }
@@ -3102,19 +3108,39 @@ export class GameEngine {
       const onRoad = this.isOnRoad(this.pos.x, this.pos.z)
       const drag = onRoad ? 0.45 : 2.6
       this.vel.multiplyScalar(Math.exp(-dt * drag))
-      // Stuck detection: flooring the gas but barely moving (wedged on a pole,
-      // barrier or wall). HUD then offers the R-key / RESET-button recovery.
-      // The prompt LATCHES for a few seconds after the player lets go — a wedged
-      // player who stops pressing still sees the way out instead of a dead car.
-      if (gas && this.vel.lengthSq() < 4) {
-        this.stuckTime += dt
-        if (this.stuckTime > 2) this.stuckLatch = 6
-      } else {
-        this.stuckTime = 0
-        this.stuckLatch = Math.max(0, this.stuckLatch - dt)
+      // Stuck detection — POSITION-delta based: collision bounces spoof the old
+      // velocity check (a wedged car jitters >2 u/s and the timer reset forever).
+      // Instead, sample position every 0.75s: gas held but barely moved = wedged.
+      // HUD offers R / RESET, and at ~5s the game auto-respawns the car — nobody
+      // has to read a prompt to escape a wedge.
+      this.stuckRefTimer -= dt
+      if (this.stuckRefTimer <= 0) {
+        const moved = this.pos.distanceTo(this.stuckRef)
+        if (gas && moved < 1.4) {
+          this.stuckTime += 0.75
+          if (this.stuckTime > 1.5) this.stuckLatch = 6
+        } else {
+          this.stuckTime = 0
+          this.stuckAuto = 0
+          this.stuckLatch = Math.max(0, this.stuckLatch - 0.75)
+        }
+        this.stuckRef.copy(this.pos)
+        this.stuckRefTimer = 0.75
       }
-      // Driving freely again clears the latch immediately.
-      if (this.vel.lengthSq() > 25) this.stuckLatch = 0
+      // Driving freely again clears everything immediately.
+      if (this.vel.lengthSq() > 25) {
+        this.stuckLatch = 0
+        this.stuckTime = 0
+        this.stuckAuto = 0
+      }
+      // Auto-respawn after ~5s of continuous wedging — the AAA "respawning…" net
+      if (this.stuckTime > 1.5 && !this.busted) {
+        this.stuckAuto += dt
+        if (this.stuckAuto > 3.5) {
+          this.resetToRoad()
+          this.stuckAuto = 0
+        }
+      }
     } else {
       this.vel.multiplyScalar(Math.exp(-dt * 3))
     }
@@ -3325,9 +3351,13 @@ export class GameEngine {
       const clear = CAR_R + 0.6
       if (pens.axis === 'x') this.pos.x = pens.low ? d.minX - clear : d.maxX + clear
       else this.pos.z = pens.low ? d.minZ - clear : d.maxZ + clear
-      // remove only the inward velocity — sliding along the wall stays possible
-      if (pens.axis === 'x') this.vel.x = pens.low ? Math.min(this.vel.x, 0) : Math.max(this.vel.x, 0)
-      else this.vel.z = pens.low ? Math.min(this.vel.z, 0) : Math.max(this.vel.z, 0)
+      // BOUNCE-BACK: actively repel the car back into the open district instead
+      // of just zeroing the inward velocity — grinding along the wall let cars
+      // wedge between the clamp and border props (perma-stuck).
+      const inward = pens.axis === 'x' ? Math.abs(this.vel.x) : Math.abs(this.vel.z)
+      const bounce = Math.max(9, inward * 0.75)
+      if (pens.axis === 'x') this.vel.x = pens.low ? -bounce : bounce
+      else this.vel.z = pens.low ? -bounce : bounce
       this.shake = Math.min(this.shake + 0.18, 0.5)
       if (this.districtCd <= 0) {
         this.districtCd = 2.5
