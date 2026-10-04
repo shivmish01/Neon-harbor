@@ -73,9 +73,14 @@ export default function App() {
   const lastCloudSaveRef = useRef(0)
   const pausedByHiddenRef = useRef(false)
   const lastKnownRef = useRef<{ ach: string[]; districts: string[] }>({ ach: [], districts: [] })
-  // Mobile/tablet players get on-screen drive controls instead of keyboard hints
+  // Mobile/tablet players get on-screen drive controls instead of keyboard hints.
+  // ?forcetouch forces the touch path on desktop — used to preview the mobile FTUE.
   const [isTouch] = useState(
-    () => typeof window !== 'undefined' && (window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window),
+    () =>
+      typeof window !== 'undefined' &&
+      (window.matchMedia('(pointer: coarse)').matches ||
+        'ontouchstart' in window ||
+        new URLSearchParams(window.location.search).has('forcetouch')),
   )
   // Mobile plays in landscape. We never ask the player to rotate: Android
   // Chrome gets a real orientation lock from the entry tap, and everything
@@ -96,6 +101,61 @@ export default function App() {
     mq.addEventListener('change', update)
     return () => mq.removeEventListener('change', update)
   }, [isTouch])
+
+  // ---------- mobile FTUE logic: onboarding advances by DOING ----------
+  // (drive, swipe, boost) — not by reading. A fallback SKIP never traps anyone.
+  const [obFallback, setObFallback] = useState(false)
+  useEffect(() => {
+    setObFallback(false)
+    if (onboardStep === null || onboardStep < 1) return
+    const gated = isTouch ? onboardStep <= 4 : onboardStep <= 2
+    if (!gated) return
+    const t = setTimeout(() => setObFallback(true), onboardStep === 4 ? 16000 : 11000)
+    return () => clearTimeout(t)
+  }, [onboardStep, isTouch])
+  // Auto-advance guard: schedule each step's "done → next" exactly once.
+  const obAdvRef = useRef(false)
+  useEffect(() => {
+    obAdvRef.current = false
+  }, [onboardStep])
+  // Touch FTUE action gates: car moving (step 1), nitro fired (step 3),
+  // reached the garage beam (step 4) → flash ✓, then move on.
+  // NOTE: no cleanup on the timeout — hud updates re-run this effect every
+  // frame and a cleanup would cancel the scheduled advance. obAdvRef already
+  // guarantees it schedules exactly once per step.
+  useEffect(() => {
+    if (!isTouch || onboardStep === null || obAdvRef.current) return
+    const done =
+      (onboardStep === 1 && (hud?.speedKmh ?? 0) > 8) ||
+      (onboardStep === 3 && !!hud && (hud.boosting || hud.boost < 95)) ||
+      (onboardStep === 4 && !!hud?.nearGarage)
+    if (!done) return
+    obAdvRef.current = true
+    setTimeout(() => setOnboardStep(onboardStep + 1), 950)
+  }, [isTouch, onboardStep, hud])
+  // Step 2 (touch): steering is a horizontal swipe — detect a real swipe
+  // anywhere on screen and count it as "user did it".
+  useEffect(() => {
+    if (!isTouch || onboardStep !== 2) return
+    let startX: number | null = null
+    const ts = (e: TouchEvent) => {
+      startX = e.touches[0]?.clientX ?? null
+    }
+    const tm = (e: TouchEvent) => {
+      if (startX === null || obAdvRef.current) return
+      const dx = (e.touches[0]?.clientX ?? startX) - startX
+      if (Math.abs(dx) > 50) {
+        obAdvRef.current = true
+        setTimeout(() => setOnboardStep(3), 950)
+      }
+    }
+    window.addEventListener('touchstart', ts, { passive: true })
+    window.addEventListener('touchmove', tm, { passive: true })
+    return () => {
+      window.removeEventListener('touchstart', ts)
+      window.removeEventListener('touchmove', tm)
+    }
+  }, [isTouch, onboardStep])
 
   // Splash sequence timing: each card holds ~2.2s (1.3s on vplay.gg);
   // ?autostart (dev builds only) skips straight into the game
@@ -1132,8 +1192,20 @@ export default function App() {
             </div>
           )}
           {!overlay && !isTouch && !hud.nearGarage && hud.nearToll && (
-            <div className="nh-prompt absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2.5 bg-amber-500/20 border border-amber-400 rounded text-amber-100 text-base animate-pulse">
-              Press <span className="key-cap key-cap-amber">E</span> — pay ${hud.nearToll.price} toll to enter {hud.nearToll.name}
+            <div className="toll-card absolute bottom-24 left-1/2 -translate-x-1/2 z-20">
+              <div className="toll-card-title">🚧 TOLL GATE — {hud.nearToll.name}</div>
+              <div className="toll-card-sub">
+                Press <span className="key-cap key-cap-amber">E</span> to pay <b>${hud.nearToll.price}</b> and drive in now — or keep leveling and it opens free
+              </div>
+            </div>
+          )}
+          {/* touch: the E button alone explains nothing — spell the toll out */}
+          {!overlay && isTouch && !hud.nearGarage && hud.nearToll && (
+            <div className="toll-card absolute left-1/2 -translate-x-1/2 z-20" style={{ bottom: '10.6rem' }}>
+              <div className="toll-card-title">🚧 TOLL — {hud.nearToll.name}</div>
+              <div className="toll-card-sub">
+                Tap <b>E</b> to pay <b>${hud.nearToll.price}</b> and enter — or level up and it's free
+              </div>
             </div>
           )}
 
@@ -1189,22 +1261,40 @@ export default function App() {
         </>
       )}
 
-      {/* ================= FIRST-RUN ONBOARDING (once per device) ================= */}
+      {/* ================= FIRST-RUN ONBOARDING (once per device) =================
+          Touch: strategy-game style — a cartoon hand SHOWS each action over the
+          live controls and the step advances when the player actually DOES it:
+          push joystick → swipe to steer → tap nitro → follow the beam.
+          Desktop: short card flow with key caps. */}
       {screen === 'game' && onboardStep !== null && (
         <div className="absolute inset-0 z-40 pointer-events-none select-none">
           {/* dim layer — controls stay live beneath (pointer-events none) */}
-          {onboardStep > 0 && onboardStep < 4 && (
+          {(isTouch ? onboardStep >= 1 && onboardStep <= 3 : onboardStep > 0 && onboardStep < 4) && (
             <div className="absolute inset-0 onboard-dim" />
           )}
           {/* spotlight rings over the live controls */}
           {onboardStep === 1 && (
-            <div className="spotlight" style={{ left: '0.6rem', bottom: '0.6rem', width: '9.6rem', height: '9.6rem', borderRadius: '9999px' }} />
+            <div
+              className="spotlight"
+              style={
+                isTouch
+                  ? { left: '0.35rem', bottom: '2.7rem', width: '8.6rem', height: '8.6rem', borderRadius: '9999px' }
+                  : { left: '0.6rem', bottom: '0.6rem', width: '9.6rem', height: '9.6rem', borderRadius: '9999px' }
+              }
+            />
           )}
-          {onboardStep === 2 && (
-            <div className="spotlight" style={{ right: '0.6rem', bottom: '0.6rem', width: isTouch ? '15.5rem' : '12rem', height: '6rem', borderRadius: '1.2rem' }} />
+          {((isTouch && onboardStep === 3) || (!isTouch && onboardStep === 2)) && (
+            <div
+              className="spotlight"
+              style={
+                isTouch
+                  ? { right: '0.35rem', bottom: '2.9rem', width: '13.8rem', height: '5.4rem', borderRadius: '1.2rem' }
+                  : { right: '0.6rem', bottom: '0.6rem', width: '12rem', height: '6rem', borderRadius: '1.2rem' }
+              }
+            />
           )}
 
-          {/* step 0 — welcome */}
+          {/* step 0 — welcome (both platforms) */}
           {onboardStep === 0 && (
             <div className="onboard-card">
               <div className="text-[11px] tracking-[0.35em] text-cyan-300 font-bold">WELCOME TO</div>
@@ -1221,21 +1311,111 @@ export default function App() {
             </div>
           )}
 
-          {/* step 1 — joystick spotlight */}
-          {onboardStep === 1 && (
+          {/* ================= TOUCH FLOW — show, don't tell ================= */}
+
+          {/* touch step 1 — hand on the joystick: PUSH UP = DRIVE */}
+          {isTouch && onboardStep === 1 && (
+            <>
+              <GuideHand variant="push" style={{ left: '2.85rem', bottom: '5rem' }} />
+              <div className={`gchip${(hud?.speedKmh ?? 0) > 8 ? ' gchip-done' : ''}`} style={{ left: '1rem', bottom: '12.3rem' }}>
+                {(hud?.speedKmh ?? 0) > 8 ? '✓ GO!' : 'PUSH UP — DRIVE'}
+              </div>
+              {obFallback && (
+                <button className="gskip" style={{ left: '50%', transform: 'translateX(-50%)', bottom: '1.2rem' }} onClick={() => setOnboardStep(2)}>
+                  SKIP →
+                </button>
+              )}
+            </>
+          )}
+
+          {/* touch step 2 — hand swipes the right half: SWIPE = STEER */}
+          {isTouch && onboardStep === 2 && (
+            <>
+              <GuideHand variant="swipe" style={{ right: '16%', top: '38%' }} />
+              <div className="gchip" style={{ right: '9%', top: '30%' }}>SWIPE — STEER</div>
+              {obFallback && (
+                <button className="gskip" style={{ left: '50%', transform: 'translateX(-50%)', bottom: '1.2rem' }} onClick={() => setOnboardStep(3)}>
+                  SKIP →
+                </button>
+              )}
+            </>
+          )}
+
+          {/* touch step 3 — hand taps the nitro bolt: TAP = BOOST */}
+          {isTouch && onboardStep === 3 && (
+            <>
+              <GuideHand variant="tap" style={{ right: '5.6rem', bottom: '5.4rem' }} />
+              <div className={`gchip gchip-fuchsia${hud && (hud.boosting || hud.boost < 95) ? ' gchip-done' : ''}`} style={{ right: '1rem', bottom: '12.3rem' }}>
+                {hud && (hud.boosting || hud.boost < 95) ? '✓ BOOM!' : 'TAP ⚡ — NITRO'}
+              </div>
+              <div className="gchip" style={{ right: '1rem', bottom: '15.4rem', opacity: 0.85, fontSize: '0.68rem' }}>
+                DRIFT SLIDES REFILL IT
+              </div>
+              {obFallback && (
+                <button className="gskip" style={{ left: '50%', transform: 'translateX(-50%)', bottom: '1.2rem' }} onClick={() => setOnboardStep(4)}>
+                  SKIP →
+                </button>
+              )}
+            </>
+          )}
+
+          {/* touch step 4 — the objective, while driving: beam = work, barrier = toll */}
+          {isTouch && onboardStep === 4 && (
+            <>
+              <div className="gchip" style={{ left: '0.9rem', top: '3.1rem' }}>
+                <span className="gbeam" /> BEAM = WORK
+              </div>
+              <div className="gchip" style={{ left: '0.9rem', top: '6.1rem', fontSize: '0.68rem' }}>
+                <span className="gbarrier" /> BARRIER = TOLL — PAY TO PASS EARLY
+              </div>
+              <GuideHand variant="point" style={{ left: '46%', top: '18%' }} />
+              {hud?.nearGarage && (
+                <div className="gchip gchip-done" style={{ left: '50%', transform: 'translateX(-50%)', bottom: '9.5rem' }}>
+                  ✓ THAT'S THE SPOT
+                </div>
+              )}
+              {obFallback && (
+                <button className="gskip" style={{ left: '50%', transform: 'translateX(-50%)', bottom: '1.2rem' }} onClick={() => setOnboardStep(5)}>
+                  NEXT →
+                </button>
+              )}
+            </>
+          )}
+
+          {/* touch step 5 — ready: full control handed over */}
+          {isTouch && onboardStep === 5 && (
+            <div className="onboard-card items-center">
+              <div className="text-2xl font-black text-white tracking-wide">READY?</div>
+              <div className="text-slate-300 text-sm mt-1 text-center">
+                Follow the beam. Take the job.<br />The FIRST NIGHT guide rides with you, live.
+              </div>
+              <button
+                className="onboard-next onboard-start mt-5"
+                onClick={() => {
+                  try { window.localStorage.setItem(ONBOARD_KEY, '1') } catch { /* ignore */ }
+                  setOnboardStep(null)
+                }}
+              >
+                TAP TO START
+              </button>
+            </div>
+          )}
+
+          {/* ================= DESKTOP FLOW — key-cap cards ================= */}
+
+          {/* desktop step 1 — drive */}
+          {!isTouch && onboardStep === 1 && (
             <div className="onboard-card onboard-card-low">
               <div className="text-[11px] tracking-[0.3em] text-cyan-300 font-bold">YOUR WHEEL</div>
               <div className="text-white font-bold mt-1 text-sm leading-snug">
-                {isTouch
-                  ? <>Push the joystick <span className="text-cyan-300">UP to speed up</span>. Steer by <span className="text-cyan-300">swiping the right side</span> — flick for sharp turns, like aiming in CoD. Both are live now, try it!</>
-                  : <>Hold <span className="key-cap">W</span> to speed up, steer with <span className="key-cap">A</span>/<span className="key-cap">D</span> — try it!</>}
+                Hold <span className="key-cap">W</span> to speed up, steer with <span className="key-cap">A</span>/<span className="key-cap">D</span> — try it!
               </div>
               <button className="onboard-next mt-3" onClick={() => setOnboardStep(2)}>GOT IT →</button>
             </div>
           )}
 
-          {/* step 2 — action buttons spotlight */}
-          {onboardStep === 2 && (
+          {/* desktop step 2 — power buttons */}
+          {!isTouch && onboardStep === 2 && (
             <div className="onboard-card onboard-card-low">
               <div className="text-[11px] tracking-[0.3em] text-cyan-300 font-bold">POWER BUTTONS</div>
               <div className="mt-2 space-y-1.5 text-left">
@@ -1252,13 +1432,13 @@ export default function App() {
                   <span><b className="text-white">BRAKE</b> — stop hard, swing the car around.</span>
                 </div>
               </div>
-              {!isTouch && <div className="text-[11px] text-slate-500 mt-2">SHIFT = nitro · SPACE = handbrake/drift · S = brake</div>}
+              <div className="text-[11px] text-slate-500 mt-2">SHIFT = nitro · SPACE = handbrake/drift · S = brake</div>
               <button className="onboard-next mt-3" onClick={() => setOnboardStep(3)}>GOT IT →</button>
             </div>
           )}
 
-          {/* step 3 — your goal */}
-          {onboardStep === 3 && (
+          {/* desktop step 3 — your goal */}
+          {!isTouch && onboardStep === 3 && (
             <div className="onboard-card">
               <div className="text-[11px] tracking-[0.3em] text-cyan-300 font-bold">YOUR GOAL</div>
               <div className="text-slate-200 text-sm mt-2 leading-relaxed text-left">
@@ -1271,8 +1451,8 @@ export default function App() {
             </div>
           )}
 
-          {/* step 4 — tap to start */}
-          {onboardStep === 4 && (
+          {/* desktop step 4 — ready */}
+          {!isTouch && onboardStep === 4 && (
             <div className="onboard-card items-center">
               <div className="text-2xl font-black text-white tracking-wide">READY?</div>
               <div className="text-slate-300 text-sm mt-1">The FIRST NIGHT guide will walk you through it, live.</div>
@@ -1659,6 +1839,22 @@ export default function App() {
 
       {/* Mobile portrait: no "rotate your device" wall — the root div above is
           already CSS-rotated into landscape, so the game just launches. */}
+    </div>
+  )
+}
+
+// ---------- Guide hand — the strategy-game style cartoon pointer that
+// SHOWS each action over the live controls during the mobile FTUE ----------
+function GuideHand({ variant, style }: { variant: 'push' | 'swipe' | 'tap' | 'point'; style?: React.CSSProperties }) {
+  return (
+    <div className={`ghand ghand-${variant}`} style={style}>
+      {variant === 'tap' && <div className="ghand-ripple" />}
+      <svg viewBox="0 0 64 64" aria-hidden>
+        <rect x="27" y="7" width="10" height="28" rx="5" fill="#f8fafc" stroke="#0f172a" strokeWidth="2.5" />
+        <rect x="13" y="33" width="11" height="9" rx="4.5" fill="#f8fafc" stroke="#0f172a" strokeWidth="2.5" />
+        <rect x="19" y="28" width="27" height="24" rx="10" fill="#f8fafc" stroke="#0f172a" strokeWidth="2.5" />
+        <rect x="20" y="49" width="25" height="11" rx="4" fill="#22d3ee" stroke="#155e75" strokeWidth="2.5" />
+      </svg>
     </div>
   )
 }

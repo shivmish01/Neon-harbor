@@ -437,6 +437,233 @@
   50% { transform: scale(1.06); box-shadow: 0 6px 34px rgba(34, 211, 238, 0.7); }
 }
 
+/* ============ Mobile FTUE: gesture demos + "do it" prompts ============
+   Show the motion instead of describing it — animated joystick push and
+   swipe ghost, plus a pulsing prompt while the step waits for the real input. */
+.gesture-row {
+  display: flex;
+  justify-content: space-around;
+  gap: 1rem;
+  margin-top: 0.7rem;
+}
+.gesture-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+}
+.gesture-joy {
+  position: relative;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 9999px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.07), rgba(8, 12, 26, 0.4) 68%);
+}
+.gesture-joy-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1.35rem;
+  height: 1.35rem;
+  margin: -0.675rem 0 0 -0.675rem;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 35% 30%, #a5f3fc, #22d3ee 70%);
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.8);
+  animation: gesture-push 1.5s ease-in-out infinite;
+}
+@keyframes gesture-push {
+  0%, 100% { transform: translateY(0.45rem); }
+  45%, 65% { transform: translateY(-0.85rem); }
+}
+.gesture-swipe {
+  position: relative;
+  width: 4.6rem;
+  height: 3.5rem;
+  border-radius: 0.8rem;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  background: rgba(8, 12, 26, 0.4);
+  overflow: hidden;
+}
+.gesture-swipe-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin: -0.55rem 0 0 -0.55rem;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 35% 30%, #fdf4ff, #e879f9 70%);
+  box-shadow: 0 0 14px rgba(232, 121, 249, 0.8);
+  animation: gesture-swipe-anim 1.5s ease-in-out infinite;
+}
+@keyframes gesture-swipe-anim {
+  0%, 100% { transform: translateX(-1.3rem); opacity: 0.6; }
+  45%, 65% { transform: translateX(1.3rem); opacity: 1; }
+}
+.gesture-label {
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: #cbd5e1;
+  text-align: center;
+  line-height: 1.5;
+}
+.onboard-do-hint {
+  align-self: center;
+  margin-top: 0.75rem;
+  padding: 0.55rem 1.2rem;
+  border-radius: 9999px;
+  border: 1.5px dashed rgba(34, 211, 238, 0.7);
+  color: #a5f3fc;
+  font-weight: 900;
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  animation: btn-attend-pulse 1.4s ease-in-out infinite;
+}
+.onboard-do-hint-fuchsia {
+  border-color: rgba(232, 121, 249, 0.7);
+  color: #f5d0fe;
+  animation-name: btn-attend-fuchsia;
+}
+
+/* ---------- guide hand — strategy-game style FTUE pointer ----------
+   A cartoon gloved hand SHOWS each action over the live controls:
+   push (joystick), swipe (steer), tap (nitro), point (objective). */
+.ghand {
+  position: absolute;
+  width: 3.6rem;
+  height: 3.6rem;
+  pointer-events: none;
+  z-index: 46;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.65)) drop-shadow(0 0 12px rgba(34, 211, 238, 0.35));
+}
+.ghand svg { width: 100%; height: 100%; display: block; }
+.ghand-push { animation: ghand-push 1.25s ease-in-out infinite; }
+@keyframes ghand-push {
+  0%, 100% { transform: translateY(1.1rem) scale(1); }
+  38%, 62% { transform: translateY(-0.7rem) scale(0.93); }
+}
+.ghand-swipe { animation: ghand-swipe 1.5s ease-in-out infinite; }
+@keyframes ghand-swipe {
+  0%, 100% { transform: translateX(-2.3rem) rotate(-6deg); }
+  50% { transform: translateX(2.3rem) rotate(6deg); }
+}
+.ghand-tap { animation: ghand-tap 1.1s ease-in-out infinite; transform-origin: 50% 15%; }
+@keyframes ghand-tap {
+  0%, 100% { transform: scale(1); }
+  30%, 48% { transform: scale(0.78); }
+}
+.ghand-point { animation: ghand-point 1.3s ease-in-out infinite; }
+@keyframes ghand-point {
+  0%, 100% { transform: translateY(0.4rem); }
+  50% { transform: translateY(-0.4rem); }
+}
+.ghand-ripple {
+  position: absolute;
+  left: 50%;
+  top: 4%;
+  width: 2.4rem;
+  height: 2.4rem;
+  margin-left: -1.2rem;
+  border-radius: 9999px;
+  border: 2px solid rgba(232, 121, 249, 0.9);
+  animation: ghand-ripple 1.1s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes ghand-ripple {
+  0% { transform: scale(0.35); opacity: 0; }
+  32% { opacity: 0.95; }
+  100% { transform: scale(1.55); opacity: 0; }
+}
+/* minimal-word coaching chip floating near the hand */
+.gchip {
+  position: absolute;
+  padding: 0.5rem 1.05rem;
+  border-radius: 9999px;
+  background: rgba(4, 10, 26, 0.9);
+  border: 1.5px solid rgba(34, 211, 238, 0.65);
+  color: #e0f2fe;
+  font-weight: 900;
+  font-size: 0.8rem;
+  letter-spacing: 0.16em;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 46;
+  box-shadow: 0 4px 18px rgba(2, 8, 20, 0.6), 0 0 16px rgba(34, 211, 238, 0.25);
+  animation: gchip-in 0.3s ease-out;
+}
+.gchip-fuchsia {
+  border-color: rgba(232, 121, 249, 0.7);
+  color: #fae8ff;
+  box-shadow: 0 4px 18px rgba(2, 8, 20, 0.6), 0 0 16px rgba(232, 121, 249, 0.3);
+}
+.gchip-done {
+  border-color: rgba(52, 211, 153, 0.85);
+  color: #bbf7d0;
+  box-shadow: 0 4px 18px rgba(2, 8, 20, 0.6), 0 0 20px rgba(52, 211, 153, 0.45);
+}
+@keyframes gchip-in {
+  from { transform: translateY(0.45rem); opacity: 0; }
+}
+.gskip {
+  position: absolute;
+  pointer-events: auto;
+  padding: 0.45rem 1.1rem;
+  border-radius: 9999px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  color: #cbd5e1;
+  font-weight: 800;
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  z-index: 47;
+}
+.gskip:active { transform: scale(0.96); }
+/* tiny striped-barrier glyph used in the objective chip */
+.gbarrier {
+  display: inline-block;
+  width: 1.5rem;
+  height: 0.55rem;
+  border-radius: 2px;
+  background: repeating-linear-gradient(45deg, #fbbf24 0 5px, #0f172a 5px 10px);
+  border: 1px solid rgba(251, 191, 36, 0.8);
+  vertical-align: -0.05rem;
+}
+.gbeam {
+  display: inline-block;
+  width: 0.55rem;
+  height: 1.4rem;
+  border-radius: 3px;
+  background: linear-gradient(180deg, rgba(165, 243, 252, 0.95), rgba(34, 211, 238, 0.25));
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.8);
+  vertical-align: -0.3rem;
+}
+
+/* ---------- toll gate card — self-explaining prompt ---------- */
+.toll-card {
+  padding: 0.65rem 1.15rem;
+  border-radius: 0.9rem;
+  background: rgba(30, 20, 4, 0.92);
+  border: 1.5px solid rgba(251, 191, 36, 0.75);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55), 0 0 18px rgba(251, 191, 36, 0.25);
+  text-align: center;
+  pointer-events: none;
+  animation: gchip-in 0.3s ease-out;
+}
+.toll-card-title {
+  color: #fde68a;
+  font-weight: 900;
+  font-size: 0.85rem;
+  letter-spacing: 0.12em;
+}
+.toll-card-sub {
+  color: #fef3c7;
+  font-size: 0.78rem;
+  margin-top: 0.25rem;
+  opacity: 0.92;
+}
+
 .busted-anim {
   animation: busted-pop 0.5s ease-out;
   text-shadow: 0 0 30px rgba(255, 50, 80, 0.9);

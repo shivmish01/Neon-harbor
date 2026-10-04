@@ -228,23 +228,83 @@ export function cloneCharacter(
   return { obj: SkeletonUtils.clone(template), clips }
 }
 
-/** Clone a car template and optionally tint its paint (color multiplies the palette). */
+/** Lazily-cached luminance copies of palette textures, shared across all car clones. */
+const grayMapCache = new WeakMap<THREE.Texture, THREE.Texture>()
+
+/** Grayscale (luminance) copy of a palette texture, used as an emissiveMap.
+    Night paint then glows purely in the SKIN hue (not the multiplied — muddy —
+    texture color), while dark texels (wheels/trim) automatically stay dark. */
+function grayscaleMap(src: THREE.Texture): THREE.Texture {
+  const hit = grayMapCache.get(src)
+  if (hit) return hit
+  const img = src.image as HTMLImageElement | HTMLCanvasElement | ImageBitmap
+  const canvas = document.createElement('canvas')
+  canvas.width = img.width
+  canvas.height = img.height
+  const ctx = canvas.getContext('2d')!
+  ctx.drawImage(img, 0, 0)
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const px = data.data
+  for (let i = 0; i < px.length; i += 4) {
+    const l = 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]
+    px[i] = px[i + 1] = px[i + 2] = l
+  }
+  ctx.putImageData(data, 0, 0)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.flipY = src.flipY // glTF convention (false) must carry over
+  tex.wrapS = src.wrapS
+  tex.wrapT = src.wrapT
+  tex.repeat.copy(src.repeat)
+  tex.offset.copy(src.offset)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.needsUpdate = true
+  grayMapCache.set(src, tex)
+  return tex
+}
+
+/** Clone a car template and optionally tint its paint (color multiplies the palette).
+    Every car gets the "night paint" treatment: glossy clearcoat + a soft emissive
+    self-tint so body color still reads under the night sky instead of going muddy. */
 export function cloneCar(assets: GameAssets, model: string, tint?: number): THREE.Group {
   const template = assets.cars[model] ?? assets.cars['sedan']
   const inst = template.clone(true)
-  if (tint !== undefined) {
-    const tintColor = new THREE.Color(tint)
-    inst.traverse((o) => {
-      const mesh = o as THREE.Mesh
-      if (!mesh.isMesh) return
-      const tintMat = (m: THREE.Material): THREE.Material => {
-        const c = (m as THREE.MeshStandardMaterial).clone()
+  const tintColor = tint !== undefined ? new THREE.Color(tint) : null
+  inst.traverse((o) => {
+    const mesh = o as THREE.Mesh
+    if (!mesh.isMesh) return
+    const nightMat = (m: THREE.Material): THREE.Material => {
+      const c = (m as THREE.MeshStandardMaterial).clone()
+      if (tintColor) {
         c.color.multiply(tintColor)
-        return c
+        // Palette-textured paint (Kenney kit): multiply-tint goes muddy after dark,
+        // so re-light the car with a LUMINANCE copy of its texture as the emissive
+        // map — the night glow carries the pure skin hue (shading from texel
+        // brightness), instead of hue × texture color (= brown sludge).
+        if (c.map) {
+          c.emissiveMap = grayscaleMap(c.map)
+          c.emissive.copy(tintColor)
+          c.emissiveIntensity = 0.7
+        } else {
+          // pure skin hue as self-light — never the multiplied (muddy) color
+          c.emissive.copy(tintColor)
+          c.emissiveIntensity = 0.5
+        }
+        c.roughness = Math.min(c.roughness, 0.38)
+        c.metalness = Math.max(c.metalness, 0.45)
+      } else {
+        // baked palettes (taxi/police): gentle self-lift so they don't vanish
+        const lum = 0.2126 * c.color.r + 0.7152 * c.color.g + 0.0722 * c.color.b
+        if (lum > 0.06) {
+          c.emissive.copy(c.color)
+          c.emissiveIntensity = 0.16
+          c.roughness = Math.min(c.roughness, 0.38)
+          c.metalness = Math.max(c.metalness, 0.45)
+        }
       }
-      mesh.material = Array.isArray(mesh.material) ? mesh.material.map(tintMat) : tintMat(mesh.material)
-    })
-  }
+      return c
+    }
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(nightMat) : nightMat(mesh.material)
+  })
   const g = new THREE.Group()
   g.add(inst)
   return g

@@ -401,7 +401,14 @@
 /* ---------- minimap (jobs step) ---------- */
 .htp-map {
   position: absolute;
-  inset: 0.6rem;
+  /* SVG is a REPLACED element: any auto dimension gets derived from the viewBox
+     aspect and the opposing inset is IGNORED — the map then overflows (or
+     collapses) and the route runs through the chips strip. Pin BOTH dimensions
+     explicitly so the reserved 2.7rem chips strip is real. */
+  top: 0.6rem;
+  left: 0.6rem;
+  width: calc(100% - 1.2rem);
+  height: calc(100% - 3.3rem); /* 0.6 top + 2.7 reserved for the chips */
   border-radius: 0.6rem;
   background: rgba(4, 10, 24, 0.85);
   border: 1px solid rgba(34, 211, 238, 0.25);

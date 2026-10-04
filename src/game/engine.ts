@@ -2418,12 +2418,25 @@ export class GameEngine {
     // Underglow disc
     const glowDisc = new THREE.Mesh(
       new THREE.CircleGeometry(2.4, 24),
-      new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending, depthWrite: false })
+      new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.34, blending: THREE.AdditiveBlending, depthWrite: false })
     )
     glowDisc.rotation.x = -Math.PI / 2
     glowDisc.position.y = 0.05
     g.add(glowDisc)
     this.glowDisc = glowDisc
+
+    // Neon rocker strips — thin glow bars along both sills (Need-for-Speed style).
+    // Colored from the skin's glow in applyLoadout().
+    const stripGeom = new THREE.BoxGeometry(0.05, 0.07, 3.6)
+    for (const side of [-1, 1]) {
+      const strip = new THREE.Mesh(
+        stripGeom,
+        new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false })
+      )
+      strip.position.set(side * 1.06, 0.22, -0.1)
+      g.add(strip)
+      this.neonStrips.push(strip)
+    }
 
     // Headlight pools — warm light thrown on the tarmac ahead of the car
     const poolGeom = new THREE.PlaneGeometry(3.0, 5.2)
@@ -2442,6 +2455,7 @@ export class GameEngine {
   }
 
   private glowDisc: THREE.Mesh | null = null
+  private neonStrips: THREE.Mesh[] = []
   private carModel: THREE.Group | null = null
 
   /** Swap the player car body for the skin's real 3D model (Kenney car kit). */
@@ -2506,10 +2520,11 @@ export class GameEngine {
   private spawnTraffic(): void {
     const rand = seededRand(31415)
     const palettes: Record<string, number[]> = {
-      sedan: [0x3b4a5c, 0x5c3b47, 0x444a58, 0x6b6f78, 0x2f4858],
-      hatch: [0xb91c1c, 0x1d6fa5, 0xd97706, 0x3f7a4d, 0x7a5195],
-      van: [0x8a8f98, 0x4a6741, 0x365a6b, 0x707a85],
-      sport: [0xfacc15, 0x22d3ee, 0xef4444, 0xe2e8f0],
+      // saturated "neon city" palette — dark greys vanish under the night sky
+      sedan: [0x4f7fb8, 0xb85c7a, 0x5aa88f, 0xc9cdd6, 0x7a6fc9],
+      hatch: [0xe23b3b, 0x2f9fd8, 0xf0a020, 0x4fbf67, 0xa06fd8],
+      van: [0xb8c0cc, 0x6fa35f, 0x4f8fb8, 0x98a5b5],
+      sport: [0xfacc15, 0x22d3ee, 0xff4d6d, 0xf2f6ff],
     }
     const styles = ['sedan', 'sedan', 'hatch', 'hatch', 'van', 'taxi', 'sport', 'sedan', 'hatch', 'van', 'sedan', 'sport', 'sedan', 'hatch', 'van', 'sedan', 'taxi', 'hatch', 'sport', 'sedan']
     for (let k = 0; k < styles.length; k++) {
@@ -2551,14 +2566,30 @@ export class GameEngine {
     const s = len > 0.01 ? target / len : 1
     g.scale.setScalar(s)
     g.position.y = -bb.min.y * s
-    // Headlight + taillight glow strips (positioned after scaling, parent space)
-    const hlMat = new THREE.MeshBasicMaterial({ color: 0xbfd9ee })
-    const tlMat = new THREE.MeshBasicMaterial({ color: 0xcc2233 })
+    // Headlight + taillight glow strips (positioned after scaling, parent space).
+    // Additive materials so they BLOOM against the night instead of reading flat.
+    const hlMat = new THREE.MeshBasicMaterial({ color: 0xfff2cc, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.95, depthWrite: false })
+    const tlMat = new THREE.MeshBasicMaterial({ color: 0xff2d44, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.95, depthWrite: false })
     const hl = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.12, 0.06), hlMat)
     hl.position.set(0, bb.max.y * s * 0.62, bb.max.z * s + 0.03)
     const tl = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.12, 0.06), tlMat)
     tl.position.set(0, bb.max.y * s * 0.62, bb.min.z * s - 0.03)
     g.add(hl, tl)
+    // Headlight pool — warm light thrown on the tarmac ahead (same trick as the player car)
+    const pool = new THREE.Mesh(
+      new THREE.PlaneGeometry(2.6, 4.6),
+      new THREE.MeshBasicMaterial({ color: 0xffe9b0, transparent: true, opacity: 0.1, blending: THREE.AdditiveBlending, depthWrite: false })
+    )
+    pool.rotation.x = -Math.PI / 2
+    pool.position.set(0, 0.05, bb.max.z * s + 2.1)
+    // Tail glow — soft red wash behind so brake lights read from a distance
+    const tailGlow = new THREE.Mesh(
+      new THREE.PlaneGeometry(2.0, 1.1),
+      new THREE.MeshBasicMaterial({ color: 0xff2244, transparent: true, opacity: 0.14, blending: THREE.AdditiveBlending, depthWrite: false })
+    )
+    tailGlow.position.set(0, bb.max.y * s * 0.55, bb.min.z * s - 0.12)
+    tailGlow.rotation.y = Math.PI // face rearward so the wash reads from behind
+    g.add(pool, tailGlow)
     return g
   }
 
@@ -2572,6 +2603,9 @@ export class GameEngine {
     this.glowLight.color.setHex(skin.glow)
     if (this.glowDisc) {
       ;(this.glowDisc.material as THREE.MeshBasicMaterial).color.setHex(skin.glow)
+    }
+    for (const strip of this.neonStrips) {
+      ;(strip.material as THREE.MeshBasicMaterial).color.setHex(skin.glow)
     }
     ;(this.trailLine.material as THREE.LineBasicMaterial).color.setHex(skin.glow)
     this.applyTheme(theme)
