@@ -281,7 +281,7 @@ export default function HowToPlay({ isTouch, onClose }: Props) {
               <>
                 <div className="htp-lead">The city pays for style.</div>
                 <div className="htp-sub">
-                  <b>24 data shards</b> glow around town, <b>orange ramps</b> pay airtime bonuses, and drift chains stack cash. Locked districts open as you level — or pay the toll to slip in early.
+                  <b>24 data shards</b> glow around town, <b>orange ramps</b> pay airtime bonuses, and drift chains stack cash. Locked districts open as you level up.
                 </div>
               </>
             )}

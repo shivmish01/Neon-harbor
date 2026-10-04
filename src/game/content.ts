@@ -160,20 +160,3 @@ export function districtAt(x: number, z: number): District | null {
   return DISTRICTS.find((d) => x >= d.minX && x <= d.maxX && z >= d.minZ && z <= d.maxZ) ?? null
 }
 
-// ---------- TOLL GATES ----------
-// One proper toll plaza per gated district, placed ON a clean road crossing so
-// the booth + boom barrier read as a real gate. span 'x' = the pole lies
-// across X and blocks N-S travel; span 'z' = blocks E-W travel.
-export interface TollGate {
-  district: string
-  x: number
-  z: number
-  span: 'x' | 'z'
-}
-export const TOLL_GATES: TollGate[] = [
-  { district: 'north', x: -66, z: -82, span: 'x' },
-  { district: 'south', x: 66, z: 82, span: 'x' },
-  { district: 'west', x: -82, z: -66, span: 'z' },
-  { district: 'east', x: 82, z: 66, span: 'z' },
-]
-

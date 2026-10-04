@@ -1108,7 +1108,7 @@ export default function App() {
                 {/* actions + nitro/drift/brake */}
                 <div className="flex flex-col items-end gap-2 pointer-events-auto">
                   <div className="flex gap-2">
-                    {(hud.nearGarage || hud.nearToll) && <TouchBtn engine={engineRef.current} label="E" aria="Jobs / pay toll" tap="e" small />}
+                    {hud.nearGarage && <TouchBtn engine={engineRef.current} label="E" aria="Job board" tap="e" small />}
                     {hud.stuck && <TouchBtn engine={engineRef.current} label={<IcoReset />} aria="Reset car" tap="r" small />}
                     <button onClick={() => setOverlay(overlay === 'map' ? null : 'map')} className="touch-btn touch-btn-sm" aria-label="Map"><IcoMap /></button>
                     <TouchBtn engine={engineRef.current} label={<IcoHorn />} aria="Horn" tap="h" small />
@@ -1151,7 +1151,7 @@ export default function App() {
                 {/* actions (top-right) + pedals (2x2 grid, bottom-right) */}
                 <div className="flex flex-col items-end gap-2 pointer-events-auto">
                   <div className="flex gap-2">
-                    {(hud.nearGarage || hud.nearToll) && <TouchBtn engine={engineRef.current} label="E" aria="Jobs / pay toll" tap="e" small />}
+                    {hud.nearGarage && <TouchBtn engine={engineRef.current} label="E" aria="Job board" tap="e" small />}
                     {hud.stuck && <TouchBtn engine={engineRef.current} label={<IcoReset />} aria="Reset car" tap="r" small />}
                     <button onClick={() => setOverlay(overlay === 'map' ? null : 'map')} className="touch-btn touch-btn-sm" aria-label="Map"><IcoMap /></button>
                     <TouchBtn engine={engineRef.current} label={<IcoHorn />} aria="Horn" tap="h" small />
@@ -1188,27 +1188,10 @@ export default function App() {
             </button>
           )}
 
-          {/* E prompt — job board at the garage, or toll booth at a locked border */}
+          {/* E prompt — job board at the garage */}
           {!overlay && !isTouch && hud.nearGarage && (
             <div className="nh-prompt absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2.5 bg-cyan-500/20 border border-cyan-400 rounded text-cyan-100 text-base animate-pulse">
               Press <span className="key-cap">E</span> — open the Job Board
-            </div>
-          )}
-          {!overlay && !isTouch && !hud.nearGarage && hud.nearToll && (
-            <div className="toll-card absolute bottom-24 left-1/2 -translate-x-1/2 z-20">
-              <div className="toll-card-title">🚧 TOLL GATE — {hud.nearToll.name}</div>
-              <div className="toll-card-sub">
-                Press <span className="key-cap key-cap-amber">E</span> to pay <b>${hud.nearToll.price}</b> and drive in now — or keep leveling and it opens free
-              </div>
-            </div>
-          )}
-          {/* touch: the E button alone explains nothing — spell the toll out */}
-          {!overlay && isTouch && !hud.nearGarage && hud.nearToll && (
-            <div className="toll-card absolute left-1/2 -translate-x-1/2 z-20" style={{ bottom: '10.6rem' }}>
-              <div className="toll-card-title">🚧 TOLL — {hud.nearToll.name}</div>
-              <div className="toll-card-sub">
-                Tap <b>E</b> to pay <b>${hud.nearToll.price}</b> and enter — or level up and it's free
-              </div>
             </div>
           )}
 
@@ -1362,14 +1345,11 @@ export default function App() {
             </>
           )}
 
-          {/* touch step 4 — the objective, while driving: beam = work, barrier = toll */}
+          {/* touch step 4 — the objective, while driving: beam = work */}
           {isTouch && onboardStep === 4 && (
             <>
               <div className="gchip" style={{ left: '0.9rem', top: '3.1rem' }}>
                 <span className="gbeam" /> BEAM = WORK
-              </div>
-              <div className="gchip" style={{ left: '0.9rem', top: '6.1rem', fontSize: '0.68rem' }}>
-                <span className="gbarrier" /> BARRIER = TOLL — PAY TO PASS EARLY
               </div>
               <GuideHand variant="point" style={{ left: '46%', top: '18%' }} />
               {hud?.nearGarage && (
@@ -1446,7 +1426,7 @@ export default function App() {
               <div className="text-[11px] tracking-[0.3em] text-cyan-300 font-bold">YOUR GOAL</div>
               <div className="text-slate-200 text-sm mt-2 leading-relaxed text-left">
                 • Take <b className="text-cyan-300">jobs</b> at the glowing garage beam — earn cash, level up<br />
-                • Locked districts open as you grow — or pay the <b className="text-amber-300">toll</b><br />
+                • Locked districts open as you <b className="text-amber-300">level up</b><br />
                 • <b className="text-fuchsia-300">Map icon</b> = tactical view · pause sits top-center<br />
                 • If the <b className="text-red-400">PATROL ★</b> light up… <b className="text-red-300">don't stop</b>
               </div>

@@ -9,7 +9,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { getSkin, getTheme, ACHIEVEMENTS, DISTRICTS, districtAt, TOLL_GATES, type District as ContentDistrict } from './content'
+import { getSkin, getTheme, ACHIEVEMENTS, DISTRICTS, districtAt } from './content'
 import { grantXp, xpForLevel, type SaveData } from './save'
 import { Synth } from './audio'
 import { cloneCar, cloneCharacter, CITY_BY_KIND, type GameAssets } from './assets'
@@ -43,8 +43,6 @@ export interface HudState {
   tutorial: { step: number; total: number; title: string; hint: string } | null
   mission: HudMission | null
   nearGarage: boolean
-  /** border toll booth: a locked district the player can pay cash to enter now */
-  nearToll: { name: string; price: number } | null
   busted: boolean
   boosting: boolean
   /** car is wedged (gas held but no movement) — HUD offers the reset recovery */
@@ -1076,7 +1074,6 @@ export class GameEngine {
     this.genSky()
     this.genPuddles()
     this.genRoadFurniture(rand)
-    this.genTollGates()
     this.genStreetFood(rand)
     this.genBeachLife(rand)
     this.genRoadMarkings()
@@ -2157,108 +2154,6 @@ export class GameEngine {
     }
   }
 
-  /** Real toll plazas: booth + striped boom barrier across a clean road at
-      each gated district's border. The barrier is solid until the district
-      unlocks (level or payment), then it rises and stays open. */
-  private genTollGates(): void {
-    // red/white diagonal stripe texture for the boom pole
-    const stripeTex = (() => {
-      const c = document.createElement('canvas')
-      c.width = 64
-      c.height = 64
-      const g = c.getContext('2d')
-      if (!g) return null
-      g.fillStyle = '#f2f4f8'
-      g.fillRect(0, 0, 64, 64)
-      g.fillStyle = '#e0332e'
-      for (let i = -2; i < 6; i++) {
-        g.save()
-        g.translate(i * 24, 0)
-        g.rotate(Math.PI / 4)
-        g.fillRect(0, -32, 12, 128)
-        g.restore()
-      }
-      const t = new THREE.CanvasTexture(c)
-      t.wrapS = t.wrapT = THREE.RepeatWrapping
-      t.repeat.set(4, 1)
-      return t
-    })()
-    const poleMat = new THREE.MeshStandardMaterial({ map: stripeTex ?? undefined, color: stripeTex ? 0xffffff : 0xe0332e, roughness: 0.5 })
-    const boothMat = new THREE.MeshStandardMaterial({ color: 0x1d2b45, roughness: 0.6 })
-    const roofMat = new THREE.MeshStandardMaterial({ color: 0xe0332e, roughness: 0.55 })
-    const glowMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0 })
-    const signTex = (() => {
-      const c = document.createElement('canvas')
-      c.width = 256
-      c.height = 80
-      const g = c.getContext('2d')
-      if (!g) return null
-      g.fillStyle = '#0b1220'
-      g.fillRect(0, 0, 256, 80)
-      g.font = 'bold 46px Arial'
-      g.textAlign = 'center'
-      g.textBaseline = 'middle'
-      g.shadowColor = '#67e8f9'
-      g.shadowBlur = 12
-      g.fillStyle = '#a5f3fc'
-      g.fillText('T O L L', 128, 42)
-      return new THREE.CanvasTexture(c)
-    })()
-
-    for (const tg of TOLL_GATES) {
-      const district = DISTRICTS.find((d) => d.id === tg.district)
-      if (!district) continue
-      const g = new THREE.Group()
-      // booth on the sidewalk beside the road edge
-      const bx = tg.span === 'x' ? tg.x - 9.4 : tg.x
-      const bz = tg.span === 'x' ? tg.z : tg.z - 9.4
-      const booth = new THREE.Mesh(new THREE.BoxGeometry(2.3, 2.5, 2.1), boothMat)
-      booth.position.set(bx, 1.25, bz)
-      booth.castShadow = true
-      const roof = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.28, 2.5), roofMat)
-      roof.position.set(bx, 2.65, bz)
-      const win = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.9), glowMat)
-      win.position.set(bx + (tg.span === 'x' ? 1.16 : 0), 1.5, bz + (tg.span === 'x' ? 0 : 1.06))
-      if (tg.span === 'x') win.rotation.y = Math.PI / 2
-      const sign = new THREE.Mesh(
-        new THREE.PlaneGeometry(2.2, 0.68),
-        new THREE.MeshBasicMaterial({ map: signTex ?? undefined, color: signTex ? 0xffffff : 0xa5f3fc })
-      )
-      sign.position.set(bx, 3.15, bz + (tg.span === 'x' ? 0 : 1.28))
-      if (tg.span === 'x') {
-        sign.position.x = bx + 1.3
-        sign.rotation.y = Math.PI / 2
-      }
-      // boom pole on a pivot at the booth-side end of the road
-      const pivot = new THREE.Group()
-      pivot.position.set(tg.span === 'x' ? tg.x - 7.1 : tg.x, 1.05, tg.span === 'x' ? tg.z : tg.z - 7.1)
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 13.6, 10), poleMat)
-      pole.rotation.z = tg.span === 'x' ? Math.PI / 2 : 0
-      pole.rotation.x = tg.span === 'z' ? Math.PI / 2 : 0
-      if (tg.span === 'x') pole.position.x = 6.8
-      else pole.position.z = 6.8
-      pole.castShadow = true
-      // pole support post
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, 1.15, 10), roofMat)
-      post.position.y = -0.5
-      pivot.add(post, pole)
-      g.add(booth, roof, win, sign, pivot)
-      this.scene.add(g)
-      // booth is always solid; pole segments are solid only while closed
-      this.buildings.push({ minX: bx - 1.2, maxX: bx + 1.2, minZ: bz - 1.1, maxZ: bz + 1.1 })
-      const colliders: AABB[] = []
-      for (let i = 0; i < 5; i++) {
-        const along = (tg.span === 'x' ? pivot.position.x : pivot.position.z) + 1.36 + i * 2.72
-        const c: AABB = tg.span === 'x'
-          ? { minX: along - 1.4, maxX: along + 1.4, minZ: tg.z - 0.45, maxZ: tg.z + 0.45 }
-          : { minX: tg.x - 0.45, maxX: tg.x + 0.45, minZ: along - 1.4, maxZ: along + 1.4 }
-        colliders.push(c)
-        this.buildings.push(c)
-      }
-      this.tollGates.push({ district: tg.district, span: tg.span, pivot, colliders, open: false, anim: 0 })
-    }
-  }
-
   /** Glowing street-food stalls tucked into interior block corners — steam,
       warm glow and queuing customers make the sidewalks feel lived-in. */
   private genStreetFood(rand: () => number): void {
@@ -2838,7 +2733,6 @@ export class GameEngine {
     this.keys.add(k)
     if (k === 'e' && !this.paused && !this.attract) {
       if (this.nearGarage) this.hooks.onPressE()
-      else if (this.nearLocked) this.payToll()
     }
     if (k === ' ' && this.bustedMeter > 0.25 && this.mashCooldown <= 0 && !this.busted && !this.paused && !this.attract) {
       // Struggle free from the patrol grab
@@ -3414,48 +3308,13 @@ export class GameEngine {
   // PC-7: district gates — locked districts block the player at the border.
   // The gate is a SOFT WALL: only the inward velocity component is removed, so
   // the car slides along the border instead of being teleported and wedged.
-  // A border toll booth lets anyone pay cash to enter a locked district early.
+  // Districts open purely by LEVEL — no tolls, no payments.
   private districtCd = 0
-  private nearLocked: { d: ContentDistrict; price: number } | null = null
-  private tollGates: Array<{ district: string; span: 'x' | 'z'; pivot: THREE.Group; colliders: AABB[]; open: boolean; anim: number }> = []
   private updateDistricts(dt: number): void {
     this.districtCd = Math.max(0, this.districtCd - dt)
     const save = this.hooks.getSave()
-    const tolled = (id: string) => save.tollsPaid.includes(id)
-    const lockedDist = (id: string) => {
-      const d = DISTRICTS.find((x) => x.id === id)
-      return d && save.level < d.minLevel && !tolled(d.id) ? d : null
-    }
-    // Toll gates: barriers rise once the district is unlocked (level or paid)
-    for (const gate of this.tollGates) {
-      const dist = DISTRICTS.find((x) => x.id === gate.district)
-      if (!dist) continue
-      const open = save.level >= dist.minLevel || tolled(dist.id)
-      if (open && !gate.open) {
-        gate.open = true
-        this.buildings = this.buildings.filter((b) => !gate.colliders.includes(b))
-        this.hooks.onToast(`🎫 The toll gate to ${dist.name} is open — drive through!`, 'good')
-        this.synth.buy()
-      }
-      const target = open ? 1 : 0
-      gate.anim += (target - gate.anim) * Math.min(dt * 2.5, 1)
-      if (gate.span === 'x') gate.pivot.rotation.z = -gate.anim * 1.35
-      else gate.pivot.rotation.x = gate.anim * 1.35
-    }
-    this.nearLocked = null
     const d = districtAt(this.pos.x, this.pos.z)
-    // toll booth proximity: near a locked district's toll gate
-    for (const gate of this.tollGates) {
-      const dist = lockedDist(gate.district)
-      if (!dist) continue
-      const dx = gate.pivot.position.x - this.pos.x
-      const dz = gate.pivot.position.z - this.pos.z
-      if (dx * dx + dz * dz < 144) {
-        this.nearLocked = { d: dist, price: dist.minLevel * 250 }
-        break
-      }
-    }
-    if (d && save.level < d.minLevel && !tolled(d.id)) {
+    if (d && save.level < d.minLevel) {
       // inside a locked district — find the nearest border and clamp to it
       const pens = [
         { p: this.pos.x - d.minX, axis: 'x' as const, low: true },
@@ -3472,7 +3331,7 @@ export class GameEngine {
       this.shake = Math.min(this.shake + 0.18, 0.5)
       if (this.districtCd <= 0) {
         this.districtCd = 2.5
-        this.hooks.onToast(`🔒 ${d.name} — reach level ${d.minLevel}, or pay the toll`, 'warn')
+        this.hooks.onToast(`🔒 ${d.name} — opens at level ${d.minLevel}. Take jobs to level up!`, 'warn')
         this.synth.denied()
       }
       return
@@ -3496,24 +3355,6 @@ export class GameEngine {
       this.synth.missionDone()
       if (save.level >= 5) this.unlockAchievement('level-5')
     }
-  }
-
-  /** Border toll booth: pay cash once to enter a level-locked district forever. */
-  private payToll(): void {
-    const booth = this.nearLocked
-    if (!booth) return
-    const save = this.hooks.getSave()
-    if (save.cash < booth.price) {
-      this.synth.denied()
-      this.hooks.onToast(`Toll is $${booth.price} — you only have $${Math.floor(save.cash)}. Take more jobs!`, 'warn')
-      return
-    }
-    save.cash -= booth.price
-    save.tollsPaid.push(booth.d.id)
-    this.hooks.commit()
-    this.synth.buy()
-    this.hooks.onToast(`🎫 Toll paid — ${booth.d.name} is open to you now. Drive in!`, 'good')
-    this.nearLocked = null
   }
 
   // =============== TRAFFIC ===============
@@ -4067,7 +3908,6 @@ export class GameEngine {
       tutorial,
       mission,
       nearGarage: this.nearGarage,
-      nearToll: this.nearLocked ? { name: this.nearLocked.d.name, price: this.nearLocked.price } : null,
       busted: this.busted,
       boosting: this.boosting,
       stuck: (this.stuckTime > 2 || this.stuckLatch > 0) && !this.busted,
@@ -4245,7 +4085,7 @@ export class GameEngine {
     // ---- districts: tinted zones with names + level locks ----
     const TINTS = ['rgba(34,211,238,0.06)', 'rgba(167,139,250,0.07)', 'rgba(74,222,128,0.06)', 'rgba(251,191,36,0.06)', 'rgba(244,114,182,0.07)']
     DISTRICTS.forEach((d, idx) => {
-      const locked = save.level < d.minLevel && !save.tollsPaid.includes(d.id)
+      const locked = save.level < d.minLevel
       const x = toPx(d.minX), y = toPx(d.minZ)
       const w = (d.maxX - d.minX) * scale, h = (d.maxZ - d.minZ) * scale
       ctx.fillStyle = locked ? 'rgba(255,51,85,0.07)' : TINTS[idx % TINTS.length]

@@ -620,16 +620,6 @@
   z-index: 47;
 }
 .gskip:active { transform: scale(0.96); }
-/* tiny striped-barrier glyph used in the objective chip */
-.gbarrier {
-  display: inline-block;
-  width: 1.5rem;
-  height: 0.55rem;
-  border-radius: 2px;
-  background: repeating-linear-gradient(45deg, #fbbf24 0 5px, #0f172a 5px 10px);
-  border: 1px solid rgba(251, 191, 36, 0.8);
-  vertical-align: -0.05rem;
-}
 .gbeam {
   display: inline-block;
   width: 0.55rem;
@@ -638,30 +628,6 @@
   background: linear-gradient(180deg, rgba(165, 243, 252, 0.95), rgba(34, 211, 238, 0.25));
   box-shadow: 0 0 10px rgba(34, 211, 238, 0.8);
   vertical-align: -0.3rem;
-}
-
-/* ---------- toll gate card — self-explaining prompt ---------- */
-.toll-card {
-  padding: 0.65rem 1.15rem;
-  border-radius: 0.9rem;
-  background: rgba(30, 20, 4, 0.92);
-  border: 1.5px solid rgba(251, 191, 36, 0.75);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55), 0 0 18px rgba(251, 191, 36, 0.25);
-  text-align: center;
-  pointer-events: none;
-  animation: gchip-in 0.3s ease-out;
-}
-.toll-card-title {
-  color: #fde68a;
-  font-weight: 900;
-  font-size: 0.85rem;
-  letter-spacing: 0.12em;
-}
-.toll-card-sub {
-  color: #fef3c7;
-  font-size: 0.78rem;
-  margin-top: 0.25rem;
-  opacity: 0.92;
 }
 
 .busted-anim {
