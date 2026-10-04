@@ -1509,9 +1509,12 @@ export default function App() {
 
       {/* ================= PAUSE ================= */}
       {screen === 'game' && overlay === 'pause' && (
-        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
-          <h2 className="text-4xl font-black text-white tracking-[0.3em] mb-8">PAUSED</h2>
-          <div className="flex flex-col gap-3 w-64">
+        <div
+          className="absolute inset-0 z-40 bg-black/70 backdrop-blur-sm pause-overlay"
+          onClick={() => setOverlay(null)} /* tap the dimmed background to resume */
+        >
+          <h2 className="text-4xl font-black text-white tracking-[0.3em] mb-8 shrink-0">PAUSED</h2>
+          <div className="flex flex-col gap-3 w-64 shrink-0 menu-col" onClick={(e) => e.stopPropagation()}>
             <button onClick={() => setOverlay(null)} className="menu-btn menu-btn-primary btn-attend">RESUME</button>
             <button onClick={() => setOverlay('shop')} className="menu-btn">GARAGE SHOP</button>
             <button onClick={() => setOverlay('help')} className="menu-btn">HOW TO PLAY</button>
