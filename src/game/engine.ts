@@ -254,6 +254,7 @@ export class GameEngine {
   private vel = new THREE.Vector3()
   private heading = Math.PI
   private stuckTime = 0
+  private stuckLatch = 0 // keeps the RESET offer alive briefly after gas is released
   private vy = 0
   private grounded = true
   private boost = 100
@@ -2828,6 +2829,7 @@ export class GameEngine {
     this.vel.set(0, 0, 0)
     this.vy = 0
     this.stuckTime = 0
+    this.stuckLatch = 0
     this.hooks.onToast('Back on the road — keep driving!', 'info')
   }
 
@@ -3208,8 +3210,17 @@ export class GameEngine {
       this.vel.multiplyScalar(Math.exp(-dt * drag))
       // Stuck detection: flooring the gas but barely moving (wedged on a pole,
       // barrier or wall). HUD then offers the R-key / RESET-button recovery.
-      if (gas && this.vel.lengthSq() < 4) this.stuckTime += dt
-      else this.stuckTime = 0
+      // The prompt LATCHES for a few seconds after the player lets go — a wedged
+      // player who stops pressing still sees the way out instead of a dead car.
+      if (gas && this.vel.lengthSq() < 4) {
+        this.stuckTime += dt
+        if (this.stuckTime > 2) this.stuckLatch = 6
+      } else {
+        this.stuckTime = 0
+        this.stuckLatch = Math.max(0, this.stuckLatch - dt)
+      }
+      // Driving freely again clears the latch immediately.
+      if (this.vel.lengthSq() > 25) this.stuckLatch = 0
     } else {
       this.vel.multiplyScalar(Math.exp(-dt * 3))
     }
@@ -4059,7 +4070,7 @@ export class GameEngine {
       nearToll: this.nearLocked ? { name: this.nearLocked.d.name, price: this.nearLocked.price } : null,
       busted: this.busted,
       boosting: this.boosting,
-      stuck: this.stuckTime > 2 && !this.busted,
+      stuck: (this.stuckTime > 2 || this.stuckLatch > 0) && !this.busted,
     })
   }
 

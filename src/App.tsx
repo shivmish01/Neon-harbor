@@ -360,6 +360,9 @@ export default function App() {
     const software = engine.isSoftwareRenderer()
     engine.setAutoQualityEnabled(isTouch || software, isTouch ? 42 : 24)
     engineRef.current = engine
+    // Dev-only introspection handle for automated play-testing (position,
+    // speed, stuck state). Never shipped — tree-shaken from release builds.
+    if (import.meta.env.DEV) (window as unknown as { __nh: unknown }).__nh = engine
     return engine
   }, [commit, pushToast, isTouch])
 
