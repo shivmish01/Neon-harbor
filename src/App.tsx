@@ -1031,14 +1031,22 @@ export default function App() {
               </div>
             )}
 
-            {/* toasts — slide in from the top, auto-dismiss */}
-            {toasts.map((t) => (
-              <div key={t.id} className={`toast toast-${t.kind}`}>{t.msg}</div>
-            ))}
           </div>
 
-          {/* top-right (below minimap): heat with live police instructions — slim on mobile */}
+          {/* top-right (below minimap): CoDM-style dispatch feed — game info lands
+              here, under the minimap, so it never covers the driving view — plus
+              the heat panel with live police instructions (slim on mobile) */}
           <div className={`absolute z-20 flex flex-col items-end gap-2 ${isTouch ? 'top-[7.5rem] right-2' : 'top-[196px] right-4'}`}>
+            {toasts.length > 0 && (
+              <div className="flex flex-col items-end gap-1 pointer-events-none">
+                {toasts.map((t) => (
+                  <div key={t.id} className={`toast toast-feed toast-${t.kind}`}>
+                    <span className="toast-tag">{t.kind === 'cash' ? 'PAYOUT' : t.kind === 'warn' ? 'ALERT' : t.kind === 'good' ? 'HARBOR RADIO' : 'DISPATCH'}</span>
+                    <span>{t.msg}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className={`hud-panel flex flex-col items-end gap-1 ${isTouch ? 'px-2 py-1' : ''} ${hud.heatStars > 0 ? 'border-red-500/70 shadow-[0_0_18px_rgba(255,50,80,0.4)]' : ''}`}>
               <div className="flex gap-1 items-center">
                 <span className={`text-slate-400 mr-1 tracking-widest ${isTouch ? 'text-[10px]' : 'text-xs'}`}>PATROL</span>
@@ -1217,12 +1225,10 @@ export default function App() {
             </div>
           )}
 
-          {/* stuck recovery — car wedged on a pole/barrier/wall: offer the reset */}
-          {!overlay && hud.stuck && (
-            <div className="nh-prompt absolute bottom-40 left-1/2 -translate-x-1/2 z-20 px-5 py-3 bg-amber-500/25 border-2 border-amber-400 rounded-lg text-amber-100 text-base font-bold animate-pulse text-center">
-              {isTouch ? <>Car stuck? Tap <span className="key-cap key-cap-amber">RESET</span></> : <>Car stuck? Press <span className="key-cap key-cap-amber">R</span> to get back on the road</>}
-            </div>
-          )}
+          {/* stuck recovery is fully automatic: the engine detects a wedged car
+              and respawns it on the road with a toast. The only manual affordance
+              is the small RESET touch button (mobile) / R key (desktop) — no
+              center-screen banner interrupting the drive. */}
 
           {/* save badge (desktop only; mobile keeps the view clean) */}
           {!isTouch && (

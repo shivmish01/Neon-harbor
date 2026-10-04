@@ -4201,6 +4201,16 @@ export class GameEngine {
     }
   }
 
+  /** Current navigation objective: the live mission target, or the job garage
+      while free-roaming. Getaway missions intentionally have no fixed target. */
+  private navTarget(): THREE.Vector3 | null {
+    if (!this.mission) return this.garagePos
+    const m = this.mission
+    if (m.kind === 'delivery' || m.kind === 'taxi') return m.stage === 'pickup' ? m.a : m.b
+    if (m.kind === 'race') return m.cps[m.idx]
+    return null
+  }
+
   private drawMinimap(): void {
     const ctx = this.mmCtx
     const W = this.mmCanvas.width
@@ -4208,6 +4218,37 @@ export class GameEngine {
     ctx.drawImage(this.mmBase, 0, 0)
     const scale = W / (SIZE + 16)
     const toPx = (v: number) => (v + HALF + 8) * scale
+
+    // ---- route guidance (Google-Maps style): an L-shaped grid route from the
+    // car to the current objective, drawn under every marker. Cyan = garage,
+    // yellow = live mission target. ----
+    const rt = this.navTarget()
+    if (rt) {
+      const x0 = toPx(this.pos.x), z0 = toPx(this.pos.z)
+      const x1 = toPx(rt.x), z1 = toPx(rt.z)
+      // pick the elbow corner that lands on a road so the route hugs the grid
+      const elbowRoad = this.isOnRoad(rt.x, this.pos.z)
+      const ex = elbowRoad ? x1 : x0
+      const ez = elbowRoad ? z0 : z1
+      const rgb = this.mission ? '250,204,21' : '34,211,238'
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.strokeStyle = `rgba(${rgb},0.3)`
+      ctx.lineWidth = 6
+      ctx.beginPath(); ctx.moveTo(x0, z0); ctx.lineTo(ex, ez); ctx.lineTo(x1, z1); ctx.stroke()
+      ctx.strokeStyle = `rgba(${rgb},0.95)`
+      ctx.lineWidth = 2.4
+      ctx.setLineDash([8, 5])
+      ctx.lineDashOffset = -(this.time * 26) % 13
+      ctx.beginPath(); ctx.moveTo(x0, z0); ctx.lineTo(ex, ez); ctx.lineTo(x1, z1); ctx.stroke()
+      ctx.setLineDash([])
+      const pulse = 0.5 + 0.5 * Math.sin(this.time * 4)
+      ctx.strokeStyle = `rgba(${rgb},${0.45 + pulse * 0.45})`
+      ctx.lineWidth = 1.6
+      ctx.beginPath()
+      ctx.arc(x1, z1, 4.5 + pulse * 2.5, 0, Math.PI * 2)
+      ctx.stroke()
+    }
 
     if (this.mission) {
       const m = this.mission
@@ -4367,6 +4408,32 @@ export class GameEngine {
       ctx.font = fs(0.024)
       ctx.fillText(locked ? `\u{1F512} ${d.name.toUpperCase()} \u00b7 LVL ${d.minLevel}` : d.name.toUpperCase(), x + w / 2, y + h / 2)
     })
+
+    // ---- navigation route (Google-Maps style): L-shaped grid path from the
+    // car to the current objective — bold glow underlay + flowing dashes, with
+    // a distance tag at the destination. Cyan = garage, yellow = mission. ----
+    const navT = this.navTarget()
+    if (navT) {
+      const x0 = toPx(this.pos.x), z0 = toPx(this.pos.z)
+      const x1 = toPx(navT.x), z1 = toPx(navT.z)
+      const elbowRoad = this.isOnRoad(navT.x, this.pos.z)
+      const ex = elbowRoad ? x1 : x0
+      const ez = elbowRoad ? z0 : z1
+      const rgb = this.mission ? '250,204,21' : '34,211,238'
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.strokeStyle = `rgba(${rgb},0.3)`
+      ctx.lineWidth = Math.max(S * 0.014, 4)
+      ctx.beginPath(); ctx.moveTo(x0, z0); ctx.lineTo(ex, ez); ctx.lineTo(x1, z1); ctx.stroke()
+      ctx.strokeStyle = `rgba(${rgb},0.95)`
+      ctx.lineWidth = Math.max(S * 0.005, 2)
+      ctx.setLineDash([S * 0.018, S * 0.012])
+      ctx.beginPath(); ctx.moveTo(x0, z0); ctx.lineTo(ex, ez); ctx.lineTo(x1, z1); ctx.stroke()
+      ctx.setLineDash([])
+      ctx.fillStyle = `rgba(${rgb},1)`
+      ctx.font = fs(0.018)
+      ctx.fillText(`${Math.round(Math.hypot(navT.x - this.pos.x, navT.z - this.pos.z))}m`, x1, z1 + S * 0.034)
+    }
 
     // ---- points of interest ----
     const dot = (x: number, z: number, r: number, color: string) => {
