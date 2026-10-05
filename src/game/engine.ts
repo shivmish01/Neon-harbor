@@ -5371,9 +5371,9 @@ export class GameEngine {
     ctx.stroke()
   }
 
-  /** PUBG-style full-screen tactical map. Drawn once when the player opens it
-      (the engine is paused while the map is up, so a single static frame is
-      enough and costs nothing per tick). */
+  /** AMap / Google-Maps style big map (opened by tapping the minimap). Bright
+      and readable: blue water, sand ring, white roads, yellow avenues, named
+      districts — redrawn live while open so it doubles as a navigation HUD. */
   drawTacMap(canvas: HTMLCanvasElement): void {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
@@ -5384,69 +5384,85 @@ export class GameEngine {
     const save = this.hooks.getSave()
     const fs = (r: number) => `${Math.max(S * r, 9)}px system-ui, sans-serif`
 
-    // ---- terrain: ocean, beach sand, city land ----
-    ctx.fillStyle = '#0b2a40'
+    // ---- terrain: ocean, full sand ring, city land (AMap palette) ----
+    ctx.fillStyle = '#a8cbe4' // water
     ctx.fillRect(0, 0, S, S)
-    ctx.fillStyle = '#8f7d54'
-    ctx.fillRect(0, toPx(HALF + 5.5), S, (46 - 5.5) * scale)
-    ctx.fillStyle = '#10182b'
+    ctx.fillStyle = '#ecdfae' // beach sand ring on every side
+    ctx.fillRect(toPx(-HALF - 46), toPx(-HALF - 46), (2 * (HALF + 46)) * scale, (2 * (HALF + 46)) * scale)
+    ctx.fillStyle = '#e8e6df' // city land
     ctx.fillRect(toPx(-HALF - ROAD), toPx(-HALF - ROAD), (SIZE + ROAD * 2) * scale, (SIZE + ROAD * 2) * scale)
 
-    // ---- roads (under the blocks so only the gaps show) ----
+    // ---- roads: grey casing, then white fill (AMap look) ----
     const rc = (k: number) => -HALF + k * CELL + ROAD / 2 // road centerline
-    ctx.strokeStyle = '#2c3a56'
     ctx.lineCap = 'butt'
-    ctx.lineWidth = ROAD * scale
     for (let k = 0; k <= N; k++) {
       const p = toPx(rc(k))
+      ctx.strokeStyle = '#c9c6bd'
+      ctx.lineWidth = (ROAD + 2) * scale
+      ctx.beginPath(); ctx.moveTo(p, toPx(-HALF)); ctx.lineTo(p, toPx(HALF)); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(toPx(-HALF), p); ctx.lineTo(toPx(HALF), p); ctx.stroke()
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = ROAD * scale
       ctx.beginPath(); ctx.moveTo(p, toPx(-HALF)); ctx.lineTo(p, toPx(HALF)); ctx.stroke()
       ctx.beginPath(); ctx.moveTo(toPx(-HALF), p); ctx.lineTo(toPx(HALF), p); ctx.stroke()
     }
-    // the two central avenues — brighter, they carry the jersey barriers
-    ctx.strokeStyle = '#54698c'
-    ctx.lineWidth = ROAD * scale * 0.45
+    // the two central avenues — AMap arterial yellow
     for (const c of [rc(4), rc(5)]) {
       const p = toPx(c)
+      ctx.strokeStyle = '#eec04a'
+      ctx.lineWidth = ROAD * scale * 0.62
       ctx.beginPath(); ctx.moveTo(p, toPx(-HALF)); ctx.lineTo(p, toPx(HALF)); ctx.stroke()
       ctx.beginPath(); ctx.moveTo(toPx(-HALF), p); ctx.lineTo(toPx(HALF), p); ctx.stroke()
     }
+    // south bridge stub across the sand toward the lighthouse
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 16 * scale
+    ctx.beginPath(); ctx.moveTo(toPx(0), toPx(HALF)); ctx.lineTo(toPx(0), toPx(HALF + 46)); ctx.stroke()
 
-    // ---- city blocks + PUBG grid labels ----
+    // ---- city blocks + subtle grid labels ----
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     for (let i = 0; i < N; i++) {
       for (let j = 0; j < N; j++) {
-        ctx.fillStyle = i === GARAGE_I && j === GARAGE_J ? '#1e2d4c' : '#172138'
+        // skip the cells roads already painted: blocks sit between roads
+        ctx.fillStyle = i === GARAGE_I && j === GARAGE_J ? '#d4e6d7' : '#dfdcd3'
         ctx.fillRect(toPx(blockOrigin(i)), toPx(blockOrigin(j)), BLOCK * scale, BLOCK * scale)
       }
       const c = toPx(blockOrigin(i) + BLOCK / 2)
-      ctx.fillStyle = '#5b6b8c'
+      ctx.fillStyle = '#a9aeab'
       ctx.font = fs(0.02)
       ctx.fillText(String.fromCharCode(65 + i), c, S * 0.018)
       ctx.fillText(String(i + 1), S * 0.018, c)
     }
 
-    // ---- districts: tinted zones with names + level locks ----
-    const TINTS = ['rgba(34,211,238,0.06)', 'rgba(167,139,250,0.07)', 'rgba(74,222,128,0.06)', 'rgba(251,191,36,0.06)', 'rgba(244,114,182,0.07)']
+    // ---- districts: soft tints with dark AMap-style labels + level locks ----
+    const TINTS = ['rgba(34,211,238,0.10)', 'rgba(167,139,250,0.10)', 'rgba(74,222,128,0.10)', 'rgba(251,191,36,0.12)', 'rgba(244,114,182,0.10)']
     DISTRICTS.forEach((d, idx) => {
       const locked = save.level < d.minLevel
       const x = toPx(d.minX), y = toPx(d.minZ)
       const w = (d.maxX - d.minX) * scale, h = (d.maxZ - d.minZ) * scale
-      ctx.fillStyle = locked ? 'rgba(255,51,85,0.07)' : TINTS[idx % TINTS.length]
+      ctx.fillStyle = locked ? 'rgba(255,51,85,0.08)' : TINTS[idx % TINTS.length]
       ctx.fillRect(x, y, w, h)
-      ctx.strokeStyle = locked ? 'rgba(255,51,85,0.45)' : 'rgba(148,163,184,0.28)'
+      ctx.strokeStyle = locked ? 'rgba(220,60,90,0.5)' : 'rgba(100,116,139,0.35)'
       ctx.lineWidth = Math.max(S * 0.0012, 1)
       ctx.setLineDash([S * 0.012, S * 0.008])
       ctx.strokeRect(x, y, w, h)
       ctx.setLineDash([])
-      ctx.fillStyle = locked ? '#ff8fa8' : '#9fb0d0'
-      ctx.font = fs(0.024)
-      ctx.fillText(locked ? `\u{1F512} ${d.name.toUpperCase()} \u00b7 LVL ${d.minLevel}` : d.name.toUpperCase(), x + w / 2, y + h / 2)
+      // white pill behind the name so it reads over any terrain, AMap-style
+      const label = locked ? `\u{1F512} ${d.name.toUpperCase()} \u00b7 LVL ${d.minLevel}` : d.name.toUpperCase()
+      ctx.font = `bold ${Math.max(S * 0.02, 9)}px system-ui, sans-serif`
+      const tw = ctx.measureText(label).width
+      ctx.fillStyle = 'rgba(255,255,255,0.85)'
+      const pw = tw + S * 0.016, ph = S * 0.028
+      ctx.beginPath()
+      ctx.roundRect(x + w / 2 - pw / 2, y + h / 2 - ph / 2, pw, ph, ph / 2)
+      ctx.fill()
+      ctx.fillStyle = locked ? '#c23152' : '#40506b'
+      ctx.fillText(label, x + w / 2, y + h / 2 + S * 0.001)
     })
 
-    // ---- navigation route (Google-Maps style): L-shaped grid path from the
-    // car to the current objective — bold glow underlay + flowing dashes, with
-    // a distance tag at the destination. Cyan = garage, yellow = mission. ----
+    // ---- navigation route (Google-Maps blue): bold glow underlay + solid
+    // line, with a distance pill at the destination. ----
     const navT = this.navTarget()
     if (navT) {
       const x0 = toPx(this.pos.x), z0 = toPx(this.pos.z)
@@ -5461,13 +5477,17 @@ export class GameEngine {
       ctx.lineWidth = Math.max(S * 0.014, 4)
       ctx.beginPath(); ctx.moveTo(x0, z0); ctx.lineTo(ex, ez); ctx.lineTo(x1, z1); ctx.stroke()
       ctx.strokeStyle = `rgba(${rgb},0.95)`
-      ctx.lineWidth = Math.max(S * 0.005, 2)
-      ctx.setLineDash([S * 0.018, S * 0.012])
+      ctx.lineWidth = Math.max(S * 0.006, 2)
       ctx.beginPath(); ctx.moveTo(x0, z0); ctx.lineTo(ex, ez); ctx.lineTo(x1, z1); ctx.stroke()
-      ctx.setLineDash([])
+      const dist = `${Math.round(Math.hypot(navT.x - this.pos.x, navT.z - this.pos.z))}m`
+      ctx.font = `bold ${Math.max(S * 0.017, 9)}px system-ui, sans-serif`
+      const dw = ctx.measureText(dist).width + S * 0.014
       ctx.fillStyle = `rgba(${rgb},1)`
-      ctx.font = fs(0.018)
-      ctx.fillText(`${Math.round(Math.hypot(navT.x - this.pos.x, navT.z - this.pos.z))}m`, x1, z1 + S * 0.034)
+      ctx.beginPath()
+      ctx.roundRect(x1 - dw / 2, z1 + S * 0.02, dw, S * 0.026, S * 0.013)
+      ctx.fill()
+      ctx.fillStyle = '#ffffff'
+      ctx.fillText(dist, x1, z1 + S * 0.02 + S * 0.013)
     }
 
     // ---- points of interest ----
@@ -5477,47 +5497,51 @@ export class GameEngine {
       ctx.arc(toPx(x), toPx(z), r, 0, Math.PI * 2)
       ctx.fill()
     }
-    // garage / job board
-    ctx.fillStyle = '#22d3ee'
+    // garage / job board — Maps green square with label
     const gx = toPx(this.garagePos.x), gz = toPx(this.garagePos.z)
+    ctx.fillStyle = '#34a853'
     ctx.fillRect(gx - S * 0.008, gz - S * 0.008, S * 0.016, S * 0.016)
-    ctx.font = fs(0.02)
-    ctx.fillText('JOBS', gx, gz - S * 0.022)
-    // mission target
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = Math.max(S * 0.0015, 1)
+    ctx.strokeRect(gx - S * 0.008, gz - S * 0.008, S * 0.016, S * 0.016)
+    ctx.font = `bold ${Math.max(S * 0.017, 9)}px system-ui, sans-serif`
+    ctx.fillStyle = '#2b7a43'
+    ctx.fillText('JOBS', gx, gz - S * 0.02)
+    // mission target — Maps red pin
     if (this.mission) {
       const m = this.mission
       let t: THREE.Vector3 | null = null
       if (m.kind === 'delivery' || m.kind === 'taxi') t = m.stage === 'pickup' ? m.a : m.b
       else if (m.kind === 'race') t = m.cps[m.idx]
       if (t) {
-        dot(t.x, t.z, S * 0.011, '#facc15')
-        ctx.strokeStyle = 'rgba(250,204,21,0.85)'
+        dot(t.x, t.z, S * 0.011, '#ea4335')
+        ctx.strokeStyle = '#ffffff'
         ctx.lineWidth = Math.max(S * 0.002, 1.2)
         ctx.beginPath()
-        ctx.arc(toPx(t.x), toPx(t.z), S * 0.018, 0, Math.PI * 2)
+        ctx.arc(toPx(t.x), toPx(t.z), S * 0.011, 0, Math.PI * 2)
         ctx.stroke()
-        ctx.fillStyle = '#facc15'
-        ctx.font = fs(0.02)
-        ctx.fillText(m.name.toUpperCase(), toPx(t.x), toPx(t.z) - S * 0.03)
+        ctx.fillStyle = '#b3321f'
+        ctx.font = `bold ${Math.max(S * 0.017, 9)}px system-ui, sans-serif`
+        ctx.fillText(m.name.toUpperCase(), toPx(t.x), toPx(t.z) - S * 0.026)
       }
     }
-    for (const s of this.shards) if (!s.taken) dot(s.mesh.position.x, s.mesh.position.z, Math.max(S * 0.003, 1.2), '#67e8f9')
-    for (const c of this.crates) if (c.active) dot(c.mesh.position.x, c.mesh.position.z, Math.max(S * 0.004, 1.6), '#4ade80')
+    for (const s of this.shards) if (!s.taken) dot(s.mesh.position.x, s.mesh.position.z, Math.max(S * 0.003, 1.2), '#0891b2')
+    for (const c of this.crates) if (c.active) dot(c.mesh.position.x, c.mesh.position.z, Math.max(S * 0.004, 1.6), '#16a34a')
     for (const lm of this.landmarks) {
-      ctx.fillStyle = lm.found ? '#3b3b5c' : '#c084fc'
+      ctx.fillStyle = lm.found ? '#9aa3b2' : '#9333ea'
       const px = toPx(lm.pos.x), pz = toPx(lm.pos.z), r = S * 0.007
       ctx.beginPath()
       ctx.moveTo(px, pz - r); ctx.lineTo(px + r, pz); ctx.lineTo(px, pz + r); ctx.lineTo(px - r, pz)
       ctx.closePath(); ctx.fill()
     }
-    for (const d of this.drones) dot(d.pos.x, d.pos.z, Math.max(S * 0.004, 1.6), '#ff3355')
+    for (const d of this.drones) dot(d.pos.x, d.pos.z, Math.max(S * 0.004, 1.6), '#dc2645')
     if (this.heat > 0.5 && this.cruisers.length > 0) {
       const flash = Math.floor(this.time * 4) % 2 === 0
       let nearest: { x: number; z: number } | null = null
       let nearestD = Infinity
       for (const c of this.cruisers) {
         dot(c.pos.x, c.pos.z, S * 0.009, flash ? '#ff3355' : '#3b82f6')
-        ctx.strokeStyle = 'rgba(255,255,255,0.8)'
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)'
         ctx.lineWidth = Math.max(S * 0.0015, 1)
         ctx.beginPath()
         ctx.arc(toPx(c.pos.x), toPx(c.pos.z), S * 0.009, 0, Math.PI * 2)
@@ -5526,7 +5550,7 @@ export class GameEngine {
         if (dd < nearestD) { nearestD = dd; nearest = c.pos }
       }
       if (nearest && this.heat >= 2) {
-        ctx.strokeStyle = 'rgba(255,51,85,0.5)'
+        ctx.strokeStyle = 'rgba(220,38,69,0.55)'
         ctx.lineWidth = Math.max(S * 0.002, 1.2)
         ctx.beginPath()
         ctx.arc(toPx(nearest.x), toPx(nearest.z), (26 + this.heat * 9) * scale, 0, Math.PI * 2)
@@ -5534,46 +5558,37 @@ export class GameEngine {
       }
     }
 
-    // ---- player: view cone + arrow (map: x right, z down; facing = (sin h, cos h)) ----
+    // ---- player: Google-style heading cone + blue dot (map: x right, z down) ----
     const px = toPx(this.pos.x), pz = toPx(this.pos.z)
     const hd = Math.atan2(Math.sin(this.heading), Math.cos(this.heading))
     const face = Math.atan2(Math.cos(hd), Math.sin(hd)) // polar angle of the facing vector on canvas
-    ctx.fillStyle = 'rgba(255,255,255,0.13)'
+    ctx.fillStyle = 'rgba(26,115,232,0.25)'
     ctx.beginPath()
     ctx.moveTo(px, pz)
     ctx.arc(px, pz, S * 0.09, face - 0.5, face + 0.5)
     ctx.closePath()
     ctx.fill()
-    ctx.save()
-    ctx.translate(px, pz)
-    ctx.rotate(face + Math.PI / 2) // the arrow shape points -y; swing it onto the facing angle
-    ctx.fillStyle = '#ffffff'
-    ctx.strokeStyle = 'rgba(0,0,0,0.55)'
-    ctx.lineWidth = Math.max(S * 0.0015, 1)
-    const a = S * 0.014
+    ctx.fillStyle = '#1a73e8'
     ctx.beginPath()
-    ctx.moveTo(0, -a)
-    ctx.lineTo(a * 0.62, a * 0.75)
-    ctx.lineTo(0, a * 0.35)
-    ctx.lineTo(-a * 0.62, a * 0.75)
-    ctx.closePath()
+    ctx.arc(px, pz, S * 0.009, 0, Math.PI * 2)
     ctx.fill()
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = Math.max(S * 0.0025, 1.5)
     ctx.stroke()
-    ctx.restore()
 
     // ---- frame, compass, legend ----
-    ctx.strokeStyle = 'rgba(226,232,240,0.5)'
+    ctx.strokeStyle = 'rgba(71,85,105,0.5)'
     ctx.lineWidth = Math.max(S * 0.002, 1.5)
     ctx.strokeRect(S * 0.035, S * 0.035, S * 0.93, S * 0.93)
-    ctx.fillStyle = '#e2e8f0'
+    ctx.fillStyle = '#40506b'
     ctx.font = `bold ${Math.max(S * 0.026, 11)}px system-ui, sans-serif`
     ctx.textAlign = 'left'
     ctx.fillText('\u2191 N', S * 0.045, S * 0.062)
     ctx.textAlign = 'center'
-    ctx.fillText('NEON HARBOR \u2014 TACTICAL MAP', S / 2, S * 0.965)
+    ctx.fillText('NEON HARBOR \u2014 CITY MAP', S / 2, S * 0.965)
     ctx.font = fs(0.018)
-    ctx.fillStyle = '#8fa0c0'
-    ctx.fillText('YOU \u25b2   JOBS \u25a0   MISSION \u25cf   SHARDS \u00b7   CRATES \u00b7   LANDMARKS \u25c6   PATROL \u25cf', S / 2, S * 0.985)
+    ctx.fillStyle = '#6b7a95'
+    ctx.fillText('YOU \u25cf   JOBS \u25a0   MISSION \u25cf   SHARDS \u00b7   CRATES \u00b7   LANDMARKS \u25c6   PATROL \u25cf', S / 2, S * 0.985)
   }
 
   // =============== PUBLIC CONTROLS ===============
