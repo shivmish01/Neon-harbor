@@ -3319,6 +3319,15 @@ export class GameEngine {
     const handbrake = this.keys.has(' ') || this.padHandbrake
     const wantBoost = this.keys.has('shift') || this.padBoost
 
+    // Universal escape hatch: ANY drive input instantly hands the car to the
+    // player. If the session is ever left in the cinematic attract orbit with
+    // no entry gate on screen (hot reload, restored tab, race in the entry
+    // flow), the very first touch on a pedal wakes it — the car can never be
+    // a passenger while the player is trying to drive.
+    if (this.attract && (up || down || left || right || (effThr !== null && Math.abs(effThr) > 0.12))) {
+      this.setAttract(false)
+    }
+
     const dir = new THREE.Vector3(Math.sin(this.heading), 0, Math.cos(this.heading))
     let s = this.vel.dot(dir)
 
@@ -3348,9 +3357,16 @@ export class GameEngine {
       // The car ALWAYS drives — nothing mechanical ever cuts it. The only
       // things that can halt it are visible on the road: accident scenes and
       // rush-hour jams.
-      const gas = aThr !== null ? aThr > 0.12 : up
-      const braking = aThr !== null ? aThr < -0.12 : down
-      if (gas) s += ACCEL * engineMul * (aThr !== null ? Math.min(1, aThr) : 1) * mult * dt
+      // Mobile UX: a joystick pushed up means GO, full stop. Small deadzone at
+      // rest, then ramp to FULL throttle by half deflection — a casual thumb
+      // must never get a crawling car. Keys always work, even if a stale
+      // analog value is sitting in the slot (missed pointerup used to
+      // deadlock the pedals at 0 — the "car creeps on an open road" bug).
+      const aGas = aThr !== null && aThr > 0.12
+      const gasPower = aGas ? THREE.MathUtils.clamp((aThr - 0.12) / 0.43, 0, 1) : 0
+      const gas = up || aGas
+      const braking = down || (aThr !== null && aThr < -0.12)
+      if (gas) s += ACCEL * engineMul * (aGas && !up ? gasPower : 1) * mult * dt
       if (braking) s -= (s > 1 ? BRAKE : ACCEL * engineMul * 0.6) * dt
       const maxS = MAX_SPEED * engineMul * mult
       s = THREE.MathUtils.clamp(s, -10, maxS)
@@ -3614,33 +3630,20 @@ export class GameEngine {
   // the car slides along the border instead of being teleported and wedged.
   // Districts open purely by LEVEL — no tolls, no payments.
   private districtCd = 0
+  private districtToastAt: Record<string, number> = {}
   private updateDistricts(dt: number): void {
     this.districtCd = Math.max(0, this.districtCd - dt)
     const save = this.hooks.getSave()
     const d = districtAt(this.pos.x, this.pos.z)
     if (d && save.level < d.minLevel) {
-      // inside a locked district — find the nearest border and clamp to it
-      const pens = [
-        { p: this.pos.x - d.minX, axis: 'x' as const, low: true },
-        { p: d.maxX - this.pos.x, axis: 'x' as const, low: false },
-        { p: this.pos.z - d.minZ, axis: 'z' as const, low: true },
-        { p: d.maxZ - this.pos.z, axis: 'z' as const, low: false },
-      ].sort((a, b) => a.p - b.p)[0]
-      const clear = CAR_R + 0.6
-      if (pens.axis === 'x') this.pos.x = pens.low ? d.minX - clear : d.maxX + clear
-      else this.pos.z = pens.low ? d.minZ - clear : d.maxZ + clear
-      // BOUNCE-BACK: actively repel the car back into the open district instead
-      // of just zeroing the inward velocity — grinding along the wall let cars
-      // wedge between the clamp and border props (perma-stuck).
-      const inward = pens.axis === 'x' ? Math.abs(this.vel.x) : Math.abs(this.vel.z)
-      const bounce = Math.max(9, inward * 0.75)
-      if (pens.axis === 'x') this.vel.x = pens.low ? -bounce : bounce
-      else this.vel.z = pens.low ? -bounce : bounce
-      this.shake = Math.min(this.shake + 0.18, 0.5)
-      if (this.districtCd <= 0) {
-        this.districtCd = 2.5
-        this.hooks.onToast(`🔒 ${d.name} — opens at level ${d.minLevel}. Take jobs to level up!`, 'warn')
-        this.synth.denied()
+      // Locked district — the car ALWAYS passes. No invisible wall, no clamp,
+      // no bounce: the level gate applies to the WORK offered here (mission
+      // spawns already respect minLevel), never to movement. One quiet note
+      // per district per 2 minutes is all the player needs.
+      const lastToast = this.districtToastAt[d.name] ?? -1e9
+      if (this.time - lastToast > 120) {
+        this.districtToastAt[d.name] = this.time
+        this.hooks.onToast(`🔒 ${d.name} — jobs here open at level ${d.minLevel}. You can drive through freely`, 'info')
       }
       return
     }
