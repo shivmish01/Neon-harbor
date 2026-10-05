@@ -3433,12 +3433,14 @@ export class GameEngine {
     this.analogSteer = steer
     this.analogThrottle = throttle
   }
-  /** CoD-style swipe steer: each horizontal pixel the finger travels adds
-      steering input, which then bleeds off in the update loop. A fast flick
-      = sharp turn, a slow drag = gentle arc, holding the finger still =
-      straight. Pass null on release to clear immediately. */
+  /** CoD-style swipe steer, VELOCITY-driven like CoD Mobile aiming: the
+      steering angle tracks how fast the finger is moving right now, not how
+      far it has travelled. A fast flick (~20px/frame) slams to full lock
+      instantly; a slow drag eases in; a still finger centers within ~0.15s;
+      release straightens immediately. The latest frame delta dominates —
+      only a small carry from the previous frame smooths the signal. */
   touchSwipeDelta(dx: number): void {
-    this.swipeSteer = THREE.MathUtils.clamp((this.swipeSteer ?? 0) + dx * 0.022, -1, 1)
+    this.swipeSteer = THREE.MathUtils.clamp(dx * 0.055 + (this.swipeSteer ?? 0) * 0.35, -1, 1)
   }
   touchSwipeSteer(v: number | null): void {
     this.swipeSteer = v
@@ -3811,11 +3813,12 @@ export class GameEngine {
       if (braking) s -= (s > 1 ? BRAKE : ACCEL * engineMul * 0.6) * dt
       const maxS = MAX_SPEED * engineMul * dmgMul * mult
       s = THREE.MathUtils.clamp(s, -10, maxS)
-      // Swipe steering is motion-based (CoD-style): finger movement adds steer
-      // input which bleeds off fast — a held-still finger goes straight.
+      // Swipe steering is velocity-based (CoD-style): the moment the finger
+      // stops moving the steer input bleeds to center in ~0.15s, so the car
+      // straightens as soon as the swipe ends — no laggy "drift" feel.
       if (this.swipeSteer !== null) {
-        this.swipeSteer *= Math.exp(-dt * 6)
-        if (Math.abs(this.swipeSteer) < 0.03) this.swipeSteer = null
+        this.swipeSteer *= Math.exp(-dt * 10)
+        if (Math.abs(this.swipeSteer) < 0.02) this.swipeSteer = null
       }
       // Joystick tilt keeps only partial steering authority — the right-thumb
       // swipe is the primary steering, like aiming in CoD Mobile.
