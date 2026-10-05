@@ -256,6 +256,7 @@ export class GameEngine {
   private stuckRef = new THREE.Vector3() // position sample for bounce-proof stuck detection
   private stuckRefTimer = 0
   private stuckAuto = 0 // continuous wedge time → triggers auto-respawn
+  private stuckEpStart = new THREE.Vector3() // episode origin: net progress from HERE decides wedged vs just crawling
   private vy = 0
   private grounded = true
   private boost = 100
@@ -1666,6 +1667,31 @@ export class GameEngine {
   private moonTrackMat: THREE.MeshBasicMaterial | null = null
   private foamNight = 1
 
+  // ---- Road events -------------------------------------------------------
+  // The car NEVER stops for mechanics (no fuel, no tolls). The ONLY things
+  // allowed to halt traffic are visible, physical blockers the player can
+  // read at a glance: ① accident scenes with wrecked cars + a gathered
+  // crowd, ② rush-hour jams where the avenues crawl.
+  private accident: {
+    group: THREE.Group
+    axis: 'x' | 'z'
+    lat: number
+    along: number
+    boxStart: number
+    boxCount: number
+    idlerStart: number
+    idlerCount: number
+    hazardMats: THREE.MeshBasicMaterial[]
+    smokeTimer: number
+    despawnAt: number
+    warned: boolean
+  } | null = null
+  private accidentTimer = 45
+  private rushActive = false
+  private rushUntil = 0
+  private rushTimer = 150
+  private rushCars: TrafficCar[] = []
+
   private skyBackground(t: ReturnType<typeof getTheme>): THREE.Texture | THREE.Color {
     if (this.skyCache[t.id]) return this.skyCache[t.id]
     const c = document.createElement('canvas')
@@ -2945,8 +2971,7 @@ export class GameEngine {
 
   // =============== INPUT ===============
   /** Unstick: snap the car onto the nearest road center, aligned to the lane. */
-  resetToRoad(): void {
-    const kx = THREE.MathUtils.clamp(Math.round((this.pos.x + HALF - ROAD / 2) / CELL), 0, N)
+  resetToRoad(): void {    const kx = THREE.MathUtils.clamp(Math.round((this.pos.x + HALF - ROAD / 2) / CELL), 0, N)
     const kz = THREE.MathUtils.clamp(Math.round((this.pos.z + HALF - ROAD / 2) / CELL), 0, N)
     const cx = -HALF + ROAD / 2 + kx * CELL
     const cz = -HALF + ROAD / 2 + kz * CELL
@@ -3134,6 +3159,7 @@ export class GameEngine {
   private update(dt: number): void {
     this.updateCar(dt)
     this.updateTraffic(dt)
+    this.updateRoadEvents(dt)
     this.updateCruisers(dt)
     this.updateSmoke(dt)
     this.updatePedestrians(dt)
@@ -3319,6 +3345,9 @@ export class GameEngine {
       const mult = this.boosting ? BOOST_MULT : 1
       // Joystick / gamepad (analog) input replaces the digital pedals when active
       const aThr = effThr
+      // The car ALWAYS drives — nothing mechanical ever cuts it. The only
+      // things that can halt it are visible on the road: accident scenes and
+      // rush-hour jams.
       const gas = aThr !== null ? aThr > 0.12 : up
       const braking = aThr !== null ? aThr < -0.12 : down
       if (gas) s += ACCEL * engineMul * (aThr !== null ? Math.min(1, aThr) : 1) * mult * dt
@@ -3346,21 +3375,30 @@ export class GameEngine {
       const onRoad = this.isOnRoad(this.pos.x, this.pos.z)
       const drag = onRoad ? 0.45 : 2.6
       this.vel.multiplyScalar(Math.exp(-dt * drag))
-      // Stuck detection — POSITION-delta based: collision bounces spoof the old
-      // velocity check (a wedged car jitters >2 u/s and the timer reset forever).
-      // Instead, sample position every 0.75s: gas held but barely moved = wedged.
-      // HUD offers R / RESET, and at ~5s the game auto-respawns the car — nobody
-      // has to read a prompt to escape a wedge.
+      // Stuck detection — NET-PROGRESS based, so it can never interrupt a car
+      // that is actually moving. Samples every 0.75s: gas held + barely moved
+      // this sample → possible wedge. But if the car has made >4u of NET ground
+      // since the episode began, it is crawling through a tight spot, not
+      // stuck — the episode resets. Only a genuinely wedged car (zero net
+      // progress for ~7s while holding gas) gets the auto-respawn.
       this.stuckRefTimer -= dt
       if (this.stuckRefTimer <= 0) {
         const moved = this.pos.distanceTo(this.stuckRef)
-        if (gas && moved < 1.4) {
+        if (gas && this.grounded && moved < 1.2 && this.vel.lengthSq() < 4) {
           this.stuckTime += 0.75
-          if (this.stuckTime > 1.5) this.stuckLatch = 6
+          if (this.pos.distanceTo(this.stuckEpStart) > 4) {
+            // slow but making ground (crawling, weaving) — not stuck
+            this.stuckTime = 0
+            this.stuckAuto = 0
+            this.stuckEpStart.copy(this.pos)
+          } else if (this.stuckTime > 2.25) {
+            this.stuckLatch = 6
+          }
         } else {
           this.stuckTime = 0
           this.stuckAuto = 0
           this.stuckLatch = Math.max(0, this.stuckLatch - 0.75)
+          this.stuckEpStart.copy(this.pos)
         }
         this.stuckRef.copy(this.pos)
         this.stuckRefTimer = 0.75
@@ -3370,13 +3408,15 @@ export class GameEngine {
         this.stuckLatch = 0
         this.stuckTime = 0
         this.stuckAuto = 0
+        this.stuckEpStart.copy(this.pos)
       }
-      // Auto-respawn after ~5s of continuous wedging — the AAA "respawning…" net
-      if (this.stuckTime > 1.5 && !this.busted) {
+      // Auto-respawn after ~7s of zero net progress — the AAA "respawning…" net
+      if (this.stuckTime > 2.25 && !this.busted) {
         this.stuckAuto += dt
-        if (this.stuckAuto > 3.5) {
+        if (this.stuckAuto > 4.5) {
           this.resetToRoad()
           this.stuckAuto = 0
+          this.stuckEpStart.copy(this.pos)
         }
       }
     } else {
@@ -3634,7 +3674,14 @@ export class GameEngine {
       const playerAlong = t.axis === 'x' ? this.pos.x : this.pos.z
       const playerLat = t.axis === 'x' ? this.pos.z : this.pos.x
       const rel = (playerAlong - along) * t.dir
-      const blocked = rel > 0 && rel < 11 && Math.abs(playerLat - t.lane) < 3 && this.pos.y < 2
+      let blocked = rel > 0 && rel < 11 && Math.abs(playerLat - t.lane) < 3 && this.pos.y < 2
+      // Accident wreck ahead on this road? Brake and queue behind it — this is
+      // what makes the jam behind a crash read as a real pile-up.
+      const ac = this.accident
+      if (!blocked && ac && ac.axis === t.axis) {
+        const aRel = (ac.along - along) * t.dir
+        if (aRel > 0 && aRel < 12 && Math.abs(ac.lat - t.lane) < 4.5) blocked = true
+      }
       // Obey the signals at the central crossroads: ease to the stop line on red,
       // and treat amber as "stop unless too close to stop safely"
       let lightCap: number | null = null
@@ -3651,8 +3698,21 @@ export class GameEngine {
           break
         }
       }
-      let target = blocked ? 0 : t.cruise
+      let target = blocked ? 0 : t.cruise * (this.rushActive ? 0.45 : 1)
       if (lightCap !== null) target = Math.min(target, lightCap)
+      // Car-following: never rear-end the car ahead in the same lane — queues
+      // form naturally at red lights, accidents and rush-hour crawl.
+      for (const o of this.traffic) {
+        if (o === t || o.axis !== t.axis || o.dir !== t.dir) continue
+        if (Math.abs(o.lane - t.lane) > 1.5) continue
+        const oAlong = t.axis === 'x' ? o.mesh.position.x : o.mesh.position.z
+        const gap = (oAlong - along) * t.dir
+        if (gap > 0 && gap < 9) {
+          const cap = Math.max(0, (gap - 5.5) * 1.4)
+          if (cap < target) target = cap
+          break
+        }
+      }
       const braking = blocked || (lightCap !== null && lightCap < t.speed)
       t.speed += (target - t.speed) * Math.min(dt * (braking ? 5 : 0.8), 1)
       const step = t.speed * dt * t.dir
@@ -3701,6 +3761,238 @@ export class GameEngine {
         }
       }
     }
+  }
+
+  // =============== ROAD EVENTS: ACCIDENTS & RUSH HOUR ===============
+  // The only sanctioned reasons traffic (and the player) ever stop — both are
+  // physical and visible: a crash scene blocking a street, and rush-hour
+  // crawl on the central avenues.
+  private updateRoadEvents(dt: number): void {
+    // ---- Accident lifecycle ----
+    if (!this.accident) {
+      this.accidentTimer -= dt
+      if (this.accidentTimer <= 0) this.spawnAccident()
+    } else {
+      const ac = this.accident
+      // Hazard flashers strobe amber
+      const on = Math.sin(this.time * 11) > 0
+      for (const m of ac.hazardMats) m.opacity = on ? 0.95 : 0.15
+      // Smoke curling off the wreck
+      ac.smokeTimer -= dt
+      if (ac.smokeTimer <= 0) {
+        ac.smokeTimer = 0.28
+        const sx = ac.axis === 'x' ? ac.along : ac.lat
+        const sz = ac.axis === 'x' ? ac.lat : ac.along
+        this.emitPuff(sx + (Math.random() - 0.5) * 1.4, 1.6, sz + (Math.random() - 0.5) * 1.4, 0x4a4f58, 2.6, 1.7, false)
+      }
+      // One bare-text warning when the player gets close — then stay quiet
+      if (!ac.warned) {
+        const wx = ac.axis === 'x' ? ac.along : ac.lat
+        const wz = ac.axis === 'x' ? ac.lat : ac.along
+        if ((this.pos.x - wx) ** 2 + (this.pos.z - wz) ** 2 < 55 * 55) {
+          ac.warned = true
+          this.hooks.onToast('Accident ahead — that street is blocked, take another one', 'warn')
+        }
+      }
+      if (this.time > ac.despawnAt) this.clearAccident()
+    }
+
+    // ---- Rush-hour lifecycle ----
+    if (!this.rushActive) {
+      this.rushTimer -= dt
+      if (this.rushTimer <= 0) this.startRushHour()
+    } else if (this.time > this.rushUntil) {
+      this.endRushHour()
+    }
+  }
+
+  private spawnAccident(): void {
+    // Pick a road spot well away from the player and clear of intersections
+    let axis: 'x' | 'z' = 'x'
+    let lat = 0
+    let along = 0
+    let ok = false
+    for (let tries = 0; tries < 12 && !ok; tries++) {
+      axis = Math.random() > 0.5 ? 'x' : 'z'
+      const k = Math.floor(Math.random() * (N + 1))
+      lat = -HALF + ROAD / 2 + k * CELL
+      along = (Math.random() * 2 - 1) * (HALF - 25)
+      const wx = axis === 'x' ? along : lat
+      const wz = axis === 'x' ? lat : along
+      if ((this.pos.x - wx) ** 2 + (this.pos.z - wz) ** 2 < 70 * 70) continue
+      ok = true
+      for (const li of this.lightIntersections) {
+        const cross = axis === 'x' ? li.z : li.x
+        const crossAlong = axis === 'x' ? li.x : li.z
+        if (Math.abs(cross - lat) < 2 && Math.abs(crossAlong - along) < 16) {
+          ok = false
+          break
+        }
+      }
+    }
+    if (!ok) {
+      this.accidentTimer = 30
+      return
+    }
+    const wx = axis === 'x' ? along : lat
+    const wz = axis === 'x' ? lat : along
+    const headingAxis = axis === 'x' ? Math.PI / 2 : 0 // car forward along road
+
+    const group = new THREE.Group()
+    group.position.set(wx, 0, wz)
+    const hazardMats: THREE.MeshBasicMaterial[] = []
+    const boxStart = this.buildings.length
+    const idlerStart = this.idlers.length
+    const rand = Math.random
+
+    // Two wrecked cars, skewed across both lanes, dark burnt-out colors
+    const wreckCols = [0x23262e, 0x2e3138]
+    for (let i = 0; i < 2; i++) {
+      const wreck = this.makeTrafficCar(i === 0 ? 'sedan' : 'hatch', wreckCols[i])
+      const side = i === 0 ? -1.6 : 1.8
+      const fwd = i === 0 ? -1.2 : 1.6
+      const lx = axis === 'x' ? fwd : side
+      const lz = axis === 'x' ? side : fwd
+      wreck.position.set(lx, 0, lz)
+      wreck.rotation.y = headingAxis + (i === 0 ? 0.55 : -0.65) + (rand() - 0.5) * 0.2
+      group.add(wreck)
+      // Hazard flasher on the roof — strobes via updateRoadEvents
+      const hMat = new THREE.MeshBasicMaterial({ color: 0xffa726, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.9, depthWrite: false })
+      const h = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.16, 0.4), hMat)
+      h.position.set(lx, 1.55, lz)
+      group.add(h)
+      hazardMats.push(hMat)
+      // Solid collider so the player physically cannot drive through the wreck
+      this.buildings.push({ minX: wx + lx - 2.6, maxX: wx + lx + 2.6, minZ: wz + lz - 2.6, maxZ: wz + lz + 2.6 })
+    }
+
+    // Warning cones in an arc on both approaches
+    const coneG = new THREE.ConeGeometry(0.24, 0.62, 10)
+    const coneM = new THREE.MeshStandardMaterial({ color: 0xff6d1f, roughness: 0.7, emissive: 0x903500, emissiveIntensity: 0.5 })
+    for (let c = 0; c < 6; c++) {
+      const cone = new THREE.Mesh(coneG, coneM)
+      const approach = c < 3 ? -1 : 1
+      const spread = (c % 3 - 1) * 2.4
+      const cd = approach * (5.5 + rand() * 1.5)
+      const cx = axis === 'x' ? cd : spread
+      const cz = axis === 'x' ? spread : cd
+      cone.position.set(cx, 0.31, cz)
+      group.add(cone)
+    }
+
+    // The gathered crowd — a semicircle of bystanders on the sidewalk edge,
+    // kept OFF the drive surface so the player never ghosts through people
+    const crowdN = 5 + Math.floor(rand() * 3)
+    for (let i = 0; i < crowdN; i++) {
+      const a = (i / (crowdN - 1) - 0.5) * Math.PI * 1.1 + (rand() - 0.5) * 0.2
+      const r = 4.6 + rand() * 1.6
+      const spreadAlong = Math.sin(a) * r * 1.2
+      const sideOff = 5.4 + Math.abs(Math.cos(a)) * 3.2 + rand() * 0.8
+      const lx = axis === 'x' ? spreadAlong : sideOff
+      const lz = axis === 'x' ? sideOff : spreadAlong
+      this.makeBystander(group, lx, lz, Math.atan2(-lx, -lz))
+    }
+
+    this.scene.add(group)
+    this.accident = {
+      group,
+      axis,
+      lat,
+      along,
+      boxStart,
+      boxCount: 2,
+      idlerStart,
+      idlerCount: this.idlers.length - idlerStart,
+      hazardMats,
+      smokeTimer: 0,
+      despawnAt: this.time + 100,
+      warned: false,
+    }
+    this.accidentTimer = 90 + Math.random() * 60
+  }
+
+  private clearAccident(): void {
+    const ac = this.accident
+    if (!ac) return
+    this.scene.remove(ac.group)
+    this.buildings.splice(ac.boxStart, ac.boxCount)
+    this.idlers.splice(ac.idlerStart, ac.idlerCount)
+    this.accident = null
+  }
+
+  /** Standing onlooker, parented to the accident group (positions are local). */
+  private makeBystander(parent: THREE.Group, px: number, pz: number, rotY: number): void {
+    const charKeys = Object.keys(this.assets.chars)
+    if (charKeys.length === 0) return
+    const key = charKeys[Math.floor(Math.random() * charKeys.length)]
+    const { obj, clips } = cloneCharacter(this.assets, key)
+    const bb = new THREE.Box3().setFromObject(obj)
+    const h = bb.max.y - bb.min.y
+    const s = h > 0.01 ? (1.62 + Math.random() * 0.26) / h : 1
+    obj.scale.setScalar(s)
+    const tints = [0x8a94a6, 0xa67c52, 0x6b7c93, 0x9aa5b1, 0x7c6f8a, 0xb08968, 0x5f6e5e]
+    const tint = new THREE.Color(tints[Math.floor(Math.random() * tints.length)])
+    obj.traverse((o) => {
+      const m = o as THREE.Mesh
+      if (m.isMesh) {
+        const mat = (m.material as THREE.MeshStandardMaterial).clone()
+        mat.color = tint.clone()
+        m.material = mat
+      }
+    })
+    obj.position.y = -bb.min.y * s
+    const mixer = new THREE.AnimationMixer(obj)
+    const idleClip = clips.find((c) => /idle|stand/i.test(c.name)) ?? clips[0]
+    const action = mixer.clipAction(idleClip)
+    action.play()
+    action.timeScale = 0.85 + Math.random() * 0.3
+    const wrap = new THREE.Group()
+    wrap.add(obj)
+    wrap.position.set(px, 0, pz)
+    wrap.rotation.y = rotY
+    parent.add(wrap)
+    this.idlers.push({ mesh: wrap, mixer, baseY: 0 })
+  }
+
+  private startRushHour(): void {
+    this.rushActive = true
+    this.rushUntil = this.time + 70
+    this.rushTimer = 200 + Math.random() * 90
+    this.hooks.onToast('Rush hour — the avenues are jammed, side streets are faster', 'info')
+    // Flood the two central avenues with extra cars so the crawl is visible
+    const styles = ['sedan', 'sedan', 'hatch', 'van', 'taxi', 'hatch', 'sedan', 'van']
+    const cols = [0x8d99ae, 0x6fa35f, 0x4f8fb8, 0xe23b3b, 0xb8c0cc, 0x2f9fd8, 0xf0a020, 0x98a5b5]
+    const kC = Math.floor(N / 2)
+    for (let i = 0; i < 8; i++) {
+      const style = styles[i % styles.length]
+      const g = this.makeTrafficCar(style, style === 'taxi' ? 0xf59e0b : cols[i % cols.length])
+      const axis: 'x' | 'z' = i % 2 === 0 ? 'x' : 'z'
+      const road = -HALF + ROAD / 2 + (kC + (i % 4 < 2 ? 0 : 1)) * CELL
+      const lane = road + (Math.random() > 0.5 ? 2.6 : -2.6)
+      const dir: 1 | -1 = lane > road ? 1 : -1
+      const along = (Math.random() * 2 - 1) * (HALF - 15)
+      if (axis === 'x') {
+        g.position.set(along, 0, lane)
+        g.rotation.y = dir > 0 ? Math.PI / 2 : -Math.PI / 2
+      } else {
+        g.position.set(lane, 0, along)
+        g.rotation.y = dir > 0 ? 0 : Math.PI
+      }
+      this.scene.add(g)
+      const car: TrafficCar = { mesh: g, axis, lane, dir, speed: 0, cruise: 8 + Math.random() * 3, nmCooldown: 0 }
+      this.traffic.push(car)
+      this.rushCars.push(car)
+    }
+  }
+
+  private endRushHour(): void {
+    this.rushActive = false
+    for (const car of this.rushCars) {
+      this.scene.remove(car.mesh)
+      const idx = this.traffic.indexOf(car)
+      if (idx >= 0) this.traffic.splice(idx, 1)
+    }
+    this.rushCars = []
   }
 
   // =============== DRONES / HEAT ===============
@@ -4211,6 +4503,11 @@ export class GameEngine {
     return null
   }
 
+  /** Route color as an rgb triplet: yellow = mission, cyan = garage. */
+  private navColor(): string {
+    return this.mission ? '250,204,21' : '34,211,238'
+  }
+
   private drawMinimap(): void {
     const ctx = this.mmCtx
     const W = this.mmCanvas.width
@@ -4230,7 +4527,7 @@ export class GameEngine {
       const elbowRoad = this.isOnRoad(rt.x, this.pos.z)
       const ex = elbowRoad ? x1 : x0
       const ez = elbowRoad ? z0 : z1
-      const rgb = this.mission ? '250,204,21' : '34,211,238'
+      const rgb = this.navColor()
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
       ctx.strokeStyle = `rgba(${rgb},0.3)`
@@ -4419,7 +4716,7 @@ export class GameEngine {
       const elbowRoad = this.isOnRoad(navT.x, this.pos.z)
       const ex = elbowRoad ? x1 : x0
       const ez = elbowRoad ? z0 : z1
-      const rgb = this.mission ? '250,204,21' : '34,211,238'
+      const rgb = this.navColor()
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
       ctx.strokeStyle = `rgba(${rgb},0.3)`

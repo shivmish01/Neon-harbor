@@ -324,30 +324,38 @@
 .toast-warn { color: #f87171; border-color: rgba(248, 113, 113, 0.5); }
 .toast-good { color: #22d3ee; border-color: rgba(34, 211, 238, 0.5); }
 
-/* Dispatch-feed variant — CoD-Mobile-style chat cards stacked under the
-   minimap. Compact, left-aligned, tagged by channel, sliding in from the
-   right so they read as radio traffic, not center-screen popups. */
+/* Dispatch-feed variant — CoD-Mobile-style BARE TEXT lines stacked under the
+   minimap. No card, no background, no border: just shadowed text like the
+   CoDM chat feed, so the driving view stays 100% visible while the player
+   keeps moving. Tag is an inline bracket prefix colored by channel. */
 .toast-feed {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  border-radius: 0.55rem;
-  text-align: left;
-  padding: 0.3rem 0.55rem;
-  max-width: min(46vw, 13rem);
+  display: block;
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  text-align: right;
+  max-width: min(52vw, 15rem);
   font-size: 0.72rem;
-  line-height: 1.25;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #f1f5f9;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 8px rgba(0, 0, 0, 0.6);
   animation: toast-in-right 0.22s ease-out;
 }
 .toast-feed .toast-tag {
-  font-size: 7.5px;
-  letter-spacing: 0.18em;
   font-weight: 800;
-  opacity: 0.75;
+  letter-spacing: 0.02em;
+  margin-right: 0.3em;
 }
+.toast-feed.toast-info .toast-tag { color: #94a3b8; }
+.toast-feed.toast-cash .toast-tag { color: #34d399; }
+.toast-feed.toast-warn .toast-tag { color: #f87171; }
+.toast-feed.toast-good .toast-tag { color: #22d3ee; }
 @media (min-width: 641px) {
-  .toast-feed { font-size: 0.8rem; max-width: 15rem; padding: 0.4rem 0.7rem; }
+  .toast-feed { font-size: 0.8rem; max-width: 16rem; }
 }
 @keyframes toast-in-right {
   from { opacity: 0; transform: translateX(14px); }

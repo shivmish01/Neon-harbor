@@ -187,9 +187,9 @@ export default function App() {
 
   const pushToast = useCallback((msg: string, kind: Toast['kind']) => {
     const id = ++toastId
-    setToasts((t) => [...t.slice(-3), { id, msg, kind }])
+    setToasts((t) => [...t.slice(-3), { id, msg: isTouch ? sanitizeForTouch(msg) : msg, kind }])
     window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4200)
-  }, [])
+  }, [isTouch])
 
   // ---- vplay.gg helpers ----
   /** One-time milestones: each id is reported to vplay.gg at most once per save. */
@@ -1041,7 +1041,7 @@ export default function App() {
               <div className="flex flex-col items-end gap-1 pointer-events-none">
                 {toasts.map((t) => (
                   <div key={t.id} className={`toast toast-feed toast-${t.kind}`}>
-                    <span className="toast-tag">{t.kind === 'cash' ? 'PAYOUT' : t.kind === 'warn' ? 'ALERT' : t.kind === 'good' ? 'HARBOR RADIO' : 'DISPATCH'}</span>
+                    <span className="toast-tag">[{t.kind === 'cash' ? 'PAYOUT' : t.kind === 'warn' ? 'ALERT' : t.kind === 'good' ? 'HARBOR RADIO' : 'DISPATCH'}]</span>
                     <span>{t.msg}</span>
                   </div>
                 ))}
@@ -2159,6 +2159,23 @@ function SpeedDigits({ value, boosting }: { value: number; boosting: boolean }) 
       ))}
     </div>
   )
+}
+
+// Strip desktop-keyboard phrasing out of any engine toast before it reaches a
+// touch player — mobile must never see "press E / ESC / SHIFT / SPACE / WASD".
+function sanitizeForTouch(msg: string) {
+  return msg
+    .replace(/press E\b/gi, 'tap E')
+    .replace(/\bESC opens the menu\b/gi, 'tap ⏸ for the menu')
+    .replace(/\bESC\b/g, '⏸')
+    .replace(/hold SHIFT/gi, 'hold NITRO')
+    .replace(/\bSHIFT\b/g, 'NITRO')
+    .replace(/press R\b/gi, 'tap RESET')
+    .replace(/MASH SPACE/gi, 'MASH THE BUTTON')
+    .replace(/\bSPACE\b/g, 'DRIFT')
+    .replace(/press T\b/gi, 'tap ✕')
+    .replace(/\bWASD\b/g, 'the joystick')
+    .replace(/arrow keys/gi, 'the joystick')
 }
 
 function touchTitle(t: string) {
