@@ -3826,14 +3826,25 @@ export class GameEngine {
       const aSt = this.padSteer ?? this.swipeSteer ?? joySteer
       const steer = aSt !== null ? -aSt : (left ? 1 : 0) - (right ? 1 : 0)
       const grip = handbrake ? 1.4 : 7.5 * tiresMul
-      const turnRate = steer * 2.1 * tiresMul * THREE.MathUtils.clamp(Math.abs(s) / 10, 0, 1) * (handbrake ? 1.5 : 1)
+      // Steering authority normally scales with speed — but a throttle-held
+      // crawl must STILL turn (GTA-style). Without this floor, a car rolling
+      // at 2 km/h on sand ignores the swipe entirely and feels broken.
+      const speedF = Math.max(
+        THREE.MathUtils.clamp(Math.abs(s) / 10, 0, 1),
+        gas || braking ? 0.35 : 0
+      )
+      const turnRate = steer * 2.1 * tiresMul * speedF * (handbrake ? 1.5 : 1)
       this.heading += turnRate * dt * Math.sign(s >= 0 ? 1 : -1)
       const newDir = new THREE.Vector3(Math.sin(this.heading), 0, Math.cos(this.heading))
       const lat = this.vel.clone().sub(newDir.clone().multiplyScalar(this.vel.dot(newDir)))
       lat.multiplyScalar(Math.exp(-dt * grip))
       this.vel.copy(newDir.multiplyScalar(s)).add(lat)
       const onRoad = this.isOnRoad(this.pos.x, this.pos.z)
-      const drag = onRoad ? 0.45 : 2.6
+      // Off-road (sand/grass) slows you but must never feel like wet cement —
+      // the beach is a playground, not a trap. 1.2 gives ~70 km/h cruising on
+      // sand vs ~130 on asphalt, and lifting the throttle doesn't slam the
+      // car to a standstill.
+      const drag = onRoad ? 0.45 : 1.2
       this.vel.multiplyScalar(Math.exp(-dt * drag))
       // Stuck detection — NET-PROGRESS based, so it can never interrupt a car
       // that is actually moving. Samples every 0.75s: gas held + barely moved
@@ -4006,8 +4017,13 @@ export class GameEngine {
       const vDot = this.vel.x * nx + this.vel.z * nz
       if (vDot < 0) {
         const impact = -vDot
-        this.vel.x -= nx * vDot * 1.85
-        this.vel.z -= nz * vDot * 1.85
+        // Impact-scaled restitution: a gentle scrape against a pole or wall
+        // SLIDES along it (keeps your momentum, GTA-style); only a genuine
+        // crash gets bounced back. The old flat 1.85 rebound reversed the car
+        // on the lightest touch — that was the "everything stops me" feeling.
+        const bounce = impact > 6 ? 1.85 : 1.05
+        this.vel.x -= nx * vDot * bounce
+        this.vel.z -= nz * vDot * bounce
         // Grazes still register: tiny jolt so clipping a pole never feels free
         if (impact > 1.5) this.shake = Math.min(this.shake + impact * 0.02, 0.85)
         if (impact > 2.5) {
