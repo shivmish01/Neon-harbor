@@ -402,6 +402,15 @@ export class Synth {
     this.blip(1800, 0.12, 'sawtooth', 0.1, 0, 300)
   }
 
+  // Car explosion: deep rolling boom + crackle on top (WRECKED game over)
+  explosion(): void {
+    this.blip(52, 0.9, 'sawtooth', 0.5, 0, 22)
+    this.blip(38, 1.1, 'square', 0.4, 0.06, 18)
+    this.blip(900, 0.5, 'sawtooth', 0.25, 0, 80)
+    this.blip(2400, 0.18, 'square', 0.12, 0.02, 220)
+    this.blip(140, 0.7, 'sawtooth', 0.3, 0.25, 30)
+  }
+
   // Job accepted: rising confirm two-tone
   jobStart(): void {
     this.blip(523, 0.12, 'triangle', 0.2)

@@ -32,8 +32,10 @@ export interface SaveData {
   achievements: string[] // unlocked achievement ids
   districts: string[] // districts the player has entered at least once
   landmarks: string[] // discovered landmark names (persisted so reloads don't re-pay)
-  upgrades: Record<'engine' | 'nitro' | 'tires', number> // bought performance levels (0-3)
+  upgrades: Record<'engine' | 'nitro' | 'tires' | 'armor' | 'suspension' | 'horn', number> // bought performance levels (0-3)
   controls: 'joystick' | 'buttons' // touch control scheme
+  /** body damage 0-100 — crashes cost, the garage repairs. NEVER slows the car. */
+  damage: number
   /** vplay.gg milestone ids already reported — each is sent at most once */
   reportedMilestones: string[]
   stats: Stats
@@ -58,8 +60,9 @@ export function defaultSave(): SaveData {
     achievements: [],
     districts: [],
     landmarks: [],
-    upgrades: { engine: 0, nitro: 0, tires: 0 },
+    upgrades: { engine: 0, nitro: 0, tires: 0, armor: 0, suspension: 0, horn: 0 },
     controls: 'joystick',
+    damage: 0,
     reportedMilestones: [],
     stats: { deliveries: 0, races: 0, bestRace: 0, bestDrift: 0, busts: 0, fares: 0, getaways: 0 },
   }

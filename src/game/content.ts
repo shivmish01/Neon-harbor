@@ -45,7 +45,7 @@ export const GAME_VERSION = 'v1.0.0'
 export const GAME_TITLE = 'NEON HARBOR'
 
 // ---------- PERFORMANCE UPGRADES (cash-only — earned in-game, never VCoins) ----------
-export type UpgradeId = 'engine' | 'nitro' | 'tires'
+export type UpgradeId = 'engine' | 'nitro' | 'tires' | 'armor' | 'suspension' | 'horn'
 export interface UpgradeDef {
   id: UpgradeId
   name: string
@@ -55,14 +55,20 @@ export interface UpgradeDef {
   max: number
 }
 export const UPGRADES: UpgradeDef[] = [
-  { id: 'engine', name: 'Engine Tune', desc: 'More top speed, harder acceleration', icon: '🔧', prices: [800, 1800, 3500], max: 3 },
-  { id: 'nitro',  name: 'Nitro Kit',   desc: 'Boost lasts longer, refills faster',  icon: '⚡', prices: [600, 1500, 3000], max: 3 },
-  { id: 'tires',  name: 'Grip Tires',  desc: 'Sharper cornering, less slide',       icon: '🛞', prices: [500, 1200, 2500], max: 3 },
+  { id: 'engine',     name: 'Engine Tune',  desc: 'More top speed, harder acceleration',              icon: '🔧', prices: [800, 1800, 3500], max: 3 },
+  { id: 'nitro',      name: 'Nitro Kit',    desc: 'Boost lasts longer, refills faster',               icon: '⚡', prices: [600, 1500, 3000], max: 3 },
+  { id: 'tires',      name: 'Grip Tires',   desc: 'Sharper cornering, less slide',                    icon: '🛞', prices: [500, 1200, 2500], max: 3 },
+  { id: 'armor',      name: 'Roll Cage',    desc: 'Reinforced body — crashes hurt 15% less per level', icon: '🛡️', prices: [700, 1600, 3200], max: 3 },
+  { id: 'suspension', name: 'Stunt Suspension', desc: 'Ramps launch you further, landings stay glued', icon: '🦘', prices: [650, 1400, 2800], max: 3 },
+  { id: 'horn',       name: 'Air Horns',    desc: 'Louder blast — pedestrians scatter from further',   icon: '📯', prices: [300, 900, 2000],  max: 3 },
 ]
 export const ENGINE_MUL = (lv: number) => 1 + 0.09 * lv
 export const NITRO_REGEN_MUL = (lv: number) => 1 + 0.35 * lv
 export const NITRO_DRAIN_MUL = (lv: number) => 1 / (1 + 0.22 * lv)
 export const TIRES_MUL = (lv: number) => 1 + 0.07 * lv
+export const ARMOR_MUL = (lv: number) => 1 - 0.15 * lv
+export const LAUNCH_MUL = (lv: number) => 1 + 0.12 * lv
+export const HORN_RANGE = (lv: number) => 15 + 4 * lv
 
 // ---------- CAR SKINS ----------
 export const SKINS: Skin[] = [

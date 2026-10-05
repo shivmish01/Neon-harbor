@@ -9,7 +9,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { getSkin, getTheme, ACHIEVEMENTS, DISTRICTS, districtAt, ENGINE_MUL, NITRO_REGEN_MUL, NITRO_DRAIN_MUL, TIRES_MUL } from './content'
+import { getSkin, getTheme, ACHIEVEMENTS, DISTRICTS, districtAt, ENGINE_MUL, NITRO_REGEN_MUL, NITRO_DRAIN_MUL, TIRES_MUL, ARMOR_MUL, LAUNCH_MUL, HORN_RANGE } from './content'
 import { grantXp, xpForLevel, type SaveData } from './save'
 import { Synth } from './audio'
 import { cloneCar, cloneCharacter, CITY_BY_KIND, type GameAssets } from './assets'
@@ -45,6 +45,10 @@ export interface HudState {
   nearGarage: boolean
   busted: boolean
   boosting: boolean
+  /** body damage 0-100 — HUD wrench bar; heavy damage bleeds speed, 100 = WRECKED */
+  damage: number
+  /** car exploded at 100% damage — game over overlay, tow to garage */
+  wrecked: boolean
   /** car is wedged (gas held but no movement) — HUD offers the reset recovery */
   stuck: boolean
 }
@@ -55,6 +59,7 @@ export interface EngineHooks {
   onHud(h: HudState): void
   onToast(msg: string, kind: 'info' | 'cash' | 'warn' | 'good'): void
   onBusted(): void
+  onWrecked(): void
   onLevelUp(level: number): void
   onMissionDone(name: string, reward: number): void
   onPressE(): void
@@ -159,6 +164,8 @@ interface TrafficCar {
   speed: number
   cruise: number
   nmCooldown: number
+  /** horn yield: drift toward the road edge for this many seconds */
+  yieldT: number
 }
 
 type Mission =
@@ -234,7 +241,14 @@ export class GameEngine {
 
   // Car state
   private car = new THREE.Group()
-  private bodyMat = new THREE.MeshStandardMaterial({ color: 0x8a93a6, metalness: 0.7, roughness: 0.35 })
+  private bodyMat = new THREE.MeshPhysicalMaterial({
+    color: 0x8a93a6,
+    metalness: 0.72,
+    roughness: 0.2,
+    clearcoat: 1,
+    clearcoatRoughness: 0.08,
+    reflectivity: 0.9,
+  }) // candy-clearcoat paint — neon signs slide across the body at night
   private glowLight = new THREE.PointLight(0x22d3ee, 2.2, 12)
   private headL: THREE.SpotLight
   private headR: THREE.SpotLight
@@ -313,6 +327,8 @@ export class GameEngine {
     returnAxis: 'x' | 'z'
     // life behaviors: phone pauses + startled glance at fast cars
     pausing: boolean; pauseLeft: number; pauseT: number; glanceT: number
+    /** horn panic: dive directly away from the car for this many seconds */
+    panicT: number
     dog?: THREE.Group
   }[] = []
   private crates: { mesh: THREE.Mesh; active: boolean; respawn: number }[] = []
@@ -329,6 +345,7 @@ export class GameEngine {
     this.hooks = hooks
     this.assets = assets
     this.canvas = canvas
+    this.damage = Math.max(0, Math.min(100, hooks.getSave().damage ?? 0))
 
     let renderer: THREE.WebGLRenderer
     try {
@@ -1279,6 +1296,126 @@ export class GameEngine {
       this.ramps.push({ x, z, angle })
     }
 
+    // ---- SOUTH BRIDGE & LIGHTHOUSE ISLAND --------------------------------
+    // A neon-railed bridge over the open sea to a palm island with a working
+    // lighthouse — the scenic drive of the map. Drivable bounds live in
+    // collide(); the deck connects the beach ring to the island sand.
+    {
+      const bridgeStart = HALF + 44 // just past the sand ring
+      const islandC = HALF + 170
+      const islandR = 48
+      const deckLen = islandC - islandR + 8 - bridgeStart
+      const deckZ = bridgeStart + deckLen / 2
+      const deck = new THREE.Mesh(
+        new THREE.BoxGeometry(18, 0.6, deckLen),
+        new THREE.MeshStandardMaterial({ color: 0x2b3242, roughness: 0.55, metalness: 0.35 })
+      )
+      deck.position.set(0, 0.02, deckZ)
+      deck.receiveShadow = true
+      this.scene.add(deck)
+      // Neon edge rails — they glow the way across at night
+      const railMat = new THREE.MeshStandardMaterial({ color: 0x1c2230, emissive: 0x22d3ee, emissiveIntensity: 0.9, roughness: 0.4 })
+      for (const sx of [-8.6, 8.6]) {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.35, 1.0, deckLen), railMat)
+        rail.position.set(sx, 0.75, deckZ)
+        this.scene.add(rail)
+      }
+      // Support pillars + warm lamp dots alternating sides
+      const pillarMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.8 })
+      const lampMat = new THREE.MeshStandardMaterial({ color: 0x111827, emissive: 0xffd27d, emissiveIntensity: 1.8 })
+      let lampSide = 1
+      for (let d = bridgeStart + 8; d < bridgeStart + deckLen - 4; d += 16) {
+        for (const sx of [-6, 6]) {
+          const p = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1.1, 9, 8), pillarMat)
+          p.position.set(sx, -4, d)
+          this.scene.add(p)
+        }
+        const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 8), lampMat)
+        lamp.position.set(8.6 * lampSide, 1.7, d)
+        this.scene.add(lamp)
+        lampSide *= -1
+      }
+      // Mega ramp mid-bridge — hit it on nitro and you fly toward the island
+      const mega = new THREE.Mesh(new THREE.BoxGeometry(9, 0.7, 10), rampMat)
+      mega.position.set(0, 0.95, bridgeStart + deckLen * 0.45)
+      mega.rotation.x = -0.3
+      this.scene.add(mega)
+      this.ramps.push({ x: 0, z: bridgeStart + deckLen * 0.45, angle: Math.PI / 2 })
+      // Island: sand disc + grass heart
+      const islSand = new THREE.Mesh(
+        new THREE.CylinderGeometry(islandR, islandR + 3, 0.9, 40),
+        new THREE.MeshStandardMaterial({ color: 0xdfd29a, roughness: 0.95 })
+      )
+      islSand.position.set(0, 0.12, islandC)
+      islSand.receiveShadow = true
+      this.scene.add(islSand)
+      const islGrass = new THREE.Mesh(
+        new THREE.CylinderGeometry(29, 29, 0.4, 32),
+        new THREE.MeshStandardMaterial({ color: 0x3f7a52, roughness: 0.9 })
+      )
+      islGrass.position.set(0, 0.62, islandC)
+      this.scene.add(islGrass)
+      // Palms
+      const trunkMat = new THREE.MeshStandardMaterial({ color: 0x8a6a45, roughness: 0.9 })
+      const frondMat = new THREE.MeshStandardMaterial({ color: 0x2e7d4f, roughness: 0.85, side: THREE.DoubleSide })
+      const palmRand = seededRand(777)
+      for (let i = 0; i < 10; i++) {
+        const a = palmRand() * Math.PI * 2
+        const r = 20 + palmRand() * 20
+        const px = Math.cos(a) * r
+        const pz = islandC + Math.sin(a) * r * 0.85
+        if (Math.abs(px) < 6 && pz < islandC - 20) continue // keep the bridge mouth clear
+        const lean = (palmRand() - 0.5) * 0.3
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.36, 5.6, 6), trunkMat)
+        trunk.position.set(px, 3.1, pz)
+        trunk.rotation.z = lean
+        trunk.castShadow = true
+        this.scene.add(trunk)
+        for (let f = 0; f < 6; f++) {
+          const frond = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 0.9), frondMat)
+          frond.position.set(px - Math.sin(lean) * 2.6, 6.1, pz)
+          frond.rotation.y = (f / 6) * Math.PI * 2
+          frond.rotation.x = -0.55
+          frond.translateY(1.1)
+          this.scene.add(frond)
+        }
+        this.buildings.push({ minX: px - 0.45, maxX: px + 0.45, minZ: pz - 0.45, maxZ: pz + 0.45 })
+      }
+      // Lighthouse: striped tower, lamp room, rotating beam
+      const lhX = 16
+      const lhZ = islandC + 14
+      const stripeW = new THREE.MeshStandardMaterial({ color: 0xf2f4f6, roughness: 0.6 })
+      const stripeR = new THREE.MeshStandardMaterial({ color: 0xc9303c, roughness: 0.6 })
+      for (let sgm = 0; sgm < 4; sgm++) {
+        const t = new THREE.Mesh(new THREE.CylinderGeometry(2.0 - sgm * 0.22, 2.2 - sgm * 0.22, 3.4, 12), sgm % 2 === 0 ? stripeW : stripeR)
+        t.position.set(lhX, 2.2 + sgm * 3.4, lhZ)
+        t.castShadow = true
+        this.scene.add(t)
+      }
+      const lampRoom = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.3, 1.3, 1.8, 10),
+        new THREE.MeshStandardMaterial({ color: 0x1f2937, emissive: 0xfff2b0, emissiveIntensity: 2.4 })
+      )
+      lampRoom.position.set(lhX, 15.6, lhZ)
+      this.scene.add(lampRoom)
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(1.7, 1.6, 10), stripeR)
+      roof.position.set(lhX, 17.2, lhZ)
+      this.scene.add(roof)
+      const beamGeom = new THREE.ConeGeometry(7, 46, 16, 1, true)
+      beamGeom.rotateX(-Math.PI / 2) // point the cone along +z
+      beamGeom.translate(0, 0, 23)
+      this.lighthouseBeam = new THREE.Mesh(beamGeom, new THREE.MeshBasicMaterial({
+        color: 0xfff2b0, transparent: true, opacity: 0.12, depthWrite: false,
+        blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      }))
+      this.lighthouseBeam.position.set(lhX, 15.6, lhZ)
+      this.scene.add(this.lighthouseBeam)
+      const lhGlow = new THREE.PointLight(0xfff2b0, 60, 60, 1.6)
+      lhGlow.position.set(lhX, 15.6, lhZ)
+      this.scene.add(lhGlow)
+      this.buildings.push({ minX: lhX - 2.6, maxX: lhX + 2.6, minZ: lhZ - 2.6, maxZ: lhZ + 2.6 })
+    }
+
     // Spawn just past the gantry so the neon arch frames the player's starting view instead of filling it
     this.pos.set(gx, 0, gz + 19)
     this.drawMinimapBase()
@@ -1691,6 +1828,27 @@ export class GameEngine {
   private rushUntil = 0
   private rushTimer = 150
   private rushCars: TrafficCar[] = []
+
+  // ---- Body damage -------------------------------------------------------
+  // Simulator-style damage: crashes dent the car, heavy damage bleeds speed,
+  // the paint fades, smoke pours out — and at 100% the car EXPLODES (WRECKED).
+  private damage = 0
+  private damageSmokeT = 0
+  private damageWarned50 = false
+  private damageWarned80 = false
+  private damageCommitAt = 0
+  private wrecked = false
+  private wreckBurnT = 0
+  private baseBodyColor = new THREE.Color(0x8a93a6)
+  private hornHeld = false
+  private hornCd = 0
+  private screamCd = 0
+  // Police chopper spotlight that pins the car during a chase
+  private chaseSpot: THREE.SpotLight | null = null
+  private chaseCone: THREE.Mesh | null = null
+  // Lighthouse island: rotating beam + visit-reward cooldown
+  private lighthouseBeam: THREE.Mesh | null = null
+  private islandCd = 0
 
   private skyBackground(t: ReturnType<typeof getTheme>): THREE.Texture | THREE.Color {
     if (this.skyCache[t.id]) return this.skyCache[t.id]
@@ -2686,7 +2844,7 @@ export class GameEngine {
       van: [0xb8c0cc, 0x6fa35f, 0x4f8fb8, 0x98a5b5],
       sport: [0xfacc15, 0x22d3ee, 0xff4d6d, 0xf2f6ff],
     }
-    const styles = ['sedan', 'sedan', 'hatch', 'hatch', 'van', 'taxi', 'sport', 'sedan', 'hatch', 'van', 'sedan', 'sport', 'sedan', 'hatch', 'van', 'sedan', 'taxi', 'hatch', 'sport', 'sedan']
+    const styles = ['sedan', 'sedan', 'hatch', 'hatch', 'van', 'taxi', 'sport', 'sedan', 'hatch', 'van', 'sedan', 'sport', 'sedan', 'hatch', 'van', 'sedan', 'taxi', 'hatch', 'sport', 'sedan', 'taxi', 'hatch', 'sedan', 'van', 'sport', 'hatch', 'sedan', 'taxi']
     for (let k = 0; k < styles.length; k++) {
       const style = styles[k]
       const palette = style === 'taxi' ? [0xf59e0b] : palettes[style] ?? palettes.sedan
@@ -2704,7 +2862,7 @@ export class GameEngine {
         g.rotation.y = dir > 0 ? 0 : Math.PI
       }
       this.scene.add(g)
-      this.traffic.push({ mesh: g, axis, lane, dir, speed: 0, cruise: 8 + rand() * 4, nmCooldown: 0 })
+      this.traffic.push({ mesh: g, axis, lane, dir, speed: 0, cruise: 8 + rand() * 4, nmCooldown: 0, yieldT: 0 })
     }
   }
 
@@ -2759,6 +2917,8 @@ export class GameEngine {
     const skin = getSkin(save.skin)
     const theme = getTheme(save.theme)
     this.bodyMat.color.setHex(skin.body)
+    this.baseBodyColor.setHex(skin.body)
+    this.applyDamageLook() // re-apply fade if the car is already dented
     this.applyCarModel()
     this.glowLight.color.setHex(skin.glow)
     if (this.glowDisc) {
@@ -3010,7 +3170,9 @@ export class GameEngine {
       this.synth.checkpoint()
     }
     if (k === 'p' && !this.attract && !this.paused) this.hooks.onPhotoToggle?.()
-    if (k === 'h') this.synth.horn()
+    // 'h' horn: direct blast here (covers touchTap from the mobile HORN button);
+    // the keys-set edge detect in updateCar covers held keys — hornCd dedupes.
+    if (k === 'h') this.hornBlast()
     if (k === 't' && !this.attract && !this.paused) {
       const s = this.hooks.getSave()
       if (!s.tutorialDone) {
@@ -3174,6 +3336,45 @@ export class GameEngine {
     this.updateLandmarks(dt)
     this.updateDistricts(dt)
     this.updateDronesAndHeat(dt)
+    // Horn & scream cooldowns
+    this.hornCd = Math.max(0, this.hornCd - dt)
+    this.screamCd = Math.max(0, this.screamCd - dt)
+    // Damage smoke: a battered car vents from the hood — grey puffs at 55%+,
+    // thick black columns at 80%+, and the wreck keeps burning after the boom.
+    if (this.wrecked) {
+      this.wreckBurnT -= dt
+      if (this.wreckBurnT <= 0) {
+        this.wreckBurnT = 0.09
+        const a = Math.random() * Math.PI * 2
+        const r = Math.random() * 1.4
+        this.emitPuff(
+          this.pos.x + Math.cos(a) * r, 0.8 + Math.random() * 0.8, this.pos.z + Math.sin(a) * r,
+          Math.random() > 0.55 ? 0xff7a1a : 0x1c1c20, 1.6 + Math.random() * 1.2, 1.2, Math.random() > 0.55
+        )
+      }
+      // The wreck rolls to a stop — nothing else drives it
+      this.vel.multiplyScalar(Math.max(0, 1 - 2.2 * dt))
+    } else if (this.damage > 55) {
+      this.damageSmokeT -= dt
+      if (this.damageSmokeT <= 0) {
+        this.damageSmokeT = this.damage > 80 ? 0.12 : 0.32
+        const hx = this.pos.x + Math.sin(this.heading) * 1.8
+        const hz = this.pos.z + Math.cos(this.heading) * 1.8
+        this.emitPuff(hx, 1.2, hz, this.damage > 80 ? 0x1c1c20 : 0x555a63, this.damage > 80 ? 2.4 : 1.8, 1.5, false)
+      }
+    }
+    this.updateChaseSpotlight()
+    // Lighthouse beam sweeps the sea; reaching the island pays a cruise bonus
+    if (this.lighthouseBeam) this.lighthouseBeam.rotation.y += dt * 0.7
+    this.islandCd = Math.max(0, this.islandCd - dt)
+    if (this.islandCd <= 0 && this.pos.z > HALF + 130) {
+      const rI = Math.hypot(this.pos.x, this.pos.z - (HALF + 170))
+      if (rI < 40) {
+        this.islandCd = 45
+        this.addChain(150, 'Lighthouse run')
+        this.synth.checkpoint()
+      }
+    }
     // street cred chain decay
     if (this.chainTimer > 0) {
       this.chainTimer -= dt
@@ -3249,7 +3450,7 @@ export class GameEngine {
     // Edge-triggered buttons (compare with previous frame)
     const edge = (i: number) => btn(i) && !this.padPrev[i]
     if (edge(1) && !this.attract) this.camDist = this.camDist > 12 ? 10 : 17 // B: camera
-    if (edge(2)) this.synth.horn() // X
+    if (edge(2)) this.hornBlast() // X
     if (edge(9) && !this.attract && !this.paused) this.hooks.onPauseToggle?.() // START
     this.padPrev = pad.buttons.map((b) => b.pressed)
   }
@@ -3328,11 +3529,16 @@ export class GameEngine {
       this.setAttract(false)
     }
 
+    // Horn: edge-detect on the keys set so keyboard AND touch HORN button both work
+    const hornNow = this.keys.has('h')
+    if (hornNow && !this.hornHeld && !this.attract) this.hornBlast()
+    this.hornHeld = hornNow
+
     const dir = new THREE.Vector3(Math.sin(this.heading), 0, Math.cos(this.heading))
     let s = this.vel.dot(dir)
 
     // Performance upgrades from the shop (cash-bought levels, 0-3 each)
-    const upg = this.hooks.getSave().upgrades ?? { engine: 0, nitro: 0, tires: 0 }
+    const upg = this.hooks.getSave().upgrades ?? { engine: 0, nitro: 0, tires: 0, armor: 0, suspension: 0, horn: 0 }
     const engineMul = ENGINE_MUL(upg.engine)
     const tiresMul = TIRES_MUL(upg.tires)
 
@@ -3341,7 +3547,11 @@ export class GameEngine {
       this.bustedCooldown -= dt
       if (this.bustedCooldown <= 0) this.busted = false
     }
-    const frozen = this.busted || this.attract
+    const frozen = this.busted || this.attract || this.wrecked
+
+    // Simulator damage: a beaten engine loses power — acceleration and top
+    // speed bleed off as damage climbs (never a hard stop, just a sick car).
+    const dmgMul = 1 - (this.damage / 100) * 0.4
 
     if (!frozen && wantBoost && this.boost > 0 && s > 4) {
       this.boosting = true
@@ -3366,9 +3576,9 @@ export class GameEngine {
       const gasPower = aGas ? THREE.MathUtils.clamp((aThr - 0.12) / 0.43, 0, 1) : 0
       const gas = up || aGas
       const braking = down || (aThr !== null && aThr < -0.12)
-      if (gas) s += ACCEL * engineMul * (aGas && !up ? gasPower : 1) * mult * dt
+      if (gas) s += ACCEL * engineMul * dmgMul * (aGas && !up ? gasPower : 1) * mult * dt
       if (braking) s -= (s > 1 ? BRAKE : ACCEL * engineMul * 0.6) * dt
-      const maxS = MAX_SPEED * engineMul * mult
+      const maxS = MAX_SPEED * engineMul * dmgMul * mult
       s = THREE.MathUtils.clamp(s, -10, maxS)
       // Swipe steering is motion-based (CoD-style): finger movement adds steer
       // input which bleeds off fast — a held-still finger goes straight.
@@ -3449,14 +3659,15 @@ export class GameEngine {
       this.flameR.scale.set(1, 0.8 + Math.random() * 0.6, 1)
     }
 
-    // Gravity / jumps
+    // Gravity / jumps — hit a ramp fast (especially on nitro) and you can
+    // clear a rooftop: above y=5 building collision is skipped mid-flight.
     if (this.grounded) {
       for (const r of this.ramps) {
         const dx = this.pos.x - r.x
         const dz = this.pos.z - r.z
         const sp = this.vel.length()
         if (dx * dx + dz * dz < 9 && sp > 13) {
-          this.vy = sp * 0.42
+          this.vy = sp * 0.6 * LAUNCH_MUL(upg.suspension ?? 0)
           this.grounded = false
           this.airTime = 0
           this.synth.jump()
@@ -3464,7 +3675,7 @@ export class GameEngine {
       }
     }
     if (!this.grounded) {
-      this.vy -= 32 * dt
+      this.vy -= 26 * dt
       this.pos.y += this.vy * dt
       this.airTime += dt
       if (this.pos.y <= 0) {
@@ -3532,6 +3743,12 @@ export class GameEngine {
   }
 
   private isOnRoad(x: number, z: number): boolean {
+    // South bridge deck + lighthouse island count as drivable surface —
+    // without this the off-road drag makes them feel like wet cement
+    if (z > HALF + 38) {
+      if (Math.abs(x) < 9.5 && z < HALF + 130) return true
+      if (Math.hypot(x, z - (HALF + 170)) < 47) return true
+    }
     const rx = ((x + HALF) % CELL + CELL) % CELL
     const rz = ((z + HALF) % CELL + CELL) % CELL
     return rx < ROAD || rz < ROAD
@@ -3562,6 +3779,7 @@ export class GameEngine {
         if (impact > 2.5) {
           this.shake = Math.min(this.shake + impact * 0.05, 0.85)
           this.synth.thud()
+          this.addDamage(impact * 0.4)
           this.emitPuff(
             this.pos.x + nx * 1.6, 0.5 + Math.random() * 0.4, this.pos.z + nz * 1.6,
             0xffd27d, 0.2 + Math.random() * 0.15, 0.25, true
@@ -3591,11 +3809,230 @@ export class GameEngine {
     if (this.pos.x < -L) { this.pos.x = -L; this.vel.x = Math.abs(this.vel.x) * 0.4 }
     if (this.pos.x > L) { this.pos.x = L; this.vel.x = -Math.abs(this.vel.x) * 0.4 }
     if (this.pos.z < -L) { this.pos.z = -L; this.vel.z = Math.abs(this.vel.z) * 0.4 }
-    if (this.pos.z > L) { this.pos.z = L; this.vel.z = -Math.abs(this.vel.z) * 0.4 }
+    // South: past the sand the only way out to sea is the bridge deck, and it
+    // ends at the lighthouse island. Rails and the island rim do the clamping.
+    if (this.pos.z > L) {
+      const islandC = HALF + 170
+      const dzI = this.pos.z - islandC
+      const rI = Math.hypot(this.pos.x, dzI)
+      if (Math.abs(this.pos.x) < 8.4 && this.pos.z < islandC - 36) {
+        // Bridge deck — the neon rails mark the edges; the corridor is open
+      } else if (rI < 47) {
+        // Open island ground — clamp at the sand rim (but never trap the
+        // bridge mouth: the corridor branch above wins there)
+        if (rI > 44) {
+          const f = 44 / rI
+          this.pos.x *= f
+          this.pos.z = islandC + dzI * f
+          this.vel.multiplyScalar(0.5)
+        }
+      } else if (Math.abs(this.pos.x) < 14 && this.pos.z < islandC - 40) {
+        // Straddling a rail — nudge back onto the deck
+        this.pos.x = Math.sign(this.pos.x || 1) * 8.4
+        this.vel.x = -this.vel.x * 0.3
+      } else {
+        // Open sea — bounce back to the beach
+        this.pos.z = L
+        this.vel.z = -Math.abs(this.vel.z) * 0.4
+      }
+    }
   }
 
-  private grantCash(amount: number): void {
+  /** Add body damage from a crash. Heavy damage bleeds speed, fades the paint,
+      pours smoke — and at 100% the car explodes (WRECKED game over). */
+  private addDamage(amount: number): void {
+    if (amount <= 0 || this.wrecked) return
+    // Roll Cage upgrade soaks a chunk of every impact
+    amount *= ARMOR_MUL(this.hooks.getSave().upgrades?.armor ?? 0)
+    this.damage = Math.min(100, this.damage + amount)
+    this.applyDamageLook()
+    if (this.damage >= 50 && !this.damageWarned50) {
+      this.damageWarned50 = true
+      this.hooks.onToast('Body work is dented — she\'s losing power. The garage can hammer it out', 'info')
+    }
+    if (this.damage >= 80 && !this.damageWarned80) {
+      this.damageWarned80 = true
+      this.hooks.onToast('She\'s smoking bad — one more hard hit and she\'s done!', 'warn')
+    }
+    // Persist in 4-point steps so a demolition derby doesn't hammer localStorage
+    if (Math.abs(this.damage - this.damageCommitAt) >= 4 || this.damage >= 100) {
+      this.damageCommitAt = this.damage
+      const save = this.hooks.getSave()
+      save.damage = Math.round(this.damage)
+      this.hooks.commit()
+    }
+    if (this.damage >= 100) this.explode()
+  }
+
+  /** Paint fades + clearcoat dulls as damage climbs — a beaten car looks beaten. */
+  private applyDamageLook(): void {
+    const f = this.damage / 100
+    const faded = this.baseBodyColor.clone().lerp(new THREE.Color(0x4a4d52), f * 0.8)
+    this.bodyMat.color.copy(faded)
+    this.bodyMat.clearcoat = 1 - f * 0.75
+    this.bodyMat.roughness = 0.2 + f * 0.55
+  }
+
+  /** 100% damage: the car goes up in a fireball. Game over — tow it home. */
+  private explode(): void {
+    if (this.wrecked) return
+    this.wrecked = true
+    this.wreckBurnT = 0
+    this.synth.explosion()
+    this.shake = 1.6
+    this.speakPanic(true)
+    // Fireball: a ring of fire puffs + thick black smoke column
+    for (let i = 0; i < 26; i++) {
+      const a = Math.random() * Math.PI * 2
+      const r = Math.random() * 2.6
+      this.emitPuff(
+        this.pos.x + Math.cos(a) * r, 0.4 + Math.random() * 2.4, this.pos.z + Math.sin(a) * r,
+        Math.random() > 0.4 ? 0xff7a1a : 0xffd23d, 2.2 + Math.random() * 1.6, 1.1, true
+      )
+    }
+    for (let i = 0; i < 14; i++) {
+      const a = Math.random() * Math.PI * 2
+      this.emitPuff(
+        this.pos.x + Math.cos(a) * 1.6, 1.5 + Math.random() * 3, this.pos.z + Math.sin(a) * 1.6,
+        0x1c1c20, 2.8 + Math.random() * 1.4, 2.4, false
+      )
+    }
+    // The wreck keeps the damage; save it
     const save = this.hooks.getSave()
+    save.damage = 100
+    this.hooks.commit()
+    this.hooks.onWrecked()
+  }
+
+  /** After WRECKED: pay the tow, the car is hauled to the garage, patched to 45%. */
+  towToGarage(): void {
+    if (!this.wrecked) return
+    const save = this.hooks.getSave()
+    const fee = Math.min(save.cash, 150)
+    save.cash -= fee
+    this.damage = 45
+    this.damageCommitAt = 45
+    this.damageWarned80 = false
+    save.damage = 45
+    this.hooks.commit()
+    this.wrecked = false
+    this.applyDamageLook()
+    this.vel.set(0, 0, 0)
+    this.heat = 0
+    this.debugTeleport(this.garagePos.x + 4, this.garagePos.z, Math.PI / 2)
+    this.hooks.onToast(`Towed to the garage (-$${fee}) — get her repaired`, 'info')
+  }
+
+  /** Repair quote at the garage: $4 per damage point. */
+  repairCost(): number {
+    return Math.ceil(this.damage * 4)
+  }
+
+  /** Full repair at the garage. Returns true if paid and fixed. */
+  repair(): boolean {
+    const save = this.hooks.getSave()
+    const cost = this.repairCost()
+    if (this.damage < 1 || save.cash < cost) return false
+    save.cash -= cost
+    this.damage = 0
+    this.damageCommitAt = 0
+    this.damageWarned50 = false
+    this.damageWarned80 = false
+    save.damage = 0
+    this.hooks.commit()
+    this.applyDamageLook()
+    this.synth.missionDone()
+    this.hooks.onToast(`Good as new — repairs done (-$${cost})`, 'good')
+    return true
+  }
+
+  /** Panicked pedestrian voice lines via speech synthesis — rate-limited. */
+  private speakPanic(force = false): void {
+    if (!force && this.screamCd > 0) return
+    this.screamCd = force ? 0.8 : 1.6
+    try {
+      const ss = window.speechSynthesis
+      if (!ss) return
+      const lines = [
+        'Oh no!', "Don't kill me!", 'Watch out!', 'Help!', 'Aah!',
+        "Hey! I'm walking here!", 'Are you blind?!', 'Somebody call the patrol!',
+      ]
+      const u = new SpeechSynthesisUtterance(lines[Math.floor(Math.random() * lines.length)])
+      u.pitch = 1.2 + Math.random() * 0.7
+      u.rate = 1.1 + Math.random() * 0.4
+      u.volume = 0.75
+      ss.speak(u)
+    } catch {
+      /* speech unavailable — the dive animation still sells the panic */
+    }
+  }
+
+  /** HORN: blast the two-tone, pedestrians dive aside, traffic ahead pulls over.
+      Air Horns upgrade widens the blast radius. */
+  hornBlast(): void {
+    if (this.hornCd > 0) return
+    this.hornCd = 0.8
+    this.synth.horn()
+    const range = HORN_RANGE(this.hooks.getSave().upgrades?.horn ?? 0)
+    let panicked = false
+    for (const p of this.peds) {
+      if (p.state !== 0) continue
+      const dx = p.x - this.pos.x
+      const dz = p.z - this.pos.z
+      if (dx * dx + dz * dz < range * range) {
+        p.panicT = 2.2
+        panicked = true
+      }
+    }
+    if (panicked && Math.random() < 0.5) this.speakPanic()
+    // Traffic ahead in the same direction yields: drift toward the road edge
+    const dir = new THREE.Vector3(Math.sin(this.heading), 0, Math.cos(this.heading))
+    for (const t of this.traffic) {
+      const rx = t.mesh.position.x - this.pos.x
+      const rz = t.mesh.position.z - this.pos.z
+      const ahead = rx * dir.x + rz * dir.z
+      if (ahead > 2 && ahead < 18 && Math.abs(rx * dir.z - rz * dir.x) < 5) t.yieldT = 2.5
+    }
+  }
+
+  /** Police chopper spotlight: pins the car in a sweeping beam while a chase
+      is on — pure Hollywood, sells the "save yourself" moment. */
+  private updateChaseSpotlight(): void {
+    const active = this.heat >= 1 && !this.busted && !this.wrecked && this.cruiserNearest < 40
+    if (active && !this.chaseSpot) {
+      this.chaseSpot = new THREE.SpotLight(0xcfe6ff, 0, 140, 0.32, 0.45, 1)
+      this.scene.add(this.chaseSpot, this.chaseSpot.target)
+      const coneGeom = new THREE.CylinderGeometry(0.6, 7.5, 34, 16, 1, true)
+      coneGeom.translate(0, -17, 0) // origin at the top, opens downward
+      this.chaseCone = new THREE.Mesh(coneGeom, new THREE.MeshBasicMaterial({
+        color: 0xcfe6ff, transparent: true, opacity: 0.1, depthWrite: false,
+        blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      }))
+      this.chaseCone.visible = false
+      this.scene.add(this.chaseCone)
+    }
+    if (!this.chaseSpot || !this.chaseCone) return
+    if (!active) {
+      this.chaseSpot.intensity = 0
+      this.chaseCone.visible = false
+      return
+    }
+    // The chopper hovers above the car, swaying gently as it tracks
+    const sway = this.time * 0.7
+    const sx = this.pos.x + Math.sin(sway) * 7
+    const sz = this.pos.z + Math.cos(sway * 0.8) * 7
+    const sy = 34
+    this.chaseSpot.position.set(sx, sy, sz)
+    this.chaseSpot.target.position.set(this.pos.x, 0.5, this.pos.z)
+    this.chaseSpot.intensity = 260
+    this.chaseCone.visible = true
+    this.chaseCone.position.set(sx, sy, sz)
+    const dir = new THREE.Vector3(this.pos.x - sx, 0.5 - sy, this.pos.z - sz).normalize()
+    this.chaseCone.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir)
+    ;(this.chaseCone.material as THREE.MeshBasicMaterial).opacity = 0.08 + Math.sin(this.time * 6) * 0.03
+  }
+
+  private grantCash(amount: number): void {    const save = this.hooks.getSave()
     save.cash = Math.max(0, save.cash + amount)
     this.hooks.commit()
     // Reward feedback: register ping, rate-limited so chains don't machine-gun
@@ -3718,6 +4155,15 @@ export class GameEngine {
       }
       const braking = blocked || (lightCap !== null && lightCap < t.speed)
       t.speed += (target - t.speed) * Math.min(dt * (braking ? 5 : 0.8), 1)
+      // Horn yield: drift toward the road edge to let the player through
+      t.yieldT = Math.max(0, t.yieldT - dt)
+      if (t.yieldT > 0) {
+        const rc = -HALF + ROAD / 2 + Math.round((t.lane + HALF - ROAD / 2) / CELL) * CELL
+        const side = t.lane >= rc ? 1 : -1
+        const edge = rc + side * (ROAD / 2 - 1.6)
+        t.lane += (edge - t.lane) * Math.min(dt * 2.2, 1)
+        t.speed += t.cruise * 0.15 * dt
+      }
       const step = t.speed * dt * t.dir
       if (t.axis === 'x') p.x += step
       else p.z += step
@@ -3759,6 +4205,7 @@ export class GameEngine {
           if (impact > 4) {
             this.shake = Math.min(this.shake + impact * 0.04, 0.8)
             this.synth.thud()
+            this.addDamage(impact * 0.3)
             if (impact > 10) this.heat = Math.min(5, this.heat + 0.25)
           }
         }
@@ -3963,10 +4410,10 @@ export class GameEngine {
     this.rushTimer = 200 + Math.random() * 90
     this.hooks.onToast('Rush hour — the avenues are jammed, side streets are faster', 'info')
     // Flood the two central avenues with extra cars so the crawl is visible
-    const styles = ['sedan', 'sedan', 'hatch', 'van', 'taxi', 'hatch', 'sedan', 'van']
-    const cols = [0x8d99ae, 0x6fa35f, 0x4f8fb8, 0xe23b3b, 0xb8c0cc, 0x2f9fd8, 0xf0a020, 0x98a5b5]
+    const styles = ['sedan', 'sedan', 'hatch', 'van', 'taxi', 'hatch', 'sedan', 'van', 'taxi', 'hatch', 'sedan', 'sport', 'van', 'sedan']
+    const cols = [0x8d99ae, 0x6fa35f, 0x4f8fb8, 0xe23b3b, 0xb8c0cc, 0x2f9fd8, 0xf0a020, 0x98a5b5, 0x7f8a99, 0x5a6e8c, 0xa8563f, 0x3f7a6e, 0xc9b458, 0x6b5a8c]
     const kC = Math.floor(N / 2)
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 14; i++) {
       const style = styles[i % styles.length]
       const g = this.makeTrafficCar(style, style === 'taxi' ? 0xf59e0b : cols[i % cols.length])
       const axis: 'x' | 'z' = i % 2 === 0 ? 'x' : 'z'
@@ -3982,7 +4429,7 @@ export class GameEngine {
         g.rotation.y = dir > 0 ? 0 : Math.PI
       }
       this.scene.add(g)
-      const car: TrafficCar = { mesh: g, axis, lane, dir, speed: 0, cruise: 8 + Math.random() * 3, nmCooldown: 0 }
+      const car: TrafficCar = { mesh: g, axis, lane, dir, speed: 0, cruise: 8 + Math.random() * 3, nmCooldown: 0, yieldT: 0 }
       this.traffic.push(car)
       this.rushCars.push(car)
     }
@@ -4473,6 +4920,8 @@ export class GameEngine {
       nearGarage: this.nearGarage,
       busted: this.busted,
       boosting: this.boosting,
+      damage: Math.round(this.damage),
+      wrecked: this.wrecked,
       stuck: (this.stuckTime > 2 || this.stuckLatch > 0) && !this.busted,
     })
   }
@@ -4484,15 +4933,29 @@ export class GameEngine {
     const W = c.width
     const scale = W / (SIZE + 16)
     const toPx = (v: number) => (v + HALF + 8) * scale
-    ctx.fillStyle = '#04101c'
+    // Google Maps / AMap style: blue water, sandy beach ring, light city land,
+    // white roads with a subtle casing — bright and readable at a glance.
+    ctx.fillStyle = '#a8cbe4' // water
     ctx.fillRect(0, 0, W, W)
-    ctx.fillStyle = '#0e1626'
+    ctx.fillStyle = '#ecdfae' // sand ring around the whole map edge
+    ctx.fillRect(1, 1, W - 2, W - 2)
+    ctx.fillStyle = '#e8e6df' // city land
     ctx.fillRect(toPx(-HALF - 4), toPx(-HALF - 4), (SIZE + 8) * scale, (SIZE + 8) * scale)
-    ctx.fillStyle = '#1b2740'
+    ctx.fillStyle = '#dfdcd3' // city blocks, a shade darker so roads pop
     for (let i = 0; i < N; i++) {
       for (let j = 0; j < N; j++) {
         ctx.fillRect(toPx(blockOrigin(i)), toPx(blockOrigin(j)), BLOCK * scale, BLOCK * scale)
       }
+    }
+    // Roads: grey casing then a white strip, on both axes
+    for (let k = 0; k <= N; k++) {
+      const rc = toPx(-HALF + ROAD / 2 + k * CELL)
+      ctx.fillStyle = '#c9c6bd'
+      ctx.fillRect(toPx(-HALF - 4), rc - ((ROAD + 2) / 2) * scale, (SIZE + 8) * scale, (ROAD + 2) * scale)
+      ctx.fillRect(rc - ((ROAD + 2) / 2) * scale, toPx(-HALF - 4), (ROAD + 2) * scale, (SIZE + 8) * scale)
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(toPx(-HALF - 4), rc - (ROAD / 2) * scale, (SIZE + 8) * scale, ROAD * scale)
+      ctx.fillRect(rc - (ROAD / 2) * scale, toPx(-HALF - 4), ROAD * scale, (SIZE + 8) * scale)
     }
   }
 
@@ -4506,9 +4969,9 @@ export class GameEngine {
     return null
   }
 
-  /** Route color as an rgb triplet: yellow = mission, cyan = garage. */
+  /** Route color as an rgb triplet — Google-Maps blue for every destination. */
   private navColor(): string {
-    return this.mission ? '250,204,21' : '34,211,238'
+    return '26,115,232'
   }
 
   private drawMinimap(): void {
@@ -4533,15 +4996,13 @@ export class GameEngine {
       const rgb = this.navColor()
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
-      ctx.strokeStyle = `rgba(${rgb},0.3)`
-      ctx.lineWidth = 6
+      // solid Google-style route: soft glow casing, then a solid blue line
+      ctx.strokeStyle = `rgba(${rgb},0.28)`
+      ctx.lineWidth = 7
       ctx.beginPath(); ctx.moveTo(x0, z0); ctx.lineTo(ex, ez); ctx.lineTo(x1, z1); ctx.stroke()
-      ctx.strokeStyle = `rgba(${rgb},0.95)`
-      ctx.lineWidth = 2.4
-      ctx.setLineDash([8, 5])
-      ctx.lineDashOffset = -(this.time * 26) % 13
+      ctx.strokeStyle = `rgba(${rgb},0.98)`
+      ctx.lineWidth = 3.6
       ctx.beginPath(); ctx.moveTo(x0, z0); ctx.lineTo(ex, ez); ctx.lineTo(x1, z1); ctx.stroke()
-      ctx.setLineDash([])
       const pulse = 0.5 + 0.5 * Math.sin(this.time * 4)
       ctx.strokeStyle = `rgba(${rgb},${0.45 + pulse * 0.45})`
       ctx.lineWidth = 1.6
@@ -4557,14 +5018,30 @@ export class GameEngine {
       else if (m.kind === 'race') t = m.cps[m.idx]
       // getaway: no fixed target — the patrol dots on the HUD carry the info
       if (t) {
-        ctx.fillStyle = '#facc15'
+        // Google-style red destination pin (teardrop)
+        const px = toPx(t.x)
+        const pz = toPx(t.z)
+        ctx.fillStyle = '#ea4335'
+        ctx.strokeStyle = '#ffffff'
+        ctx.lineWidth = 1.2
         ctx.beginPath()
-        ctx.arc(toPx(t.x), toPx(t.z), 4, 0, Math.PI * 2)
+        ctx.arc(px, pz - 4, 3.6, Math.PI * 0.85, Math.PI * 0.15)
+        ctx.lineTo(px, pz + 3.4)
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+        ctx.fillStyle = '#ffffff'
+        ctx.beginPath()
+        ctx.arc(px, pz - 4, 1.3, 0, Math.PI * 2)
         ctx.fill()
       }
     }
-    ctx.fillStyle = '#22d3ee'
+    // Garage: green Maps-style square with white border
+    ctx.fillStyle = '#34a853'
     ctx.fillRect(toPx(this.garagePos.x) - 3, toPx(this.garagePos.z) - 3, 6, 6)
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 1.2
+    ctx.strokeRect(toPx(this.garagePos.x) - 3, toPx(this.garagePos.z) - 3, 6, 6)
     // exploration: shards (tiny cyan), crates (green), landmarks (purple diamonds)
     ctx.fillStyle = '#67e8f9'
     for (const s of this.shards) {
@@ -4626,14 +5103,22 @@ export class GameEngine {
     ctx.save()
     ctx.translate(toPx(this.pos.x), toPx(this.pos.z))
     ctx.rotate(Math.atan2(Math.sin(this.heading), Math.cos(this.heading)))
-    ctx.fillStyle = '#ffffff'
+    // translucent heading cone, Google-Maps style
+    ctx.fillStyle = 'rgba(26,115,232,0.28)'
     ctx.beginPath()
-    ctx.moveTo(0, -5.5)
-    ctx.lineTo(3.6, 4)
-    ctx.lineTo(-3.6, 4)
+    ctx.moveTo(0, 0)
+    ctx.arc(0, 0, 15, -Math.PI / 2 - 0.55, -Math.PI / 2 + 0.55)
     ctx.closePath()
     ctx.fill()
     ctx.restore()
+    // blue dot with a white ring
+    ctx.fillStyle = '#1a73e8'
+    ctx.beginPath()
+    ctx.arc(toPx(this.pos.x), toPx(this.pos.z), 4.6, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 2
+    ctx.stroke()
   }
 
   /** PUBG-style full-screen tactical map. Drawn once when the player opens it
@@ -5205,6 +5690,7 @@ export class GameEngine {
         pauseLeft: 0,
         pauseT: 4 + rand() * 14,
         glanceT: 0,
+        panicT: 0,
         dog: undefined as THREE.Group | undefined,
       }
       // Evening beach life: some strollers take a dog out (low-poly pup trots beside)
@@ -5255,6 +5741,7 @@ export class GameEngine {
           p.state = 0
           p.pausing = false
           p.pauseLeft = 0
+          p.panicT = 0
           p.pauseT = 4 + Math.random() * 14
           p.mesh.position.set(p.x, 0, p.z)
           p.mesh.rotation.x = 0
@@ -5269,6 +5756,22 @@ export class GameEngine {
       const d2 = dx * dx + dz * dz
       const carSpeed = this.vel.length()
       const speed = (d2 < 49 && carSpeed > 4 ? 5 : p.baseSpeed) * (p.glanceT > 0 ? 0.35 : 1)
+      // Horn panic: dive straight away from the car for a couple of seconds
+      if (p.panicT > 0) {
+        p.panicT -= dt
+        const d = Math.sqrt(d2) || 1
+        p.x += (dx / d) * 5.5 * dt
+        p.z += (dz / d) * 5.5 * dt
+        const lim = HALF + 40
+        p.x = Math.max(-lim, Math.min(lim, p.x))
+        p.z = Math.max(-lim, Math.min(lim, p.z))
+        p.pausing = false
+        p.walk.timeScale = 1.7
+        p.mixer.update(dt)
+        p.mesh.position.set(p.x, 0, p.z)
+        p.mesh.rotation.y = Math.atan2(dx, dz)
+        continue
+      }
       let hold = false
       // Life behavior: pause and "check phone" at quiet spots, then move on
       if (p.idle) {
@@ -5364,6 +5867,8 @@ export class GameEngine {
         this.shake = Math.min(this.shake + 0.35, 0.8)
         this.heat = Math.min(5, this.heat + 1)
         this.synth.thud()
+        this.addDamage(3)
+        this.speakPanic(true)
         this.hooks.onToast('You hit a pedestrian! Patrol alerted (+1★)', 'warn')
       }
     }

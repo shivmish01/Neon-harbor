@@ -53,6 +53,7 @@ export default function App() {
   const [hud, setHud] = useState<HudState | null>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [bustedFlash, setBustedFlash] = useState(false)
+  const [wreckFlash, setWreckFlash] = useState(false)
   // Mission-complete result banner — carries the 📷 photo button on mobile
   const [winBanner, setWinBanner] = useState<{ name: string; reward: number } | null>(null)
   const [confirmReset, setConfirmReset] = useState(false)
@@ -332,6 +333,10 @@ export default function App() {
       onBusted: () => {
         setBustedFlash(true)
         window.setTimeout(() => setBustedFlash(false), 1800)
+      },
+      onWrecked: () => {
+        setWreckFlash(true)
+        window.setTimeout(() => setWreckFlash(false), 2200)
       },
       onLevelUp: (level) => pushToast(`LEVEL UP — you reached level ${level}!`, 'good'),
       onMissionDone: (name, reward) => {
@@ -1090,6 +1095,14 @@ export default function App() {
                   <div className={`h-full rounded ${hud.boosting ? 'bg-fuchsia-400 shadow-[0_0_12px_rgba(232,121,249,0.9)]' : 'bg-cyan-500'}`} style={{ width: `${hud.boost}%` }} />
                 </div>
                 <div className="text-[10px] text-slate-400 mt-1">NITRO — hold SHIFT{hud.drift > 0 && <span className="text-yellow-300 ml-2">DRIFT {hud.drift}</span>}</div>
+                {hud.damage > 15 && (
+                  <div className="mt-1.5">
+                    <div className="w-48 h-1.5 bg-slate-800 rounded">
+                      <div className={`h-full rounded ${hud.damage > 80 ? 'bg-red-500' : hud.damage > 50 ? 'bg-amber-400' : 'bg-slate-400'}`} style={{ width: `${hud.damage}%` }} />
+                    </div>
+                    <div className={`text-[10px] mt-0.5 ${hud.damage > 80 ? 'text-red-400 font-bold' : 'text-amber-300'}`}>🔧 BODY {hud.damage}% — repair at the garage</div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1112,6 +1125,15 @@ export default function App() {
                 />
               </div>
               {hud.drift > 0 && <div className="text-yellow-300 text-[11px] font-black drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]">DRIFT +{hud.drift}</div>}
+              {hud.damage > 15 && (
+                <div className="flex items-center gap-1 pointer-events-none">
+                  <span className="text-[10px]">🔧</span>
+                  <div className="w-16 h-1 bg-white/10 rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full ${hud.damage > 80 ? 'bg-red-500' : 'bg-amber-400'}`} style={{ width: `${hud.damage}%` }} />
+                  </div>
+                  <span className={`text-[9px] font-bold drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] ${hud.damage > 80 ? 'text-red-400' : 'text-amber-300'}`}>{hud.damage}%</span>
+                </div>
+              )}
             </div>
           )}
 
@@ -1218,6 +1240,23 @@ export default function App() {
             </button>
           )}
 
+          {/* ACTION MODE — pulsing banner under the pause button while the
+              Patrol is actively chasing, plus a red edge vignette. No overlay,
+              the drive view stays clear. */}
+          {hud.pursued && !hud.busted && !overlay && (
+            <>
+              <div
+                className="absolute inset-0 z-10 pointer-events-none animate-pulse"
+                style={{ boxShadow: 'inset 0 0 80px rgba(255,30,60,0.35)' }}
+              />
+              <div
+                className={`absolute ${isTouch ? 'top-14' : 'top-3'} left-1/2 -translate-x-1/2 z-30 pointer-events-none px-4 py-1.5 rounded-md border border-red-500/80 bg-red-950/70 backdrop-blur-sm text-red-300 font-black tracking-[0.25em] text-xs sm:text-sm animate-pulse`}
+              >
+                ⚠ ACTION MODE ON — SAVE YOURSELF
+              </div>
+            </>
+          )}
+
           {/* E prompt — job board at the garage */}
           {!overlay && !isTouch && hud.nearGarage && (
             <div className="nh-prompt absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2.5 bg-cyan-500/20 border border-cyan-400 rounded text-cyan-100 text-base animate-pulse">
@@ -1250,6 +1289,30 @@ export default function App() {
                       : 'Next time: when a drone grabs you, MASH SPACE to break free — and never stop moving.'}
                   </span>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* WRECKED — explosion flash, then the game-over tow card */}
+          {wreckFlash && (
+            <div className="absolute inset-0 z-30 bg-orange-500/30 pointer-events-none" />
+          )}
+          {hud?.wrecked && (
+            <div className="absolute inset-0 z-40 bg-black/60 flex items-center justify-center">
+              <div className="text-center busted-anim px-6">
+                <div className="text-6xl font-black text-orange-400 tracking-[0.3em] drop-shadow-[0_0_24px_rgba(255,122,26,0.8)]">WRECKED</div>
+                <div className="mt-3 text-slate-200 text-sm max-w-sm mx-auto leading-relaxed">
+                  She took too much and went up in flames. The tow truck drags her back to the garage — patched up enough to limp, but she needs real repairs.
+                </div>
+                <button
+                  onClick={() => {
+                    engineRef.current?.towToGarage()
+                    setSave({ ...saveRef.current })
+                  }}
+                  className="mt-5 px-6 py-3 text-sm font-black border border-orange-400 text-orange-200 rounded-xl hover:bg-orange-400/20 tracking-widest"
+                >
+                  🚛 TOW TO GARAGE — $150
+                </button>
               </div>
             </div>
           )}
@@ -1750,6 +1813,31 @@ export default function App() {
               <button onClick={() => setOverlay(null)} className="text-slate-400 hover:text-white text-xl">✕</button>
             </div>
 
+            {/* Body repair — visible the moment the car has any damage */}
+            {hud && hud.damage > 0 && (
+              <div className="w-full mb-5 p-4 rounded-xl border border-cyan-400/40 bg-cyan-500/10">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-cyan-300 font-black tracking-widest">🔧 BODY REPAIR</div>
+                    <div className="mt-2 w-56 max-w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${hud.damage > 80 ? 'bg-red-500' : hud.damage > 50 ? 'bg-amber-400' : 'bg-cyan-400'}`} style={{ width: `${hud.damage}%` }} />
+                    </div>
+                    <div className="text-slate-400 text-xs mt-1">Damage {hud.damage}% — a clean body turns heads again</div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      engineRef.current?.repair()
+                      setSave({ ...saveRef.current })
+                    }}
+                    disabled={save.cash < (engineRef.current?.repairCost() ?? Infinity)}
+                    className="px-4 py-2 text-sm font-black border border-cyan-400 text-cyan-200 rounded-lg hover:bg-cyan-400/20 whitespace-nowrap disabled:opacity-40"
+                  >
+                    REPAIR — ${(engineRef.current?.repairCost() ?? 0).toLocaleString()}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Harbor Pass banner */}
             {isOwned(HARBOR_PASS_ID) ? (
               <div className="w-full mb-5 p-3 rounded-xl border border-emerald-400/40 bg-emerald-500/10 text-emerald-300 text-sm text-center">
@@ -1790,7 +1878,7 @@ export default function App() {
 
             {/* Tabs */}
             <div className="flex gap-2 mb-4">
-              <button onClick={() => setShopTab('skins')} className={`shop-tab ${shopTab === 'skins' ? 'shop-tab-on' : ''}`}>CAR SKINS</button>
+              <button onClick={() => setShopTab('skins')} className={`shop-tab ${shopTab === 'skins' ? 'shop-tab-on' : ''}`}>CARS &amp; PAINT</button>
               <button onClick={() => setShopTab('themes')} className={`shop-tab ${shopTab === 'themes' ? 'shop-tab-on' : ''}`}>CITY THEMES</button>
               <button onClick={() => setShopTab('upgrades')} className={`shop-tab ${shopTab === 'upgrades' ? 'shop-tab-on' : ''}`}>UPGRADES</button>
             </div>
