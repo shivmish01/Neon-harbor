@@ -781,32 +781,38 @@ export class GameEngine {
         const bz = blockOrigin(j)
         for (let li = 0; li < 2; li++) {
           for (let lj = 0; lj < 2; lj++) {
-            if (rand() < (dist === 'docks' ? 0.35 : 0.16)) continue // empty lot
+            // Reserved landmark plazas — built by buildCulturalQuarters()
+            if (i === 2 && j === 2 && li === 0 && lj === 0) continue // London clock tower
+            if (i === 7 && j === 3 && li === 1 && lj === 0) continue // Beijing pagoda
+            if (i === 4 && j === 7) continue // Construction stunt yard (whole block)
+            if (i === 3 && j === 7 && li === 0 && lj === 0) continue // dirt-pile corner
+            if (rand() < (dist === 'construction' ? 0.42 : 0.16)) continue // empty lot
             const lotW = BLOCK / 2
             const w = lotW - 3 - rand() * 3
             const d = lotW - 3 - rand() * 3
             const tall = dist === 'downtown'
-            const flat = dist === 'docks'
-            const podium = !flat && rand() < (tall ? 0.55 : 0.3)
-            const hBase = flat ? 7 + rand() * 9 : tall ? 26 + rand() * 34 : 12 + rand() * 16
+            const flat = dist === 'construction'
+            const terraced = dist === 'london'
+            const podium = !flat && !terraced && rand() < (tall ? 0.55 : 0.3)
+            const hBase = flat ? 7 + rand() * 9 : tall ? 26 + rand() * 34 : terraced ? 8 + rand() * 10 : 12 + rand() * 16
             const h = podium ? Math.min(hBase, 15) : hBase
             const x = bx + li * lotW + lotW / 2 + (rand() - 0.5) * 2
             const z = bz + lj * lotW + lotW / 2 + (rand() - 0.5) * 2
-            const signs = dist === 'market' ? 4 : dist === 'downtown' ? 2 : 1
-            const baseKind: 'skyscraper' | 'midrise' | 'lowrise' = flat ? 'lowrise' : tall && !podium ? 'skyscraper' : 'midrise'
+            const signs = dist === 'beijing' ? 4 : dist === 'downtown' ? 2 : 1
+            const baseKind: 'skyscraper' | 'midrise' | 'lowrise' = flat ? 'lowrise' : terraced ? (rand() < 0.65 ? 'lowrise' : 'midrise') : tall && !podium ? 'skyscraper' : 'midrise'
             const place = (p: Placement) => {
               placements.push(p)
-              if (dist === 'market') marketPlacements.push(p)
+              if (dist === 'beijing') marketPlacements.push(p)
               this.buildings.push({ minX: p.x - p.w / 2, maxX: p.x + p.w / 2, minZ: p.z - p.d / 2, maxZ: p.z + p.d / 2 })
             }
             place({ x, z, w, h, d, tint: 0.75 + rand() * 0.5, signs, model: pickModel(baseKind, rand), rot: Math.floor(rand() * 4), dist })
-            // Tower on podium — skyline variety
+            // Tower on podium — skyline variety (never on London terraces)
             if (podium && rand() < (tall ? 0.85 : 0.4)) {
               const th = h + 12 + rand() * (tall ? 30 : 12)
               place({
                 x: x + (rand() - 0.5) * 2, z: z + (rand() - 0.5) * 2,
                 w: w * 0.55, h: th, d: d * 0.55, tint: 0.9 + rand() * 0.4,
-                signs: dist === 'market' ? 2 : 1,
+                signs: dist === 'beijing' ? 2 : 1,
                 model: pickModel(tall ? 'skyscraper' : 'midrise', rand), rot: Math.floor(rand() * 4),
                 dist,
               })
@@ -842,11 +848,11 @@ export class GameEngine {
         pos.set(p.x, -cm.minY * scl.y, p.z)
         m4.compose(pos, quat, scl)
         inst.setMatrixAt(idx, m4)
-        // District tint: cool blue downtown, neon-pink market, warm oldtown, grey docks
+        // District tint: cool blue downtown, gold-red Beijing, brick London, dusty construction
         if (p.dist === 'downtown') col.setRGB(0.72 * p.tint, 0.82 * p.tint, 1.05 * p.tint)
-        else if (p.dist === 'market') col.setRGB(1.05 * p.tint, 0.78 * p.tint, 0.95 * p.tint)
-        else if (p.dist === 'oldtown') col.setRGB(1.05 * p.tint, 0.92 * p.tint, 0.72 * p.tint)
-        else col.setRGB(0.82 * p.tint, 0.88 * p.tint, 0.95 * p.tint)
+        else if (p.dist === 'beijing') col.setRGB(1.08 * p.tint, 0.84 * p.tint, 0.6 * p.tint)
+        else if (p.dist === 'london') col.setRGB(1.02 * p.tint, 0.66 * p.tint, 0.55 * p.tint)
+        else col.setRGB(0.86 * p.tint, 0.86 * p.tint, 0.8 * p.tint)
         inst.setColorAt(idx, col)
       })
       inst.instanceMatrix.needsUpdate = true
@@ -1416,9 +1422,198 @@ export class GameEngine {
       this.buildings.push({ minX: lhX - 2.6, maxX: lhX + 2.6, minZ: lhZ - 2.6, maxZ: lhZ + 2.6 })
     }
 
+    this.buildCulturalQuarters()
+
     // Spawn just past the gantry so the neon arch frames the player's starting view instead of filling it
     this.pos.set(gx, 0, gz + 19)
     this.drawMinimapBase()
+  }
+
+  /** Cultural quarters: London clock tower + phone boxes, Beijing pagoda +
+      lantern streets, and the construction stunt yard. Reserved plazas are
+      skipped by the building generator above. */
+  private buildCulturalQuarters(): void {
+    const lot = (i: number, j: number, li: number, lj: number) => ({
+      x: blockOrigin(i) + li * (BLOCK / 2) + BLOCK / 4,
+      z: blockOrigin(j) + lj * (BLOCK / 2) + BLOCK / 4,
+    })
+
+    // ---- LONDON: the old clock tower (Big Ben silhouette, glowing face) ----
+    {
+      const { x, z } = lot(2, 2, 0, 0)
+      const brick = new THREE.MeshStandardMaterial({ color: 0x8a5a48, roughness: 0.85 })
+      const tower = new THREE.Mesh(new THREE.BoxGeometry(7, 30, 7), brick)
+      tower.position.set(x, 15, z)
+      tower.castShadow = true
+      this.scene.add(tower)
+      // Clock faces on all four sides — warm glowing discs with dark hands
+      const faceCanvas = document.createElement('canvas')
+      faceCanvas.width = faceCanvas.height = 128
+      const fc = faceCanvas.getContext('2d')!
+      fc.fillStyle = '#f6efdc'
+      fc.beginPath(); fc.arc(64, 64, 60, 0, Math.PI * 2); fc.fill()
+      fc.strokeStyle = '#2c2418'; fc.lineWidth = 5; fc.stroke()
+      for (let t = 0; t < 12; t++) {
+        const a = (t / 12) * Math.PI * 2
+        fc.beginPath()
+        fc.moveTo(64 + Math.cos(a) * 50, 64 + Math.sin(a) * 50)
+        fc.lineTo(64 + Math.cos(a) * 56, 64 + Math.sin(a) * 56)
+        fc.stroke()
+      }
+      fc.lineWidth = 6
+      fc.beginPath(); fc.moveTo(64, 64); fc.lineTo(64 + 18, 64 - 26); fc.stroke() // hour hand
+      fc.lineWidth = 4
+      fc.beginPath(); fc.moveTo(64, 64); fc.lineTo(64 - 8, 64 - 44); fc.stroke()  // minute hand
+      const faceTex = new THREE.CanvasTexture(faceCanvas)
+      const faceMat = new THREE.MeshBasicMaterial({ map: faceTex })
+      for (let f = 0; f < 4; f++) {
+        const face = new THREE.Mesh(new THREE.CircleGeometry(2.6, 24), faceMat)
+        const a = f * Math.PI * 0.5
+        face.position.set(x + Math.sin(a) * 3.56, 25.5, z + Math.cos(a) * 3.56)
+        face.rotation.y = a
+        this.scene.add(face)
+      }
+      const spire = new THREE.Mesh(new THREE.ConeGeometry(5, 9, 4), new THREE.MeshStandardMaterial({ color: 0x3d2f26, roughness: 0.7 }))
+      spire.position.set(x, 34.5, z)
+      spire.rotation.y = Math.PI / 4
+      this.scene.add(spire)
+      this.buildings.push({ minX: x - 3.6, maxX: x + 3.6, minZ: z - 3.6, maxZ: z + 3.6 })
+      // Red phone boxes scattered through the quarter
+      const boothMat = new THREE.MeshStandardMaterial({ color: 0xb3242a, roughness: 0.5 })
+      const bandMat = new THREE.MeshBasicMaterial({ color: 0xfff4d6 })
+      const boothRand = seededRand(1963)
+      for (let b = 0; b < 6; b++) {
+        const k = 1 + Math.floor(boothRand() * 4)
+        const bx = -HALF + ROAD / 2 + k * CELL + (ROAD / 2 + 1.6)
+        const bz = -HALF + 30 + boothRand() * 150 // London = north-west quadrant (z < 0)
+        const booth = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.6, 1.1), boothMat)
+        booth.position.set(bx, 1.3, bz)
+        booth.castShadow = true
+        this.scene.add(booth)
+        const band = new THREE.Mesh(new THREE.BoxGeometry(1.16, 0.3, 1.16), bandMat)
+        band.position.set(bx, 2.25, bz)
+        this.scene.add(band)
+        this.buildings.push({ minX: bx - 0.6, maxX: bx + 0.6, minZ: bz - 0.6, maxZ: bz + 0.6 })
+      }
+    }
+
+    // ---- BEIJING: golden pagoda + red lantern streets ----
+    {
+      const { x, z } = lot(7, 3, 1, 0)
+      const columnMat = new THREE.MeshStandardMaterial({ color: 0x9e2b25, roughness: 0.6 })
+      const roofMat = new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.35, metalness: 0.4, emissive: 0x604010, emissiveIntensity: 0.25 })
+      let y = 0
+      for (let tier = 0; tier < 4; tier++) {
+        const w = 9 - tier * 1.6
+        const h = 3.4 - tier * 0.3
+        const body = new THREE.Mesh(new THREE.BoxGeometry(w * 0.62, h, w * 0.62), columnMat)
+        body.position.set(x, y + h / 2, z)
+        body.castShadow = true
+        this.scene.add(body)
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(w * 0.78, 1.7, 4), roofMat)
+        roof.position.set(x, y + h + 0.85, z)
+        roof.rotation.y = Math.PI / 4
+        this.scene.add(roof)
+        y += h + 1.15
+      }
+      const finial = new THREE.Mesh(new THREE.SphereGeometry(0.6, 8, 8), roofMat)
+      finial.position.set(x, y + 0.8, z)
+      this.scene.add(finial)
+      this.buildings.push({ minX: x - 3.2, maxX: x + 3.2, minZ: z - 3.2, maxZ: z + 3.2 })
+      // Lantern strings: two north-south avenues, glowing red orbs with a sag
+      const lanternGeom = new THREE.SphereGeometry(0.38, 8, 8)
+      const lanternMat = new THREE.MeshStandardMaterial({ color: 0xd93a2e, emissive: 0xff3524, emissiveIntensity: 1.4, roughness: 0.5 })
+      const positions: THREE.Vector3[] = []
+      for (const roadK of [7, 8]) {
+        const rx = -HALF + ROAD / 2 + roadK * CELL
+        for (let zPos = -176; zPos <= 176; zPos += 5.5) {
+          const spanT = ((zPos + HALF) % CELL) / CELL
+          const sag = Math.sin(spanT * Math.PI) * 1.1
+          positions.push(new THREE.Vector3(rx, 7.2 - sag, zPos))
+        }
+      }
+      const lanterns = new THREE.InstancedMesh(lanternGeom, lanternMat, positions.length)
+      const lm4 = new THREE.Matrix4()
+      positions.forEach((p, idx) => {
+        lm4.setPosition(p.x, p.y, p.z)
+        lanterns.setMatrixAt(idx, lm4)
+      })
+      lanterns.instanceMatrix.needsUpdate = true
+      this.scene.add(lanterns)
+      // Barely-visible cables the lanterns hang from
+      const cableMat = new THREE.LineBasicMaterial({ color: 0x1a1418, transparent: true, opacity: 0.7 })
+      for (const roadK of [7, 8]) {
+        const rx = -HALF + ROAD / 2 + roadK * CELL
+        const pts: THREE.Vector3[] = []
+        for (let zPos = -176; zPos <= 176; zPos += 2) {
+          const spanT = ((zPos + HALF) % CELL) / CELL
+          pts.push(new THREE.Vector3(rx, 7.4 - Math.sin(spanT * Math.PI) * 1.1, zPos))
+        }
+        this.scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), cableMat))
+      }
+    }
+
+    // ---- CONSTRUCTION YARDS: half-built frames, containers, dirt, mega ramps ----
+    {
+      const frameMat = new THREE.MeshStandardMaterial({ color: 0x9aa2ad, roughness: 0.7, metalness: 0.3 })
+      const slabMat = new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.85 })
+      const buildFrame = (fx: number, fz: number) => {
+        for (const [ox, oz] of [[-5, -5], [5, -5], [-5, 5], [5, 5]] as const) {
+          const colm = new THREE.Mesh(new THREE.BoxGeometry(0.6, 14, 0.6), frameMat)
+          colm.position.set(fx + ox, 7, fz + oz)
+          colm.castShadow = true
+          this.scene.add(colm)
+        }
+        for (let s = 0; s < 3; s++) {
+          const slab = new THREE.Mesh(new THREE.BoxGeometry(11.5, 0.5, 11.5), slabMat)
+          slab.position.set(fx, 4.5 + s * 4.5, fz)
+          this.scene.add(slab)
+        }
+        this.buildings.push({ minX: fx - 5.8, maxX: fx + 5.8, minZ: fz - 5.8, maxZ: fz + 5.8 })
+      }
+      buildFrame(lot(2, 7, 0, 0).x, lot(2, 7, 0, 0).z)
+      buildFrame(lot(6, 8, 0, 1).x, lot(6, 8, 0, 1).z)
+      // Stunt yard: facing mega ramps with a container gap between them —
+      // the whole block is open tarmac
+      const sx = blockOrigin(4) + BLOCK / 2
+      const sz = blockOrigin(7) + BLOCK / 2
+      const rampMat2 = new THREE.MeshStandardMaterial({ color: 0x334155, emissive: 0xf97316, emissiveIntensity: 0.45, roughness: 0.6 })
+      const rampN = new THREE.Mesh(new THREE.BoxGeometry(9, 0.7, 10), rampMat2)
+      rampN.position.set(sx, 0.95, sz - 8)
+      rampN.rotation.x = 0.3
+      this.scene.add(rampN)
+      this.ramps.push({ x: sx, z: sz - 8, angle: 0 })
+      const rampS = new THREE.Mesh(new THREE.BoxGeometry(9, 0.7, 10), rampMat2)
+      rampS.position.set(sx, 0.95, sz + 8)
+      rampS.rotation.x = -0.3
+      this.scene.add(rampS)
+      this.ramps.push({ x: sx, z: sz + 8, angle: 0 })
+      // Container stacks (jump-over targets) + dirt piles
+      const contRand = seededRand(8080)
+      const contCols = [0xc0392b, 0x2471a3, 0xb7950b, 0x1e8449]
+      for (let c = 0; c < 7; c++) {
+        const cm = new THREE.Mesh(
+          new THREE.BoxGeometry(2.4, 2.6, 6),
+          new THREE.MeshStandardMaterial({ color: contCols[c % contCols.length], roughness: 0.7, metalness: 0.25 })
+        )
+        const cx = sx - 12 + contRand() * 24
+        const cz = sz - 3 + contRand() * 6
+        cm.position.set(cx, 1.3 + (c % 2) * 2.6, cz)
+        cm.rotation.y = (contRand() - 0.5) * 0.5
+        cm.castShadow = true
+        this.scene.add(cm)
+        this.buildings.push({ minX: cx - 3, maxX: cx + 3, minZ: cz - 3, maxZ: cz + 3 })
+      }
+      const dirtMat = new THREE.MeshStandardMaterial({ color: 0x7a5c3d, roughness: 1 })
+      for (let dp = 0; dp < 5; dp++) {
+        const pile = new THREE.Mesh(new THREE.ConeGeometry(2.6, 2.2, 10), dirtMat)
+        const dx = lot(3, 7, 0, 0).x + (contRand() - 0.5) * 26
+        const dz = lot(3, 7, 0, 0).z + (contRand() - 0.5) * 26
+        pile.position.set(dx, 1.1, dz)
+        this.scene.add(pile)
+        this.buildings.push({ minX: dx - 2, maxX: dx + 2, minZ: dz - 2, maxZ: dz + 2 })
+      }
+    }
   }
 
   // =============== PROPS ===============
@@ -2844,7 +3039,7 @@ export class GameEngine {
       van: [0xb8c0cc, 0x6fa35f, 0x4f8fb8, 0x98a5b5],
       sport: [0xfacc15, 0x22d3ee, 0xff4d6d, 0xf2f6ff],
     }
-    const styles = ['sedan', 'sedan', 'hatch', 'hatch', 'van', 'taxi', 'sport', 'sedan', 'hatch', 'van', 'sedan', 'sport', 'sedan', 'hatch', 'van', 'sedan', 'taxi', 'hatch', 'sport', 'sedan', 'taxi', 'hatch', 'sedan', 'van', 'sport', 'hatch', 'sedan', 'taxi']
+    const styles = ['sedan', 'sedan', 'hatch', 'hatch', 'van', 'taxi', 'sport', 'sedan', 'hatch', 'van', 'bus', 'sport', 'sedan', 'hatch', 'van', 'sedan', 'taxi', 'hatch', 'sport', 'sedan', 'taxi', 'hatch', 'sedan', 'van', 'sport', 'hatch', 'bus', 'taxi']
     for (let k = 0; k < styles.length; k++) {
       const style = styles[k]
       const palette = style === 'taxi' ? [0xf59e0b] : palettes[style] ?? palettes.sedan
@@ -2866,7 +3061,43 @@ export class GameEngine {
     }
   }
 
+  /** London icon: a procedural red double-decker bus (no GLB needed). */
+  private makeDoubleDecker(): THREE.Group {
+    const g = new THREE.Group()
+    const red = new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.45, metalness: 0.25 })
+    const glass = new THREE.MeshStandardMaterial({ color: 0xbfe3f5, roughness: 0.2, metalness: 0.6, emissive: 0x87a8bb, emissiveIntensity: 0.35 })
+    const lower = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.5, 7.2), red)
+    lower.position.y = 1.15
+    const upper = new THREE.Mesh(new THREE.BoxGeometry(2.35, 1.45, 6.9), red)
+    upper.position.y = 2.65
+    const winL = new THREE.Mesh(new THREE.BoxGeometry(2.46, 0.55, 6.6), glass)
+    winL.position.y = 1.35
+    const winU = new THREE.Mesh(new THREE.BoxGeometry(2.41, 0.55, 6.5), glass)
+    winU.position.y = 2.75
+    g.add(lower, upper, winL, winU)
+    const wheelGeom = new THREE.CylinderGeometry(0.45, 0.45, 0.35, 10)
+    wheelGeom.rotateZ(Math.PI / 2)
+    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x16181c, roughness: 0.9 })
+    for (const [wx, wz] of [[-1.1, 2.3], [1.1, 2.3], [-1.1, -2.3], [1.1, -2.3]] as const) {
+      const w = new THREE.Mesh(wheelGeom, wheelMat)
+      w.position.set(wx, 0.45, wz)
+      g.add(w)
+    }
+    // Light strips so it reads at night like the rest of traffic
+    const hl = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.14, 0.06), new THREE.MeshBasicMaterial({ color: 0xfff2cc, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.95, depthWrite: false }))
+    hl.position.set(0, 1.0, 3.63)
+    const tl = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.14, 0.06), new THREE.MeshBasicMaterial({ color: 0xff2d44, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.95, depthWrite: false }))
+    tl.position.set(0, 1.0, -3.63)
+    g.add(hl, tl)
+    g.traverse((o) => {
+      const m = o as THREE.Mesh
+      if (m.isMesh) m.castShadow = true
+    })
+    return g
+  }
+
   private makeTrafficCar(style: string, color: number): THREE.Group {
+    if (style === 'bus') return this.makeDoubleDecker()
     const modelByStyle: Record<string, string> = {
       sedan: 'sedan',
       hatch: 'hatchback-sports',
@@ -6025,13 +6256,13 @@ function w_safe(target: number, base: number): number {
   return base > 0.001 ? target / base : 1
 }
 
-type District = 'downtown' | 'market' | 'docks' | 'oldtown'
+type District = 'downtown' | 'beijing' | 'construction' | 'london'
 
 function districtOf(i: number, j: number): District {
   if (Math.abs(i - GARAGE_I) <= 1 && Math.abs(j - GARAGE_J) <= 1) return 'downtown'
-  if (j >= 6) return 'docks'
-  if (i >= 6) return 'market'
-  return 'oldtown'
+  if (j >= 6) return 'construction'
+  if (i >= 6) return 'beijing'
+  return 'london'
 }
 
 function roadPoint(rand: () => number, from?: THREE.Vector3, minDist = 0): THREE.Vector3 {

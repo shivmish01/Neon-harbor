@@ -175,10 +175,10 @@ export interface District {
 
 export const DISTRICTS: District[] = [
   { id: 'downtown', name: 'Downtown Core', desc: 'The neon heart of the harbor',              minLevel: 1, minX: -82, maxX: 82, minZ: -82, maxZ: 82 },
-  { id: 'north',    name: 'Harbor North',  desc: 'Warehouses, cranes and night shifts',      minLevel: 2, minX: -82, maxX: 82, minZ: -205, maxZ: -82 },
-  { id: 'south',    name: 'Harbor South',  desc: 'Markets, food stalls and back alleys',     minLevel: 2, minX: -82, maxX: 82, minZ: 82, maxZ: 205 },
-  { id: 'west',     name: 'West Docks',    desc: 'Container mazes and smuggler runs',        minLevel: 3, minX: -205, maxX: -82, minZ: -205, maxZ: 205 },
-  { id: 'east',     name: 'East Neon',     desc: 'Towers, casinos and the rich side',        minLevel: 4, minX: 82, maxX: 205, minZ: -205, maxZ: 205 },
+  { id: 'north',    name: 'London Quarter', desc: 'Brick terraces, red phone boxes and the old clock tower', minLevel: 2, minX: -82, maxX: 82, minZ: -205, maxZ: -82 },
+  { id: 'south',    name: 'Construction Yards', desc: 'Cranes, containers and stunt ramps',   minLevel: 2, minX: -82, maxX: 82, minZ: 82, maxZ: 205 },
+  { id: 'west',     name: 'West End',      desc: 'London outskirts — terraced streets and markets', minLevel: 3, minX: -205, maxX: -82, minZ: -205, maxZ: 205 },
+  { id: 'east',     name: 'Beijing Quarter', desc: 'Lantern-lit avenues and the golden pagoda', minLevel: 4, minX: 82, maxX: 205, minZ: -205, maxZ: 205 },
 ]
 
 export function districtAt(x: number, z: number): District | null {
