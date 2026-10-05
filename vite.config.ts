@@ -9,6 +9,8 @@ export default defineConfig({
   plugins: [inspectAttr(), react()],
   server: {
     port: 3000,
+    // Public test tunnels (localtunnel) + LAN phones
+    allowedHosts: ['.loca.lt', 'localhost', '127.0.0.1'],
   },
   resolve: {
     alias: {
