@@ -520,8 +520,9 @@ export default function App() {
     }
   }, [screen])
 
-  // Tactical map: size the canvas to its box and paint one frame on open
-  // (the engine pauses while the map is up, so a static frame stays correct)
+  // City map: size the canvas to its box on open, then keep repainting it
+  // live (~12fps) — on touch the game keeps running behind the panel, so the
+  // player dot, route and patrols must move in real time like CoD's big map.
   const tacMapRef = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
     if (overlay !== 'map') return
@@ -533,7 +534,17 @@ export default function App() {
     const px = Math.max(Math.round(Math.min(rect.width, rect.height) * dpr), 320)
     canvas.width = px
     canvas.height = px
-    engine.drawTacMap(canvas)
+    let raf = 0
+    let last = 0
+    const tick = (t: number) => {
+      if (t - last > 80) {
+        last = t
+        engine.drawTacMap(canvas)
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
   }, [overlay])
 
   // Pause only for modal overlays during gameplay — menus keep the city alive.
@@ -855,12 +866,17 @@ export default function App() {
         style={{ filter: photoMode ? PHOTO_FILTERS[photoFilter].css : undefined }}
       />
 
-      {/* minimap canvas — always mounted, engine needs it before entering */}
+      {/* minimap canvas — always mounted, engine needs it before entering.
+          TAP IT to expand the big AMap-style city map (CoD Mobile pattern:
+          the minimap itself is the button — no hunting for a tiny icon). */}
       <canvas
         ref={minimapRef}
         width={180}
         height={180}
-        className={`nh-minimap absolute z-20 rounded-lg border border-cyan-500/30 shadow-[0_0_20px_rgba(34,211,238,0.25)] ${isTouch ? 'top-2 right-2 w-24 h-24 opacity-85' : 'top-4 right-4'} ${screen === 'game' && hud ? '' : 'hidden'}`}
+        onPointerDown={() => {
+          if (screen === 'game') setOverlay((o) => (o === 'map' ? null : 'map'))
+        }}
+        className={`nh-minimap absolute z-20 rounded-lg border border-cyan-500/30 shadow-[0_0_20px_rgba(34,211,238,0.25)] cursor-pointer ${isTouch ? 'top-2 right-2 w-24 h-24 opacity-85' : 'top-4 right-4'} ${screen === 'game' && hud ? '' : 'hidden'}`}
       />
 
       {/* ================= OPENING SPLASH (logos, tap to skip) ================= */}
@@ -1626,21 +1642,22 @@ export default function App() {
         </button>
       )}
 
-      {/* ================= TACTICAL MAP (PUBG style) =================
-          Touch: a large side panel — the game keeps running behind it, so you
-          can navigate while driving. Desktop: fullscreen modal (pauses). */}
+      {/* ================= CITY MAP (CoD Mobile pattern) =================
+          Tap the minimap (or the map icon) to expand. Touch: a large RIGHT-side
+          panel — the game keeps running behind it and the map redraws live, so
+          you can navigate while driving. Desktop: fullscreen modal (pauses). */}
       {overlay === 'map' && screen === 'game' && (
         isTouch ? (
           <div className="absolute inset-0 z-40 pointer-events-none">
             <div
-              className="absolute left-2 top-14 pointer-events-auto rounded-xl border border-slate-500/80 bg-slate-950/70 shadow-[0_0_40px_rgba(34,211,238,0.2)] overflow-hidden"
-              style={{ width: 'min(58vw, 52vh)' }}
+              className="absolute right-2 top-2 pointer-events-auto rounded-xl border border-slate-400/60 bg-white/90 shadow-[0_8px_40px_rgba(0,0,0,0.45)] overflow-hidden"
+              style={{ width: 'min(56vw, 72vh)' }}
             >
-              <div className="flex items-center justify-between px-2 py-1 bg-slate-900/80 border-b border-slate-700">
-                <span className="text-[10px] tracking-[0.25em] text-cyan-300">TACTICAL MAP</span>
+              <div className="flex items-center justify-between px-2 py-1 bg-slate-100/90 border-b border-slate-300">
+                <span className="text-[10px] tracking-[0.25em] text-slate-600 font-bold">CITY MAP</span>
                 <button
                   onClick={() => setOverlay(null)}
-                  className="text-slate-400 hover:text-white text-base leading-none px-1"
+                  className="text-slate-500 hover:text-slate-900 text-base leading-none px-1"
                   aria-label="Close map"
                 >
                   ✕
