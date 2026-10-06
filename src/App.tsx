@@ -14,6 +14,7 @@ import {
 } from './game/content'
 import { loadSave, persistSave, defaultSave, type SaveData } from './game/save'
 import { VPlay, type VPlayInit, type PurchaseResult } from './vplay/sdk'
+import { BUILD_HASH, BUILD_TIME } from './gen-build'
 import HowToPlay from './components/HowToPlay'
 
 type Screen = 'boot' | 'menu' | 'game'
@@ -1285,12 +1286,13 @@ export default function App() {
               is the small RESET touch button (mobile) / R key (desktop) — no
               center-screen banner interrupting the drive. */}
 
-          {/* save badge (desktop only; mobile keeps the view clean) */}
-          {!isTouch && (
-            <div className="absolute bottom-1 left-1/2 -translate-x-1/2 z-10 text-[10px] tracking-[0.4em] text-slate-600">
-              {GAME_VERSION} — progress is saved locally
-            </div>
-          )}
+          {/* build badge — version + git hash, ALWAYS visible (tiny, corner):
+              this is how anyone testing on any device proves which build they
+              are actually running. If the hash doesn't match the latest
+              deploy, the phone is showing a stale cached page. */}
+          <div className={`absolute z-10 text-[9px] tracking-[0.25em] text-slate-500 pointer-events-none ${isTouch ? 'bottom-0.5 left-1' : 'bottom-1 left-1/2 -translate-x-1/2 text-[10px] tracking-[0.4em] text-slate-600'}`}>
+            {GAME_VERSION} · {BUILD_HASH}{isTouch ? '' : ' — progress is saved locally'}
+          </div>
 
           {/* busted flash + what-to-do summary */}
           {bustedFlash && (
@@ -1603,6 +1605,23 @@ export default function App() {
             <button onClick={() => setOverlay(null)} className="menu-btn menu-btn-primary btn-attend">RESUME</button>
             <button onClick={() => setOverlay('shop')} className="menu-btn">GARAGE SHOP</button>
             <button onClick={() => setOverlay('help')} className="menu-btn">HOW TO PLAY</button>
+            <button
+              onClick={() => {
+                // Full FTUE replay: clears both gates (tap-through onboarding
+                // flag + in-game FIRST NIGHT tutorial) so every hand-guided
+                // step can be re-verified on demand — QA shortcut.
+                try { window.localStorage.removeItem(ONBOARD_KEY) } catch { /* ignore */ }
+                saveRef.current.tutorialDone = false
+                commit()
+                setTutorialHidden(false)
+                setObFallback(false)
+                setOnboardStep(0)
+                setOverlay(null)
+              }}
+              className="menu-btn"
+            >
+              REPLAY TUTORIAL
+            </button>
             <button onClick={toggleMute} className="menu-btn">{save.muted ? 'UNMUTE' : 'MUTE'}</button>
             <button onClick={toggleCycle} className="menu-btn">ENVIRONMENT CYCLE: {save.autoCycle ? 'ON' : 'OFF'}</button>
             {isTouch && (
@@ -1622,6 +1641,9 @@ export default function App() {
               }}
             />
             <button onClick={quitToMenu} className="menu-btn">QUIT TO MENU</button>
+            <div className="text-center text-[10px] tracking-[0.2em] text-slate-500 pt-1 select-none">
+              {GAME_VERSION} · build {BUILD_HASH} · {BUILD_TIME}
+            </div>
           </div>
         </div>
       )}
