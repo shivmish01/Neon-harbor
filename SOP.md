@@ -9,7 +9,7 @@
 
 1. Open the URL, enter the game.
 2. Look at the **bottom-left corner**: a tiny line reads `v1.5.0 · <hash>`.
-3. Compare `<hash>` with the latest commit on GitHub (`git log --oneline -1` or the repo page).
+3. Compare `<hash>` with recent commits on GitHub (`git log --oneline -3` or the repo page). The stamp is baked in at build time, so it matches the commit the build was made **from** — it will be one of the 2–3 most recent commits (release commits only add build output).
 4. **Hash doesn't match?** Your phone is showing a stale cached page. Fix: close the tab → browser Settings → clear site data (or open the URL with `?v=<hash>` appended) → reload.
 5. The pause menu (⏸ top center) also shows the full build stamp + build time at the bottom.
 
