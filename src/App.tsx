@@ -272,8 +272,12 @@ export default function App() {
       saveCloudThrottled(true)
     }))
     unsubs.push(VPlay.on('resume', () => {
-      // host is back — audio needs a user gesture, so show tap-to-continue
-      setHostPaused(true)
+      // host is back — resume immediately. Audio may still need a gesture, so
+      // we attempt resume quietly and let the next tap/click re-sync it.
+      setHostPaused(false)
+      engineRef.current?.setPaused(false)
+      engineRef.current?.resumeAudio()
+      VPlay.gameplayStart()
     }))
     unsubs.push(VPlay.on('mute', () => {
       saveRef.current.muted = true
@@ -301,7 +305,13 @@ export default function App() {
         pausedByHiddenRef.current = true
       } else if (pausedByHiddenRef.current) {
         pausedByHiddenRef.current = false
-        setHostPaused(true) // tap-to-continue on return (audio gesture)
+        // Auto-resume on return — a tab switch must never leave the player
+        // staring at a pause wall. Audio resumes quietly; the browser re-syncs
+        // it on the next user gesture if it was blocked.
+        setHostPaused(false)
+        engineRef.current?.setPaused(false)
+        engineRef.current?.resumeAudio()
+        VPlay.gameplayStart()
       }
     }
     document.addEventListener('visibilitychange', onVisibility)

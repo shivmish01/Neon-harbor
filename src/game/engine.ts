@@ -78,10 +78,10 @@ const GARAGE_I = 4
 const GARAGE_J = 4
 const TOTAL_SHARDS = 24
 
-const MAX_SPEED = 36 // m/s (~130 km/h)
-const BOOST_MULT = 1.45
-const ACCEL = 24
-const BRAKE = 34
+const MAX_SPEED = 40 // m/s (~144 km/h)
+const BOOST_MULT = 1.55
+const ACCEL = 26
+const BRAKE = 36
 const CAR_R = 1.6
 
 // ---------- First-night onboarding (shown once, skippable with T) ----------
@@ -3784,7 +3784,7 @@ export class GameEngine {
 
     // Simulator damage: a beaten engine loses power — acceleration and top
     // speed bleed off as damage climbs (never a hard stop, just a sick car).
-    const dmgMul = 1 - (this.damage / 100) * 0.4
+    const dmgMul = 1 - (this.damage / 100) * 0.35
 
     if (!frozen && wantBoost && this.boost > 0 && s > 4) {
       this.boosting = true
@@ -3820,9 +3820,10 @@ export class GameEngine {
         this.swipeSteer *= Math.exp(-dt * 10)
         if (Math.abs(this.swipeSteer) < 0.02) this.swipeSteer = null
       }
-      // Joystick tilt keeps only partial steering authority — the right-thumb
-      // swipe is the primary steering, like aiming in CoD Mobile.
-      const joySteer = this.analogSteer !== null ? this.analogSteer * 0.55 : null
+      // Joystick tilt keeps partial steering authority — the right-thumb
+      // swipe is the primary steering, like aiming in CoD Mobile. A dedicated
+      // joystick gets near-full authority so corners feel responsive.
+      const joySteer = this.analogSteer !== null ? this.analogSteer * 0.8 : null
       const aSt = this.padSteer ?? this.swipeSteer ?? joySteer
       const steer = aSt !== null ? -aSt : (left ? 1 : 0) - (right ? 1 : 0)
       const grip = handbrake ? 1.4 : 7.5 * tiresMul
@@ -3844,7 +3845,7 @@ export class GameEngine {
       // the beach is a playground, not a trap. 1.2 gives ~70 km/h cruising on
       // sand vs ~130 on asphalt, and lifting the throttle doesn't slam the
       // car to a standstill.
-      const drag = onRoad ? 0.45 : 1.2
+      const drag = onRoad ? 0.38 : 1.2
       this.vel.multiplyScalar(Math.exp(-dt * drag))
       // Stuck detection — NET-PROGRESS based, so it can never interrupt a car
       // that is actually moving. Samples every 0.75s: gas held + barely moved
@@ -3977,7 +3978,7 @@ export class GameEngine {
       }
     }
 
-    this.nearGarage = this.pos.distanceTo(this.garagePos) < 11
+    this.nearGarage = this.pos.distanceTo(this.garagePos) < 17
 
     // Apply to meshes
     this.car.position.copy(this.pos)
@@ -5019,7 +5020,7 @@ export class GameEngine {
       this.camera.position.y += (Math.random() - 0.5) * s * 0.5
     }
     this.camera.lookAt(look)
-    const targetFov = 62 + Math.min(sp * 0.45, 22) + (this.boosting ? 8 : 0)
+    const targetFov = 64 + Math.min(sp * 0.55, 26) + (this.boosting ? 10 : 0)
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(dt * 4, 1)
     this.camera.updateProjectionMatrix()
   }
