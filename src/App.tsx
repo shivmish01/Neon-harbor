@@ -1006,9 +1006,11 @@ export default function App() {
             )}
           </div>
 
-          {/* top-center notification stack — mission tracker, FIRST NIGHT guide and
-              toasts all flow here in order, notification-style. Never covers the car. */}
-          <div className={`absolute left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1.5 w-full px-3 pointer-events-none ${isTouch ? 'top-14' : 'top-4'}`}>
+          {/* top-center notification stack — DESKTOP ONLY. On mobile nothing
+              may sit in front of the car: every gameplay-time text lives in
+              the right-side notification column under the minimap instead. */}
+          {!isTouch && (
+          <div className="absolute left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1.5 w-full px-3 pointer-events-none top-4">
             {hud.mission ? (
               <div className="hud-panel border-yellow-400/40 w-56 max-w-[62vw] sm:w-[26rem] sm:max-w-[80vw]">
                 <div className="flex justify-between items-center">
@@ -1026,7 +1028,7 @@ export default function App() {
                   {hud.mission.timer >= 0 && <span>{Math.round(hud.mission.dist)}m</span>}
                 </div>
               </div>
-            ) : !isTouch && (
+            ) : (
               <div className="hud-panel text-center text-[13px] text-slate-300">
                 <>Free roam — visit the <span className="text-cyan-300">glowing garage beam</span> and press <span className="key-cap">E</span> for jobs</>
               </div>
@@ -1035,7 +1037,7 @@ export default function App() {
             {/* FIRST NIGHT objective — compact notification pill; ✕ dismisses for this run */}
             {hud.tutorial && !tutorialHidden && (
               <div key={hud.tutorial.step} className="tutorial-dim">
-                <div className="hud-panel border-cyan-400/70 shadow-[0_0_28px_rgba(34,211,238,0.3)] w-64 max-w-[62vw] sm:w-[24rem] sm:max-w-[80vw]" style={isTouch ? { background: 'rgba(2,6,18,0.88)' } : undefined}>
+                <div className="hud-panel border-cyan-400/70 shadow-[0_0_28px_rgba(34,211,238,0.3)] w-64 max-w-[62vw] sm:w-[24rem] sm:max-w-[80vw]">
                   <div className="flex justify-between items-center text-[10px] tracking-[0.2em] text-cyan-300">
                     <span>FIRST NIGHT {hud.tutorial.step}/{hud.tutorial.total}</span>
                     <span className="flex items-center gap-2">
@@ -1054,11 +1056,78 @@ export default function App() {
             )}
 
           </div>
+          )}
 
           {/* top-right (below minimap): CoDM-style dispatch feed — game info lands
               here, under the minimap, so it never covers the driving view — plus
-              the heat panel with live police instructions (slim on mobile) */}
+              the heat panel with live police instructions (slim on mobile).
+              ON MOBILE this column is THE notification shade: ACTION MODE, the
+              mission tracker, the FIRST NIGHT guide, mission-complete and toasts
+              all stack here at the edge — nothing ever floats in front of the car. */}
           <div className={`absolute z-20 flex flex-col items-end gap-2 ${isTouch ? 'top-[7.5rem] right-2' : 'top-[196px] right-4'}`}>
+            {/* ACTION MODE — pinned alert pill while the Patrol is chasing (mobile) */}
+            {isTouch && hud.pursued && !hud.busted && !overlay && (
+              <div className="pointer-events-none px-2.5 py-1 rounded-md border border-red-500/80 bg-red-950/70 backdrop-blur-sm text-red-300 font-black tracking-[0.18em] text-[10px] animate-pulse">
+                ⚠ ACTION MODE — SAVE YOURSELF
+              </div>
+            )}
+            {/* mission tracker — compact edge card (mobile) */}
+            {isTouch && hud.mission && (
+              <div className="hud-panel border-yellow-400/40 w-44 px-2 py-1.5 pointer-events-none">
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-yellow-300 font-bold text-[11px] leading-tight">{hud.mission.name}</span>
+                  {hud.mission.timer >= 0 ? (
+                    <span className={`font-mono text-sm font-bold shrink-0 ${hud.mission.timer < 10 ? 'text-red-400 animate-pulse' : 'text-white'}`}>
+                      {Math.max(0, hud.mission.timer).toFixed(1)}s
+                    </span>
+                  ) : (
+                    <span className="font-mono text-sm font-bold text-red-400 animate-pulse shrink-0">EVADE</span>
+                  )}
+                </div>
+                <div className="flex justify-between text-[10px] text-slate-300 mt-0.5 gap-2">
+                  <span className="leading-tight">{hud.mission.stage === 'pickup' ? 'Reach the pickup beacon' : hud.mission.stage}</span>
+                  {hud.mission.timer >= 0 && <span className="shrink-0">{Math.round(hud.mission.dist)}m</span>}
+                </div>
+              </div>
+            )}
+            {/* FIRST NIGHT guide — same card, edge-docked with ✕ (mobile) */}
+            {isTouch && hud.tutorial && !tutorialHidden && (
+              <div key={hud.tutorial.step} className="tutorial-dim w-48">
+                <div className="hud-panel border-cyan-400/70 shadow-[0_0_28px_rgba(34,211,238,0.3)]" style={{ background: 'rgba(2,6,18,0.88)' }}>
+                  <div className="flex justify-between items-center text-[9px] tracking-[0.2em] text-cyan-300">
+                    <span>FIRST NIGHT {hud.tutorial.step}/{hud.tutorial.total}</span>
+                    <button
+                      onClick={() => setTutorialHidden(true)}
+                      className="text-slate-400 hover:text-white leading-none pointer-events-auto"
+                      aria-label="Hide tutorial"
+                    >✕</button>
+                  </div>
+                  <div className="text-white font-bold leading-snug text-[11px] mt-0.5">{touchTitle(hud.tutorial.title)}</div>
+                  <div className="text-slate-200 leading-relaxed text-[10px]">{touchHint(hud.tutorial.hint)}</div>
+                </div>
+              </div>
+            )}
+            {/* mission-complete — compact edge card with photo + dismiss (mobile) */}
+            {isTouch && winBanner && !overlay && !photoMode && (
+              <div className="hud-panel border-emerald-400/70 shadow-[0_0_28px_rgba(52,211,153,0.35)] w-48 px-2.5 py-1.5 flex items-center gap-2">
+                <div className="min-w-0">
+                  <div className="text-[9px] tracking-[0.25em] text-emerald-300">MISSION COMPLETE</div>
+                  <div className="text-white font-bold text-[11px] leading-tight truncate">{winBanner.name} <span className="text-emerald-400">+${winBanner.reward}</span></div>
+                </div>
+                <button
+                  onClick={() => { setWinBanner(null); togglePhoto() }}
+                  className="touch-btn touch-btn-sm shrink-0"
+                  aria-label="Photo mode"
+                >
+                  <IcoCam />
+                </button>
+                <button
+                  onClick={() => setWinBanner(null)}
+                  className="text-slate-400 hover:text-white leading-none shrink-0"
+                  aria-label="Dismiss"
+                >✕</button>
+              </div>
+            )}
             {toasts.length > 0 && (
               <div className="flex flex-col items-end gap-1 pointer-events-none">
                 {toasts.map((t) => (
@@ -1257,20 +1326,22 @@ export default function App() {
             </button>
           )}
 
-          {/* ACTION MODE — pulsing banner under the pause button while the
-              Patrol is actively chasing, plus a red edge vignette. No overlay,
-              the drive view stays clear. */}
+          {/* ACTION MODE — red edge vignette on every platform; the text banner
+              itself is desktop-only (mobile gets the pinned pill in the
+              right-side notification column, so nothing blocks the drive view). */}
           {hud.pursued && !hud.busted && !overlay && (
             <>
               <div
                 className="absolute inset-0 z-10 pointer-events-none animate-pulse"
                 style={{ boxShadow: 'inset 0 0 80px rgba(255,30,60,0.35)' }}
               />
-              <div
-                className={`absolute ${isTouch ? 'top-14' : 'top-3'} left-1/2 -translate-x-1/2 z-30 pointer-events-none px-4 py-1.5 rounded-md border border-red-500/80 bg-red-950/70 backdrop-blur-sm text-red-300 font-black tracking-[0.25em] text-xs sm:text-sm animate-pulse`}
-              >
-                ⚠ ACTION MODE ON — SAVE YOURSELF
-              </div>
+              {!isTouch && (
+                <div
+                  className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-none px-4 py-1.5 rounded-md border border-red-500/80 bg-red-950/70 backdrop-blur-sm text-red-300 font-black tracking-[0.25em] text-xs sm:text-sm animate-pulse"
+                >
+                  ⚠ ACTION MODE ON — SAVE YOURSELF
+                </div>
+              )}
             </>
           )}
 
@@ -1335,9 +1406,10 @@ export default function App() {
             </div>
           )}
 
-          {/* mission-complete result banner — the 📷 photo button lives here on mobile */}
-          {winBanner && !overlay && !photoMode && (
-            <div className={`absolute left-1/2 -translate-x-1/2 z-30 pointer-events-auto ${isTouch ? 'top-[15rem]' : 'top-24'}`}>
+          {/* mission-complete result banner — DESKTOP center-top. On mobile it
+              lives in the right-side notification column (with photo + ✕). */}
+          {winBanner && !overlay && !photoMode && !isTouch && (
+            <div className="absolute left-1/2 -translate-x-1/2 z-30 pointer-events-auto top-24">
               <div className="hud-panel border-emerald-400/70 shadow-[0_0_28px_rgba(52,211,153,0.35)] flex items-center gap-3 px-4 py-2.5">
                 <div>
                   <div className="text-[10px] tracking-[0.25em] text-emerald-300">MISSION COMPLETE</div>

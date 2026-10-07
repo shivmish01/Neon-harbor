@@ -51,7 +51,7 @@
 | C2 | WRECKED | Keep crashing to 0% | Car explodes → game-over screen → restart |
 | C3 | Pedestrian hits | Hit a person | "Oh no!" / "Don't kill me!" scream, heat +1★ |
 | C4 | Police chase | Commit offenses (hits, hard crashes) | PATROL stars fill, cruisers hunt you, at night a spotlight tracks your car |
-| C5 | Action mode hint | While chased | Info near the pause button area tells you to escape — text sits under the minimap, never blocks the driving view |
+| C5 | Action mode alert | While chased | ⚠ ACTION MODE pill pinned at the top of the right-side column under the minimap (mobile) / near pause button (desktop) — never blocks the driving view |
 | C6 | Busted | Let a cruiser pin you | Busted flash → fine → chase ends |
 
 ### D. Map & navigation (AMap / Google style)
@@ -91,6 +91,7 @@
 | G1 | Mobile text | Play on phone | All hints reference touch (joystick/swipe/tap), ZERO keyboard mentions |
 | G2 | Desktop text | Play on laptop | Hints show keys (W/A/S/D, E, H, M…) |
 | G3 | Controls switch | Pause → CONTROLS | Joystick scheme ↔ classic buttons scheme |
+| G4 | Notification shade | On mobile: get chased / take a job / finish tutorial steps | All gameplay text (ACTION MODE, mission tracker, FIRST NIGHT card, MISSION COMPLETE, toasts) stacks in the right column under the minimap — dismissible, never in front of the car, never full-screen while driving |
 
 ---
 
