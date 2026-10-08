@@ -12,6 +12,8 @@ export interface Stats {
   busts: number
   fares: number // taxi passengers delivered
   getaways: number // patrol pursuits escaped
+  tows: number // wreck tows paid (first one ever is free)
+  repairs: number // garage repairs paid (first one ever is free)
 }
 
 export interface SaveData {
@@ -64,7 +66,7 @@ export function defaultSave(): SaveData {
     controls: 'joystick',
     damage: 0,
     reportedMilestones: [],
-    stats: { deliveries: 0, races: 0, bestRace: 0, bestDrift: 0, busts: 0, fares: 0, getaways: 0 },
+    stats: { deliveries: 0, races: 0, bestRace: 0, bestDrift: 0, busts: 0, fares: 0, getaways: 0, tows: 0, repairs: 0 },
   }
 }
 

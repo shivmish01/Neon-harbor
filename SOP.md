@@ -23,6 +23,7 @@
 2. Verify after any build-system change: run `npm run build` twice → `git diff` on root `index.html` must be empty and `dist/assets/` names carry exactly one hash.
 3. Deploy = copy `dist/*` (index.html, assets/, models/, logos/, vplay-host-mock.html) + `SOP.md` into the gh-pages worktree and push.
 4. **Commit first, then build.** The build stamp (`src/gen-build.ts`) appends `-dirty` when the tree has uncommitted changes (excluding `gen-build.ts` itself). A `-dirty` build is never deployed — commit, re-stamp, rebuild, then deploy.
+5. **`dist/` is not tracked** on source branches (it's in `.gitignore`). The website lives on the `gh-pages` branch only; deploys rsync `dist/*` into the gh-pages worktree. Never `git add dist` here — stale-hash noise was Claude Task 5 #5.
 
 ---
 

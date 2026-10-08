@@ -4171,7 +4171,10 @@ export class GameEngine {
     if (amount <= 0 || this.wrecked) return
     // Roll Cage upgrade soaks a chunk of every impact
     amount *= ARMOR_MUL(this.hooks.getSave().upgrades?.armor ?? 0)
-    this.damage = Math.min(100, this.damage + amount)
+    // First Night is the driving lesson, not the bill: while the tutorial is
+    // running, damage caps at 60% — dents and smoke, never a WRECKED screen.
+    const cap = this.hooks.getSave().tutorialDone ? 100 : 60
+    this.damage = Math.min(cap, this.damage + amount)
     this.applyDamageLook()
     if (this.damage >= 50 && !this.damageWarned50) {
       this.damageWarned50 = true
@@ -4235,8 +4238,10 @@ export class GameEngine {
   towToGarage(): void {
     if (!this.wrecked) return
     const save = this.hooks.getSave()
-    const fee = Math.min(save.cash, 150)
+    const firstTow = save.stats.tows === 0
+    const fee = firstTow ? 0 : Math.min(save.cash, 150)
     save.cash -= fee
+    save.stats.tows += 1
     this.damage = 45
     this.damageCommitAt = 45
     this.damageWarned80 = false
@@ -4247,20 +4252,24 @@ export class GameEngine {
     this.vel.set(0, 0, 0)
     this.heat = 0
     this.debugTeleport(this.garagePos.x + 4, this.garagePos.z, Math.PI / 2)
-    this.hooks.onToast(`Towed to the garage (-$${fee}) — get her repaired`, 'info')
+    this.hooks.onToast(firstTow ? "First tow's on the house — get her repaired" : `Towed to the garage (-$${fee}) — get her repaired`, 'info')
   }
 
-  /** Repair quote at the garage: $4 per damage point. */
+  /** Repair quote at the garage: $4 per damage point. The first repair of a
+      save is free — nobody learns to drive and pays full price for it. */
   repairCost(): number {
+    if (this.hooks.getSave().stats.repairs === 0 && this.damage >= 1) return 0
     return Math.ceil(this.damage * 4)
   }
 
   /** Full repair at the garage. Returns true if paid and fixed. */
   repair(): boolean {
     const save = this.hooks.getSave()
+    const firstRepair = save.stats.repairs === 0
     const cost = this.repairCost()
     if (this.damage < 1 || save.cash < cost) return false
     save.cash -= cost
+    save.stats.repairs += 1
     this.damage = 0
     this.damageCommitAt = 0
     this.damageWarned50 = false
@@ -4269,7 +4278,7 @@ export class GameEngine {
     this.hooks.commit()
     this.applyDamageLook()
     this.synth.missionDone()
-    this.hooks.onToast(`Good as new — repairs done (-$${cost})`, 'good')
+    this.hooks.onToast(firstRepair ? "First repair's on the house — good as new" : `Good as new — repairs done (-$${cost})`, 'good')
     return true
   }
 

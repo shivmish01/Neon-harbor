@@ -1,7 +1,9 @@
 node_modules
 *.log
 .DS_Store
-# NOTE: dist is intentionally tracked in this repo — it IS the website that
-# GitHub Pages serves. Never re-add "dist" to this file or the game assets
-# will silently vanish from the live site again.
+# Build output is NOT tracked on source branches. Deploys copy dist/* into
+# the gh-pages branch worktree (see SOP.md "Build & deploy rules") — that
+# branch is the website GitHub Pages serves. Committing dist here only
+# produces stale-hash noise after every build.
 /assets/
+dist/

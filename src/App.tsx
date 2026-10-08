@@ -971,6 +971,13 @@ export default function App() {
               </div>
             </div>
           )}
+          {/* Carried-over damage is said out loud on the FIRST screen every
+              visit — a returning player never drives a dented car blind. */}
+          {save.damage > 0 && (
+            <div className="mt-4 px-4 py-2 rounded-lg border border-amber-400/50 bg-amber-500/10 text-amber-200 text-xs tracking-wide text-center max-w-sm">
+              🔧 Your car needs a repair — body at {Math.round(save.damage)}%. Fix it in the GARAGE SHOP.
+            </div>
+          )}
           <p className="text-slate-500 text-xs mt-8">Headphones recommended — sound starts on entry</p>
         </div>
       )}
@@ -1451,7 +1458,7 @@ export default function App() {
                   }}
                   className="mt-5 px-6 py-3 text-sm font-black border border-orange-400 text-orange-200 rounded-xl hover:bg-orange-400/20 tracking-widest"
                 >
-                  🚛 TOW TO GARAGE — $150
+                  🚛 {save.stats.tows === 0 ? 'TOW TO GARAGE — FREE (first one)' : 'TOW TO GARAGE — $150'}
                 </button>
               </div>
             </div>
@@ -1993,7 +2000,7 @@ export default function App() {
                     disabled={save.cash < (engineRef.current?.repairCost() ?? Infinity)}
                     className="px-4 py-2 text-sm font-black border border-cyan-400 text-cyan-200 rounded-lg hover:bg-cyan-400/20 whitespace-nowrap disabled:opacity-40"
                   >
-                    REPAIR — ${(engineRef.current?.repairCost() ?? 0).toLocaleString()}
+                    {(engineRef.current?.repairCost() ?? 0) === 0 ? 'REPAIR — FREE' : `REPAIR — $${(engineRef.current?.repairCost() ?? 0).toLocaleString()}`}
                   </button>
                 </div>
               </div>
