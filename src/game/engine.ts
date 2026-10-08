@@ -37,6 +37,8 @@ export interface HudState {
   totalShards: number
   drift: number
   chainMult: number
+  /** Street Cred live chain: unbanked cred, current ×mult, bank timer 0..1. Null when no chain. */
+  cred: { chain: number; mult: number; idle01: number } | null
   /** true when a chaser (drone/cruiser) is close but hasn't grabbed you yet — HUD shows escape advice */
   pursued: boolean
   /** first-time onboarding: current objective, or null when tutorial is finished */
@@ -83,6 +85,8 @@ const BOOST_MULT = 1.55
 const ACCEL = 26
 const BRAKE = 36
 const CAR_R = 1.6
+// Street Cred: chain cred thresholds that step the multiplier ×2 → ×5
+const CRED_STEPS = [100, 250, 500, 900]
 
 // ---------- First-night onboarding (shown once, skippable with T) ----------
 const TUTORIAL_STEPS: { title: string; hint: string }[] = [
@@ -391,9 +395,29 @@ export class GameEngine {
   private cruisers: { mesh: THREE.Group; barL: THREE.Mesh; barR: THREE.Mesh; pos: THREE.Vector3; vel: THREE.Vector3; wp: THREE.Vector3; heading: number; bob: number }[] = []
   private smoke: { sprite: THREE.Sprite; life: number; max: number }[] = []
 
-  // Street cred chain multiplier
+  // Street cred chain multiplier (legacy cash chain — small cash toasts)
   private chainCount = 0
   private chainTimer = 0
+
+  // =============== STREET CRED (Phase 1) ===============
+  // Style chain: drift / near-miss / airtime / top-speed nitro / shake a tail.
+  // Chain cred steps the multiplier ×1→×5 (100/250/500/900). 3s idle BANKS the
+  // chain into XP; any damage crash BREAKS it and the unbanked part is lost.
+  // Banked during a contract → +1% payout per 20 cred (cap +50%, applied at
+  // payout time in step 2). Free-roam banked cred pays XP at 1:2, capped at
+  // 400 XP per 10 real minutes (anti-farm: combos would pay VCoin milestones).
+  private credChain = 0
+  private credIdle = 0
+  private credTickAcc = 0
+  private credPopCd = 0
+  private jumpCred = 0
+  private jumpAirAcc = 0
+  private jumpDamaged = false
+  private credMissionBanked = 0
+  private freeCredXp = 0
+  private freeCredXpT = -9999
+  private tailTrack = new Map<object, { closeT: number; counted: boolean }>()
+  private cruiserNmCd = new Map<object, number>()
 
   constructor(canvas: HTMLCanvasElement, minimap: HTMLCanvasElement, hooks: EngineHooks, assets: GameAssets) {
     this.mmCanvas = minimap
@@ -3628,6 +3652,7 @@ export class GameEngine {
     this.updateTraffic(dt)
     this.updateRoadEvents(dt)
     this.updateCruisers(dt)
+    this.updateCred(dt)
     this.updateSmoke(dt)
     this.updatePedestrians(dt)
     this.updateBirds(dt)
@@ -4006,6 +4031,7 @@ export class GameEngine {
         if (this.airTime > 0.55) {
           this.addChain(this.airTime * 90, 'Airtime')
         }
+        this.landJumpCred()
         this.vy = 0
       }
     }
@@ -4174,7 +4200,13 @@ export class GameEngine {
     // First Night is the driving lesson, not the bill: while the tutorial is
     // running, damage caps at 60% — dents and smoke, never a WRECKED screen.
     const cap = this.hooks.getSave().tutorialDone ? 100 : 60
+    const before = this.damage
     this.damage = Math.min(cap, this.damage + amount)
+    // Any damage breaks the cred chain; mid-air damage ruins the clean landing
+    if (this.damage > before) {
+      this.breakCred()
+      if (!this.grounded) this.jumpDamaged = true
+    }
     this.applyDamageLook()
     if (this.damage >= 50 && !this.damageWarned50) {
       this.damageWarned50 = true
@@ -4519,9 +4551,15 @@ export class GameEngine {
       t.nmCooldown -= dt
       const playerSp = this.vel.length()
       const dNow = Math.sqrt(d2)
-      if (t.nmCooldown <= 0 && dNow > 2.4 && dNow < 5.4 && playerSp > 17) {
+      // Anti-farm: relative speed must exceed 40 km/h — parked/slow cars and
+      // same-pace cruising don't count. 3s cooldown per vehicle (nmCooldown).
+      const tvx = t.axis === 'x' ? t.speed * t.dir : 0
+      const tvz = t.axis === 'z' ? t.speed * t.dir : 0
+      const relKmh = Math.hypot(this.vel.x - tvx, this.vel.z - tvz) * 3.6
+      if (t.nmCooldown <= 0 && dNow > 2.4 && dNow < 5.4 && playerSp * 3.6 > 60 && relKmh > 40) {
         t.nmCooldown = 3
         this.addChain(30, 'Near miss')
+        this.addCred(25)
         this.synth.checkpoint()
       }
       const rr = 3.4
@@ -4805,6 +4843,7 @@ export class GameEngine {
       toPlayer.y = 0
       const dist = toPlayer.length()
       nearest = Math.min(nearest, dist)
+      this.trackTail(d, dist)
 
       const chasing = this.heat >= 1 && dist < 130
       if (chasing) {
@@ -4985,6 +5024,7 @@ export class GameEngine {
     if (m && m.kind === 'taxi' && m.passenger) this.scene.remove(m.passenger)
     this.mission = null
     this.markerBeacon.visible = false
+    this.credMissionBanked = 0 // contract-scoped cred bonus resets with the job
   }
 
   cancelMission(): void {
@@ -5270,6 +5310,9 @@ export class GameEngine {
       totalShards: TOTAL_SHARDS,
       drift: Math.round(this.driftScore),
       chainMult: Math.round(this.chainMult() * 100) / 100,
+      cred: this.credChain > 0
+        ? { chain: Math.round(this.credChain), mult: this.credMult(), idle01: Math.max(0, Math.min(1, 1 - this.credIdle / 3)) }
+        : null,
       pursued: this.heat >= 1 && !this.busted && chasedClose,
       tutorial,
       mission,
@@ -5828,6 +5871,16 @@ export class GameEngine {
       toPlayer.y = 0
       const dist = toPlayer.length()
       this.cruiserNearest = Math.min(this.cruiserNearest, dist)
+      this.trackTail(c, dist)
+      // Near-miss on patrol cars too (same anti-farm rules as traffic)
+      const cSpeed = 9
+      const cRelKmh = Math.hypot(this.vel.x - Math.sin(c.heading) * cSpeed, this.vel.z - Math.cos(c.heading) * cSpeed) * 3.6
+      const nmReady = (this.cruiserNmCd.get(c) ?? 0) <= this.time
+      if (nmReady && dist > 2.4 && dist < 5.4 && this.vel.length() * 3.6 > 60 && cRelKmh > 40) {
+        this.cruiserNmCd.set(c, this.time + 3)
+        this.addCred(25)
+        this.synth.checkpoint()
+      }
 
       let speed = 9
       if (active && dist < 140) {
@@ -5943,6 +5996,120 @@ export class GameEngine {
     this.hooks.onToast(`${label} +$${pay}${multTxt}`, 'cash')
     if (this.chainCount > 1) this.synth.chainUp()
     return pay
+  }
+
+  // =============== STREET CRED (Phase 1) ===============
+  /** Current style multiplier: ×1, then ×2..×5 as the unbanked chain passes
+      100 / 250 / 500 / 900 cred. */
+  private credMult(): number {
+    let m = 1
+    for (const t of CRED_STEPS) if (this.credChain >= t) m += 1
+    return m
+  }
+
+  /** Add style points at the CURRENT multiplier. Every award resets the 3s
+      bank timer. Stepping up pops a toast (max 1 per 2s). */
+  private addCred(base: number): void {
+    if (base <= 0 || this.attract) return
+    const before = this.credMult()
+    this.credChain += Math.round(base * before)
+    this.credIdle = 0
+    const now = this.credMult()
+    if (now > before && this.credPopCd <= 0) {
+      this.credPopCd = 2
+      this.hooks.onToast(`×${now} STREET CRED!`, 'good')
+      this.synth.chainUp()
+    }
+  }
+
+  /** 3s without a style action banks the chain: XP (1:1 on a contract, 1:2
+      free-roam with the 400 XP / 10 min anti-farm cap) + lifetime stat. */
+  private bankCred(): void {
+    const banked = Math.round(this.credChain)
+    this.credChain = 0
+    this.credIdle = 0
+    if (banked < 10) return
+    const save = this.hooks.getSave()
+    save.stats.cred += banked
+    let xp = banked
+    if (this.mission) {
+      this.credMissionBanked += banked
+    } else {
+      xp = Math.round(banked / 2)
+      if (this.time - this.freeCredXpT > 600) {
+        this.freeCredXpT = this.time
+        this.freeCredXp = 0
+      }
+      xp = Math.min(xp, Math.max(0, 400 - this.freeCredXp))
+      this.freeCredXp += xp
+    }
+    if (xp > 0) this.grantXp(xp)
+    this.hooks.commit()
+    this.hooks.onToast(`CRED BANKED +${banked}${xp > 0 ? ` → +${xp} XP` : ' (free-roam cap)'}`, 'good')
+  }
+
+  /** Any damage breaks the chain — the unbanked cred is lost. */
+  private breakCred(): void {
+    if (this.credChain >= 100) this.hooks.onToast(`CHAIN BROKEN — ${Math.round(this.credChain)} cred lost`, 'warn')
+    this.credChain = 0
+    this.credIdle = 0
+  }
+
+  /** Per-frame cred upkeep: 0.5s style ticks, idle banking, pop cooldown. */
+  private updateCred(dt: number): void {
+    this.credPopCd = Math.max(0, this.credPopCd - dt)
+    if (this.attract || this.paused || this.wrecked) return
+    const kmh = this.vel.length() * 3.6
+    this.credTickAcc += dt
+    while (this.credTickAcc >= 0.5) {
+      this.credTickAcc -= 0.5
+      if (this.drifting && kmh > 40) this.addCred(10)
+      if (this.boosting && this.vel.length() >= 0.9 * this.curTopSpeed) this.addCred(5)
+    }
+    // Airtime: raw cred accrues per 0.5s airborne; a clean landing doubles it
+    if (!this.grounded) {
+      this.jumpAirAcc += dt
+      while (this.jumpAirAcc >= 0.5) {
+        this.jumpAirAcc -= 0.5
+        this.jumpCred += 15
+      }
+    }
+    if (this.credChain > 0) {
+      this.credIdle += dt
+      if (this.credIdle >= 3) this.bankCred()
+    }
+  }
+
+  /** Landing handler (called from updateCar when the wheels touch down). */
+  private landJumpCred(): void {
+    if (this.jumpCred > 0) {
+      if (!this.jumpDamaged) this.jumpCred *= 2 // clean landing doubles the jump
+      this.addCred(this.jumpCred)
+    }
+    this.jumpCred = 0
+    this.jumpAirAcc = 0
+    this.jumpDamaged = false
+  }
+
+  /** "Shake a tail": a chaser that got within 25 m in the last 5 s and falls
+      back beyond 60 m pays 50 cred — once per chaser per chase. */
+  private trackTail(chaser: object, dist: number): void {
+    let rec = this.tailTrack.get(chaser)
+    if (!rec) {
+      rec = { closeT: -9999, counted: false }
+      this.tailTrack.set(chaser, rec)
+    }
+    if (this.heat < 1) {
+      rec.counted = false
+      rec.closeT = -9999
+      return
+    }
+    if (dist < 25) rec.closeT = this.time
+    if (!rec.counted && rec.closeT > 0 && this.time - rec.closeT <= 5 && dist > 60) {
+      rec.counted = true
+      this.addCred(50)
+      this.hooks.onToast('TAIL SHAKEN +50 cred', 'cash')
+    }
   }
 
   // =============== PEDESTRIANS ===============

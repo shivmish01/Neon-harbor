@@ -1003,6 +1003,7 @@ export default function App() {
             <span>Shards <b className="text-cyan-400">{save.shards.length}/24</b></span>
             <span>Deliveries <b className="text-cyan-400">{save.stats.deliveries}</b></span>
             <span>Races <b className="text-cyan-400">{save.stats.races}</b></span>
+            <span>Cred <b className="text-amber-300">{save.stats.cred.toLocaleString()}</b></span>
           </div>
           {/* Carried-over body damage is a feature — but never a mystery.
               Say it once, here on the title screen, before they drive. */}
@@ -1254,6 +1255,17 @@ export default function App() {
                   <div className={`h-full rounded ${hud.boosting ? 'bg-fuchsia-400 shadow-[0_0_12px_rgba(232,121,249,0.9)]' : 'bg-cyan-500'}`} style={{ width: `${hud.boost}%` }} />
                 </div>
                 <div className="text-[10px] text-slate-400 mt-1">NITRO — hold SHIFT{hud.drift > 0 && <span className="text-yellow-300 ml-2">DRIFT {hud.drift}</span>}</div>
+                {/* Street Cred chain pill: unbanked cred, multiplier, bank timer */}
+                {hud.cred && (
+                  <div className="mt-1.5">
+                    <div className="text-xs font-black text-amber-300 tracking-widest">
+                      CRED {hud.cred.chain} <span className="text-fuchsia-300">×{hud.cred.mult}</span>
+                    </div>
+                    <div className="w-48 h-1 bg-slate-800 rounded mt-0.5">
+                      <div className="h-full rounded bg-amber-400 transition-none" style={{ width: `${hud.cred.idle01 * 100}%` }} />
+                    </div>
+                  </div>
+                )}
                 {hud.damage > 15 && (
                   <div className="mt-1.5">
                     <div className="w-48 h-1.5 bg-slate-800 rounded">
@@ -1283,6 +1295,17 @@ export default function App() {
                 />
               </div>
               {hud.drift > 0 && <div className="text-yellow-300 text-[11px] font-black drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]">DRIFT +{hud.drift}</div>}
+              {/* Street Cred chain pill (mobile): same info, one slim line */}
+              {hud.cred && (
+                <>
+                  <div className="text-[11px] font-black text-amber-300 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)] tracking-widest">
+                    CRED {hud.cred.chain} <span className="text-fuchsia-300">×{hud.cred.mult}</span>
+                  </div>
+                  <div className="w-24 h-0.5 bg-white/10 rounded-full overflow-hidden">
+                    <div className="h-full bg-amber-400" style={{ width: `${hud.cred.idle01 * 100}%` }} />
+                  </div>
+                </>
+              )}
               {hud.damage > 15 && (
                 <div className="flex items-center gap-1 pointer-events-none">
                   <span className="text-[10px]">🔧</span>

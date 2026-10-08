@@ -14,6 +14,7 @@ export interface Stats {
   getaways: number // patrol pursuits escaped
   tows: number // wreck tows paid (first one ever is free)
   repairs: number // garage repairs paid (first one ever is free)
+  cred: number // lifetime Street Cred banked (Phase 1)
 }
 
 export interface SaveData {
@@ -66,7 +67,7 @@ export function defaultSave(): SaveData {
     controls: 'joystick',
     damage: 0,
     reportedMilestones: [],
-    stats: { deliveries: 0, races: 0, bestRace: 0, bestDrift: 0, busts: 0, fares: 0, getaways: 0, tows: 0, repairs: 0 },
+    stats: { deliveries: 0, races: 0, bestRace: 0, bestDrift: 0, busts: 0, fares: 0, getaways: 0, tows: 0, repairs: 0, cred: 0 },
   }
 }
 
@@ -113,9 +114,12 @@ export function persistSave(data: SaveData): void {
   }
 }
 
-/** XP needed to go from `level` to `level + 1`. */
+/** XP needed to go from `level` to `level + 1`.
+    Phase 1 curve: 600 + 300 × level (was level × 1000 — L10 needed 45,000 XP
+    and was never reached; now ~19,500). Migration-safe by construction:
+    grantXp only ever ADDS levels, so no existing save can drop a level. */
 export function xpForLevel(level: number): number {
-  return level * 1000
+  return 600 + 300 * level
 }
 
 /** Add XP, handle level-ups. Returns how many levels gained. */
