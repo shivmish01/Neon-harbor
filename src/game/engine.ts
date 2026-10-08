@@ -21,6 +21,10 @@ export interface HudMission {
   timer: number // seconds left; -1 = no countdown (getaway)
   dist: number
   stage: string
+  /** Live risk–reward (Phase 1): payout estimate and the multipliers applied to it */
+  payoutEst: number
+  heatMult: number
+  credPct: number
 }
 
 export interface HudState {
@@ -414,6 +418,7 @@ export class GameEngine {
   private jumpAirAcc = 0
   private jumpDamaged = false
   private credMissionBanked = 0
+  private missionPeakStars = 0
   private freeCredXp = 0
   private freeCredXpT = -9999
   private tailTrack = new Map<object, { closeT: number; counted: boolean }>()
@@ -4941,6 +4946,7 @@ export class GameEngine {
     this.synth.busted()
     this.hooks.onBusted()
     this.hooks.onToast(`BUSTED — Harbor Patrol impounded your ride. Fine: $${fine}`, 'warn')
+    if (this.mission) this.hooks.onToast(`${this.mission.name} FAILED — caught mid-job, no payout`, 'warn')
     this.pos.set(this.garagePos.x, 0, this.garagePos.z + 19)
     this.vel.set(0, 0, 0)
     this.heading = Math.PI
@@ -5025,6 +5031,7 @@ export class GameEngine {
     this.mission = null
     this.markerBeacon.visible = false
     this.credMissionBanked = 0 // contract-scoped cred bonus resets with the job
+    this.missionPeakStars = 0
   }
 
   cancelMission(): void {
@@ -5034,12 +5041,36 @@ export class GameEngine {
     }
   }
 
+  // =============== HEAT PAYS (Phase 1, step 2) ===============
+  /** Payout multiplier from the HIGHEST star level reached during the contract. */
+  private heatPayMult(): number {
+    const s = this.missionPeakStars
+    return s <= 0 ? 1 : s === 1 ? 1.25 : s === 2 ? 1.5 : s === 3 ? 2 : 2.5
+  }
+  /** Cred payout bonus: +1% per 20 cred banked during the contract, cap +50%. */
+  private credPayPct(): number {
+    return Math.min(50, Math.floor(this.credMissionBanked / 20))
+  }
+  /** Final contract payout: base × heat × (1 + cred%). Always shows the math. */
+  private payContract(base: number): number {
+    const hm = this.heatPayMult()
+    const cp = this.credPayPct()
+    const final = Math.round(base * hm * (1 + cp / 100))
+    const parts = [`$${base} base`]
+    if (hm > 1) parts.push(`×${hm} heat`)
+    if (cp > 0) parts.push(`+${cp}% cred`)
+    parts.push(`= $${final}`)
+    this.hooks.onToast(parts.join(' '), 'cash')
+    return final
+  }
+
   private updateMission(dt: number): void {
     const m = this.mission
     if (!m) {
       this.markerBeacon.visible = false
       return
     }
+    this.missionPeakStars = Math.max(this.missionPeakStars, Math.floor(this.heat))
     if (m.kind !== 'getaway') {
       m.timer -= dt
       if (m.timer <= 0) {
@@ -5053,7 +5084,7 @@ export class GameEngine {
       // No beacon — the objective is the heat gauge itself. Stay free until it bleeds out.
       this.markerBeacon.visible = false
       if (this.heat < 0.8) {
-        const reward = Math.round(300 + m.heat0 * 130)
+        const reward = this.payContract(Math.round(300 + m.heat0 * 130))
         const save = this.hooks.getSave()
         save.stats.getaways += 1
         this.unlockAchievement('first-getaway')
@@ -5080,7 +5111,7 @@ export class GameEngine {
           this.synth.checkpoint()
           this.hooks.onToast(m.kind === 'taxi' ? 'Passenger aboard — get them there fast!' : 'Package secured — now DELIVER it!', 'good')
         } else if (m.kind === 'delivery') {
-          const reward = Math.round(200 + m.a.distanceTo(m.b) * 0.9 + m.timer * 5)
+          const reward = this.payContract(Math.round(200 + m.a.distanceTo(m.b) * 0.9 + m.timer * 5))
           const save = this.hooks.getSave()
           save.stats.deliveries += 1
           this.unlockAchievement('first-delivery')
@@ -5092,7 +5123,7 @@ export class GameEngine {
           this.clearMission()
         } else {
           // Taxi fare: base + distance + tip from time remaining (speed pays)
-          const fare = Math.round(120 + m.dist * 0.8 + m.timer * 4)
+          const fare = this.payContract(Math.round(120 + m.dist * 0.8 + m.timer * 4))
           const save = this.hooks.getSave()
           save.stats.fares += 1
           this.unlockAchievement('first-fare')
@@ -5100,7 +5131,6 @@ export class GameEngine {
           this.grantXp(180)
           this.synth.missionDone()
           this.hooks.onMissionDone(m.name, fare)
-          this.hooks.onToast(`Passenger dropped off — fare $${fare} (incl. speed tip)`, 'cash')
           this.clearMission()
         }
       }
@@ -5114,7 +5144,7 @@ export class GameEngine {
         m.timer = 14
         this.synth.checkpoint()
         if (m.idx >= m.cps.length) {
-          const reward = Math.round(380 + m.total * 22)
+          const reward = this.payContract(Math.round(380 + m.total * 22))
           const save = this.hooks.getSave()
           save.stats.races += 1
           this.unlockAchievement('first-race')
@@ -5227,14 +5257,23 @@ export class GameEngine {
     let mission: HudMission | null = null
     if (this.mission) {
       const m = this.mission
+      // Live risk–reward line on the mission card: current payout estimate
+      // with the heat multiplier and cred bonus already applied.
+      const base =
+        m.kind === 'delivery' ? Math.round(200 + m.a.distanceTo(m.b) * 0.9 + m.timer * 5) :
+        m.kind === 'taxi' ? Math.round(120 + m.dist * 0.8 + m.timer * 4) :
+        m.kind === 'race' ? Math.round(380 + m.total * 22) :
+        Math.round(300 + m.heat0 * 130)
+      const payoutEst = Math.round(base * this.heatPayMult() * (1 + this.credPayPct() / 100))
+      const live = { payoutEst, heatMult: this.heatPayMult(), credPct: this.credPayPct() }
       if (m.kind === 'delivery' || m.kind === 'taxi') {
         const t = m.stage === 'pickup' ? m.a : m.b
-        mission = { kind: m.kind, name: m.name, timer: m.timer, dist: this.pos.distanceTo(t), stage: m.stage }
+        mission = { kind: m.kind, name: m.name, timer: m.timer, dist: this.pos.distanceTo(t), stage: m.stage, ...live }
       } else if (m.kind === 'race') {
         const cp = m.cps[m.idx]
-        mission = { kind: m.kind, name: m.name, timer: m.timer, dist: this.pos.distanceTo(cp), stage: `Gate ${m.idx + 1}/8` }
+        mission = { kind: m.kind, name: m.name, timer: m.timer, dist: this.pos.distanceTo(cp), stage: `Gate ${m.idx + 1}/8`, ...live }
       } else {
-        mission = { kind: m.kind, name: m.name, timer: -1, dist: 0, stage: `Heat ${Math.floor(this.heat)}★ — evade the Patrol!` }
+        mission = { kind: m.kind, name: m.name, timer: -1, dist: 0, stage: `Heat ${Math.floor(this.heat)}★ — evade the Patrol!`, ...live }
       }
     }
     const chasedClose =

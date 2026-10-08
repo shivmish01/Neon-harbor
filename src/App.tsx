@@ -1071,6 +1071,12 @@ export default function App() {
                   <span>{hud.mission.stage === 'pickup' ? 'Reach the pickup beacon' : hud.mission.stage}</span>
                   {hud.mission.timer >= 0 && <span>{Math.round(hud.mission.dist)}m</span>}
                 </div>
+                {/* live risk–reward: the payout explains itself as you drive */}
+                <div className="text-[11px] mt-1 font-bold text-emerald-300">
+                  PAYOUT ~${hud.mission.payoutEst.toLocaleString()}
+                  {hud.mission.heatMult > 1 && <span className="text-red-300"> · HEAT ×{hud.mission.heatMult}</span>}
+                  {hud.mission.credPct > 0 && <span className="text-amber-300"> · CRED +{hud.mission.credPct}%</span>}
+                </div>
               </div>
             ) : (
               <div className="hud-panel text-center text-[13px] text-slate-300">
@@ -1141,6 +1147,11 @@ export default function App() {
                 <div className="nc-stage flex justify-between text-[10px] text-slate-300 mt-0.5 gap-2">
                   <span className="leading-tight">{hud.mission.stage === 'pickup' ? 'Reach the pickup beacon' : hud.mission.stage}</span>
                   {hud.mission.timer >= 0 && <span className="shrink-0">{Math.round(hud.mission.dist)}m</span>}
+                </div>
+                <div className="text-[10px] mt-0.5 font-bold text-emerald-300">
+                  ~${hud.mission.payoutEst.toLocaleString()}
+                  {hud.mission.heatMult > 1 && <span className="text-red-300"> ×{hud.mission.heatMult} heat</span>}
+                  {hud.mission.credPct > 0 && <span className="text-amber-300"> +{hud.mission.credPct}% cred</span>}
                 </div>
               </div>
             )}
