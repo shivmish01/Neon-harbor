@@ -342,6 +342,19 @@ export class GameEngine {
   // Game state
   private heat = 0
   private lastHeatInt = 0
+  // New-player protection: the Patrol stays blind until the First Night guide
+  // is done/skipped, plus a 60s grace after that. Speeding is judged against
+  // the car's OWN top speed (85%), not a fixed km/h, so arcade speed tuning
+  // can never turn "holding the gas" into a crime. The very first chase of a
+  // save is capped at ★1 with no grab — one readable lesson, not a pile-up.
+  private heatGraceUntil = 0
+  private curTopSpeed = MAX_SPEED
+  private firstChaseDone: boolean | null = null
+  // Single source of truth: the Patrol is blind until First Night is
+  // done/skipped AND the 60s grace has passed AND the React tour is closed.
+  private get heatAllowed(): boolean {
+    return this.hooks.getSave().tutorialDone && !this.onboardingActive && this.time >= this.heatGraceUntil
+  }
   private bustedMeter = 0
   private busted = false
   private bustedCooldown = 0
@@ -3452,7 +3465,9 @@ export class GameEngine {
       if (!s.tutorialDone) {
         s.tutorialDone = true
         this.hooks.commit()
+        this.heatGraceUntil = this.time + 60
         this.hooks.onToast('Tutorial skipped — the whole city is open. ESC opens the menu.', 'info')
+        this.hooks.onToast('The Patrol looks the other way for your first 60 seconds.', 'info')
       }
     }
     if (['arrowup', 'arrowdown', ' '].includes(k)) e.preventDefault()
@@ -3870,6 +3885,10 @@ export class GameEngine {
       if (braking) s -= (s > 1 ? BRAKE : ACCEL * engineMul * 0.6) * dt
       const maxS = MAX_SPEED * engineMul * dmgMul * mult
       s = THREE.MathUtils.clamp(s, -10, maxS)
+      // The car's honest top speed (upgrades included, damage excluded) — the
+      // Patrol's speeding check is 85% of THIS, so tuning MAX_SPEED can never
+      // turn plain cruising into a chase.
+      this.curTopSpeed = MAX_SPEED * engineMul
       // Swipe steering is velocity-based (CoD-style): the moment the finger
       // stops moving the steer input bleeds to center in ~0.15s, so the car
       // straightens as soon as the swipe ends — no laggy "drift" feel.
@@ -4106,7 +4125,7 @@ export class GameEngine {
             )
           }
         }
-        if (impact > 12) this.heat = Math.min(5, this.heat + 0.35)
+        if (impact > 12 && this.heatAllowed) this.heat = Math.min(5, this.heat + 0.35)
       }
     }
     if (this.pos.y < 5) {
@@ -4514,7 +4533,7 @@ export class GameEngine {
             this.shake = Math.min(this.shake + impact * 0.04, 0.8)
             this.synth.thud()
             this.addDamage(impact * 0.3)
-            if (impact > 10) this.heat = Math.min(5, this.heat + 0.25)
+            if (impact > 10 && this.heatAllowed) this.heat = Math.min(5, this.heat + 0.25)
           }
         }
       }
@@ -4764,6 +4783,12 @@ export class GameEngine {
     let nearest = Infinity
     let chased = false
     const rand = Math.random
+    const heatSave = this.hooks.getSave()
+    // The very first chase of a save is capped at ★1 with no grab.
+    const heatAllowed = this.heatAllowed
+    if (this.firstChaseDone === null) this.firstChaseDone = heatSave.stats.busts > 0 || heatSave.stats.getaways > 0
+    // The first chase a player ever gets: capped at ★1, no grab — one lesson.
+    const firstEverChase = !this.firstChaseDone && this.mission?.kind !== 'getaway'
 
     for (const d of this.drones) {
       d.bob += dt
@@ -4795,7 +4820,7 @@ export class GameEngine {
       if (dist < 2.6) {
         d.pos.add(toPlayer.clone().normalize().multiplyScalar(-(2.6 - dist)))
       }
-      if (dist < 3.4 && this.pos.y < 2 && !this.busted && this.droneRamCd <= 0) {
+      if (dist < 3.4 && this.pos.y < 2 && !this.busted && this.droneRamCd <= 0 && this.heat >= 1) {
         // Shove the PLAYER away from the drone (positive = away), not toward it.
         const away = toPlayer.clone().normalize().multiplyScalar(11)
         this.vel.add(away)
@@ -4810,13 +4835,15 @@ export class GameEngine {
       }
     }
 
-    const speeding = sp * 3.6 > 95
+    const speeding = sp > 0.85 * this.curTopSpeed
     const effNearest = Math.min(nearest, this.cruiserNearest)
-    if (speeding && effNearest < 45 && !this.busted) {
+    if (heatAllowed && speeding && effNearest < 45 && !this.busted) {
       this.heat = Math.min(5, this.heat + dt * 0.55)
     } else if (effNearest > 60 || !chased) {
       this.heat = Math.max(0, this.heat - dt * 0.28)
     }
+    // First-ever chase stays a ★1 lesson, no matter what bumps into you
+    if (firstEverChase && this.heat > 1.99) this.heat = 1.99
 
     // Explain the police game with toasts as heat changes
     const heatInt = Math.floor(this.heat)
@@ -4831,12 +4858,14 @@ export class GameEngine {
       }
     } else if (heatInt === 0 && this.lastHeatInt >= 1) {
       this.hooks.onToast('You lost them. Heat cleared.', 'good')
+      this.firstChaseDone = true // survived the first chase — full heat rules from here
     }
     this.lastHeatInt = heatInt
 
-    // Busted meter: chased + slow + close (drones OR cruisers can box you in)
+    // Busted meter: chased + slow + close (drones OR cruisers can box you in).
+    // No grab during a player's first-ever chase — ★1 is the whole lesson.
     const grabbed = nearest < 5.5 || this.cruiserNearest < 5
-    if (this.heat >= 1 && grabbed && sp < 9 && !this.busted) {
+    if (this.heat >= 1 && grabbed && sp < 9 && !this.busted && !firstEverChase) {
       this.bustedMeter += dt
       if (this.escapeHintCd <= 0) {
         this.hooks.onToast('BOXED IN — reverse + steer hard, or hit the handbrake to swing out!', 'info')
@@ -4860,6 +4889,7 @@ export class GameEngine {
     this.bustedMeter = 0
     this.heat = 0
     this.lastHeatInt = 0
+    this.firstChaseDone = true
     this.synth.busted()
     this.hooks.onBusted()
     this.hooks.onToast(`BUSTED — Harbor Patrol impounded your ride. Fine: $${fine}`, 'warn')
@@ -5198,7 +5228,9 @@ export class GameEngine {
         save.tutorialDone = true
         this.hooks.commit()
         this.tutLastIdx = idx
+        this.heatGraceUntil = this.time + 60
         this.hooks.onToast('Tutorial complete — the harbor is yours. Good luck out there!', 'good')
+        this.hooks.onToast('The Patrol looks the other way for your first 60 seconds.', 'info')
       } else {
         if (this.tutLastIdx === -1) {
           this.hooks.onToast(
@@ -5828,7 +5860,7 @@ export class GameEngine {
         c.pos.add(toPlayer.clone().normalize().multiplyScalar(-(2.8 - dist)))
       }
       // Ram the player — shove AWAY (positive), never toward the cruiser.
-      if (dist < 3.3 && this.pos.y < 2 && !this.busted && this.cruiserRamCd <= 0) {
+      if (dist < 3.3 && this.pos.y < 2 && !this.busted && this.cruiserRamCd <= 0 && this.heat >= 1) {
         const away = toPlayer.clone().normalize().multiplyScalar(9)
         this.vel.add(away)
         this.heat = Math.min(5, this.heat + 0.45)
@@ -6195,11 +6227,15 @@ export class GameEngine {
         p.pausing = false
         this.vel.multiplyScalar(0.82)
         this.shake = Math.min(this.shake + 0.35, 0.8)
-        this.heat = Math.min(5, this.heat + 1)
+        if (this.heatAllowed) {
+          this.heat = Math.min(5, this.heat + 1)
+          this.hooks.onToast('You hit a pedestrian! Patrol alerted (+1★)', 'warn')
+        } else {
+          this.hooks.onToast('You hit a pedestrian! Watch it — the Patrol won’t ignore that for long.', 'warn')
+        }
         this.synth.thud()
         this.addDamage(3)
         this.speakPanic(true)
-        this.hooks.onToast('You hit a pedestrian! Patrol alerted (+1★)', 'warn')
       }
     }
   }

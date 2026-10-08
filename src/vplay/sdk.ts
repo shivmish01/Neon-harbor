@@ -17,7 +17,9 @@ export type PurchaseResult =
   | { status: 'purchased'; entitlements: string[]; vcoins: number }
   | { status: 'cancelled' | 'needs_signin' | 'insufficient' | 'unavailable' | 'error'; message?: string }
 
-const ALLOWED_ORIGINS = ['https://vplay.gg', 'https://www.vplay.gg', 'http://localhost:3000']
+// Release allowlist: vplay.gg ONLY. Localhost (any port, incl. :3000) is
+// accepted solely in dev builds via the DEV branch in isAllowedOrigin below.
+const ALLOWED_ORIGINS = ['https://vplay.gg', 'https://www.vplay.gg']
 const INIT_TIMEOUT_MS = 6000
 const PURCHASE_TIMEOUT_MS = 180000
 

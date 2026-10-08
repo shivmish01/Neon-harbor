@@ -997,6 +997,13 @@ export default function App() {
             <span>Deliveries <b className="text-cyan-400">{save.stats.deliveries}</b></span>
             <span>Races <b className="text-cyan-400">{save.stats.races}</b></span>
           </div>
+          {/* Carried-over body damage is a feature — but never a mystery.
+              Say it once, here on the title screen, before they drive. */}
+          {save.damage > 0 && (
+            <div className="menu-in mt-3 px-4 py-2 rounded-lg border border-amber-400/50 bg-amber-500/10 text-amber-200 text-xs tracking-wide text-center">
+              🔧 Your car needs a repair — body at {Math.round(save.damage)}%. Fix it in the GARAGE SHOP.
+            </div>
+          )}
           <button onClick={toggleMute} className="nh-menu-gap mt-6 text-slate-500 text-xs underline hover:text-slate-300">
             {save.muted ? 'Unmute sound' : 'Mute sound'}
           </button>
@@ -1972,11 +1979,11 @@ export default function App() {
               <div className="shop-repair w-full mb-5 p-4 rounded-xl border border-cyan-400/40 bg-cyan-500/10">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-cyan-300 font-black tracking-widest">🔧 BODY REPAIR</div>
-                    <div className="mt-2 w-56 max-w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                    <div className="repair-title text-cyan-300 font-black tracking-widest">🔧 BODY REPAIR</div>
+                    <div className="repair-bar mt-2 w-56 max-w-full h-2 bg-slate-800 rounded-full overflow-hidden">
                       <div className={`h-full rounded-full ${hud.damage > 80 ? 'bg-red-500' : hud.damage > 50 ? 'bg-amber-400' : 'bg-cyan-400'}`} style={{ width: `${hud.damage}%` }} />
                     </div>
-                    <div className="text-slate-400 text-xs mt-1">Damage {hud.damage}% — a clean body turns heads again</div>
+                    <div className="repair-desc text-slate-400 text-xs mt-1">Damage {hud.damage}% — a clean body turns heads again</div>
                   </div>
                   <button
                     onClick={() => {
@@ -2514,7 +2521,7 @@ function ShopCard(props: {
     </button>
   )
   return (
-    <div className={`relative rounded-xl border p-3 bg-slate-800/60 transition-all ${props.isEquipped ? 'border-cyan-400 shadow-[0_0_16px_rgba(34,211,238,0.35)]' : 'border-slate-700 hover:border-slate-500'}`}>
+    <div className={`shop-item relative rounded-xl border p-3 bg-slate-800/60 transition-all ${props.isEquipped ? 'border-cyan-400 shadow-[0_0_16px_rgba(34,211,238,0.35)]' : 'border-slate-700 hover:border-slate-500'}`}>
       {props.earned && (
         <div className="absolute -top-2 -right-2 bg-cyan-400 text-black text-[10px] font-black px-2 py-0.5 rounded-full">🏆 EARNED</div>
       )}
@@ -2522,12 +2529,12 @@ function ShopCard(props: {
         <div className="absolute -top-2 -right-2 bg-amber-500 text-black text-[10px] font-black px-2 py-0.5 rounded-full">PREMIUM</div>
       )}
       {props.preview ?? (
-        <div className="h-14 rounded-lg mb-2 flex items-end justify-center" style={{ background: `linear-gradient(135deg, ${hex(props.swatch)}, #0b0d14)` }}>
+        <div className="shop-item-preview h-14 rounded-lg mb-2 flex items-end justify-center" style={{ background: `linear-gradient(135deg, ${hex(props.swatch)}, #0b0d14)` }}>
           <div className="w-24 h-2 rounded-full mb-2" style={{ background: hex(props.glow), boxShadow: `0 0 14px ${hex(props.glow)}` }} />
         </div>
       )}
       <div className="text-white font-bold text-sm">{props.name}</div>
-      <div className="text-slate-300 text-[13px] mt-0.5 leading-snug min-h-[2rem]">{props.desc}</div>
+      <div className="shop-item-desc text-slate-300 text-[13px] mt-0.5 leading-snug min-h-[2rem]">{props.desc}</div>
       <div className="mt-2">
         {props.isEquipped ? (
           <div className="text-center text-cyan-300 text-xs font-bold py-1.5 border border-cyan-500/50 rounded">EQUIPPED</div>

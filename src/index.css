@@ -1310,7 +1310,33 @@
     letter-spacing: 0.12em;
   }
   .shop-panel .shop-repair {
-    padding: 0.5rem 0.6rem;
+    padding: 0.4rem 0.6rem;
     margin-bottom: 0.5rem;
+  }
+  .shop-panel .shop-repair .repair-title {
+    font-size: 10px;
+  }
+  .shop-panel .shop-repair .repair-bar {
+    width: 5rem;
+    height: 4px;
+    margin-top: 0.25rem;
+  }
+  .shop-panel .shop-repair .repair-desc {
+    display: none;
+  }
+  .shop-panel .shop-repair button {
+    padding: 0.3rem 0.6rem;
+    font-size: 10px;
+  }
+  /* Item cards: name + action button must fit without scrolling */
+  .shop-panel .shop-item {
+    padding: 0.5rem;
+  }
+  .shop-panel .shop-item-preview {
+    height: 1.75rem;
+    margin-bottom: 0.25rem;
+  }
+  .shop-panel .shop-item-desc {
+    display: none;
   }
 }

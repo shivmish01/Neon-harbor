@@ -8,6 +8,11 @@ import { writeFileSync } from 'node:fs'
 let hash = 'dev'
 try {
   hash = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()
+  // Never let the stamp lie: uncommitted work means the hash does NOT
+  // describe the code on screen. Mark it dirty so nobody deploys it by
+  // mistake (deploy rule: dirty builds never ship).
+  const dirty = execSync("git status --porcelain -- . ':!src/gen-build.ts'", { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()
+  if (dirty) hash += '-dirty'
 } catch {
   /* not a git checkout — keep "dev" */
 }
