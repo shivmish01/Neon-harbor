@@ -28,6 +28,12 @@
   <button onclick="sendEvt('mute')">mute</button>
   <button onclick="sendEvt('unmute')">unmute</button>
   <label style="font-size:12px;color:#94a3b8"><input type="checkbox" id="forceInsuff"> force insufficient</label>
+  <label style="font-size:12px;color:#94a3b8"><input type="checkbox" id="signedOut"> signed out</label>
+  <label style="font-size:12px;color:#94a3b8"><input type="checkbox" id="silent"> silent host (no replies)</label>
+  <button onclick="cloudAhead()">cloud save ahead</button>
+  <button onclick="passOnly()">pass.harbor only</button>
+  <button onclick="resetMock()">reset</button>
+  <button onclick="reloadGame()">reload game</button>
 </header>
 <main>
   <iframe id="game" src="/"></iframe>
@@ -44,7 +50,7 @@ const PRICES = {
   'theme.golden': 600, 'theme.acid': 1700, 'theme.sakura': 1700, 'pass.harbor': 3500,
 }
 const PASS_ITEMS = ['skin.ghost','skin.royal','skin.solar','skin.oni','theme.acid','theme.sakura']
-const state = { vcoins: 5000, entitlements: [], milestones: [] }
+const state = { vcoins: 5000, entitlements: [], milestones: [], cloudSave: null }
 const gameFrame = document.getElementById('game')
 const GAME_ORIGIN = new URL(gameFrame.src).origin
 const logEl = document.getElementById('log')
@@ -58,6 +64,23 @@ function log(cls, text) {
 }
 function render() { document.getElementById('vcoins').textContent = state.vcoins }
 function owns(id) { return state.entitlements.includes(id) || (id === 'pass.harbor' && false) }
+function cloudAhead() {
+  state.cloudSave = { cash: 99999, xp: 400, level: 9, shards: [], owned: [], skin: 'default', theme: 'night', achievements: [], districts: ['core'], landmarks: [], stats: { deliveries: 40, races: 5 }, tutorialDone: true }
+  log('evt', '⚙ cloud save armed (level 9 / $99,999) — applies to next init')
+}
+function passOnly() {
+  state.entitlements = ['pass.harbor']
+  log('evt', '⚙ entitlements = [pass.harbor] only — applies to next init')
+}
+function resetMock() {
+  state.vcoins = 5000; state.entitlements = []; state.milestones = []; state.cloudSave = null
+  document.getElementById('forceInsuff').checked = false
+  document.getElementById('signedOut').checked = false
+  document.getElementById('silent').checked = false
+  render()
+  log('evt', '⚙ mock reset (5000 VCoins, no entitlements, signed in, responsive)')
+}
+function reloadGame() { gameFrame.src = gameFrame.src }
 function reply(id, ok, result, error) {
   const msg = { __vplay: 1, kind: 'res', id, ok }
   if (ok) msg.result = result; else msg.error = error
@@ -75,18 +98,24 @@ window.addEventListener('message', (event) => {
   const d = event.data
   if (!d || d.__vplay !== 1) return
   log('msg-in', '← ' + JSON.stringify(d))
+  if (document.getElementById('silent').checked) {
+    log('evt', '✕ silent host — ignoring request (game must fall back)')
+    return
+  }
   if (d.kind !== 'req') return
 
   switch (d.method) {
-    case 'init':
+    case 'init': {
+      const signedIn = !document.getElementById('signedOut').checked
       reply(d.id, true, {
-        player: { signedIn: true, displayName: 'Tester', member: true },
+        player: signedIn ? { signedIn: true, displayName: 'Tester', member: true } : { signedIn: false },
         vcoins: state.vcoins,
         items: Object.entries(PRICES).map(([id, priceVc]) => ({ id, priceVc, owned: state.entitlements.includes(id) })),
         entitlements: [...state.entitlements],
-        save: null,
+        save: state.cloudSave,
       })
       break
+    }
     case 'loading':
       log('msg-in', '   loading ' + (d.params.progress * 100 | 0) + '%')
       reply(d.id, true, null)

@@ -17,6 +17,14 @@
 
 ---
 
+## Build & deploy rules (for whoever builds)
+
+1. **Repo-root `index.html` is the SOURCE entry** (`/src/main.tsx`, manifest/icon pointing at `public/assets/…`). Build output goes **only** to `dist/` and to the `gh-pages` branch — never copy `dist/` files back into the repo root. Root `assets/` is banned (gitignored); copying built files there re-hashes them on every build (`manifest-HASH-HASH-…`) and can ship stale code.
+2. Verify after any build-system change: run `npm run build` twice → `git diff` on root `index.html` must be empty and `dist/assets/` names carry exactly one hash.
+3. Deploy = copy `dist/*` (index.html, assets/, models/, logos/, vplay-host-mock.html) + `SOP.md` into the gh-pages worktree and push.
+
+---
+
 ## Feature checklist — every feature, how to trigger it, what you must see
 
 ### A. First-Time User Experience (FTUE) — hand-guided, zero reading

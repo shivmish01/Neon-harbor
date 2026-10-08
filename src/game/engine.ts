@@ -216,6 +216,11 @@ export class GameEngine {
   private padPrev: boolean[] = []
   // Photo mode: freezes the world, orbits the car, captures stills
   photoMode = false
+  // While the React tap-through onboarding tour is on screen, the FIRST NIGHT
+  // engine tutorial stays hidden AND frozen — one onboarding at a time.
+  onboardingActive = false
+  // UI platform flag (wording only): true = touch device, false = desktop.
+  uiTouch = false
   private photoYaw = 0
   private photoPitch = 0.35
   private photoDist = 9
@@ -282,6 +287,43 @@ export class GameEngine {
 
   // World
   private buildings: AABB[] = []
+  // Small prop colliders (lamp poles, signal posts) that sit right beside a
+  // larger solid create narrow pockets the car can wedge into but never escape
+  // (car radius ~1.6). Skip a small prop when it hugs a real blocker — the car
+  // cannot physically pass through a gap that tight anyway.
+  private addPropCollider(box: AABB): void {
+    const w = box.maxX - box.minX
+    const d = box.maxZ - box.minZ
+    if (w <= 1.2 && d <= 1.2) {
+      for (const b of this.buildings) {
+        const bw = b.maxX - b.minX
+        const bd = b.maxZ - b.minZ
+        if (bw < 2 || bd < 2) continue
+        const gapX = Math.max(b.minX - box.maxX, box.minX - b.maxX, 0)
+        const gapZ = Math.max(b.minZ - box.maxZ, box.minZ - b.maxZ, 0)
+        if (Math.hypot(gapX, gapZ) < 3.3) return
+      }
+    }
+    this.buildings.push(box)
+  }
+  // Order-independent sweep: some props (e.g. street lamps) register before the
+  // kiosk/garage blocks they stand next to, so push-time filtering misses them.
+  // After the whole city exists, drop every small prop collider that hugs a
+  // real blocker — those pockets were the spawn-area wedge traps.
+  private prunePropColliders(): void {
+    const big = this.buildings.filter((b) => b.maxX - b.minX >= 2 && b.maxZ - b.minZ >= 2)
+    this.buildings = this.buildings.filter((b) => {
+      const w = b.maxX - b.minX
+      const d = b.maxZ - b.minZ
+      if (w > 1.2 || d > 1.2) return true
+      for (const x of big) {
+        const gapX = Math.max(x.minX - b.maxX, b.minX - x.maxX, 0)
+        const gapZ = Math.max(x.minZ - b.maxZ, b.minZ - x.maxZ, 0)
+        if (Math.hypot(gapX, gapZ) < 3.3) return false
+      }
+      return true
+    })
+  }
   private assets: GameAssets
   private drones: Drone[] = []
   private shards: Shard[] = []
@@ -358,7 +400,7 @@ export class GameEngine {
       )
     }
     this.renderer = renderer
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.15
     // Real-time shadows — the single biggest realism lift in the whole render
@@ -445,6 +487,7 @@ export class GameEngine {
     this.spawnPedestrians()
     this.spawnCrates()
     this.buildLandmarks()
+    this.prunePropColliders()
     this.spawnCruisers()
     this.initSmoke()
     this.applyLoadout()
@@ -1077,7 +1120,7 @@ export class GameEngine {
       glowPos[i * 3] = s.x + Math.sin(s.rot) * 1.55
       glowPos[i * 3 + 1] = 5.9
       glowPos[i * 3 + 2] = s.z + Math.cos(s.rot) * 1.55
-      this.buildings.push({ minX: s.x - 0.25, maxX: s.x + 0.25, minZ: s.z - 0.25, maxZ: s.z + 0.25 })
+      this.addPropCollider({ minX: s.x - 0.25, maxX: s.x + 0.25, minZ: s.z - 0.25, maxZ: s.z + 0.25 })
     })
     poles.instanceMatrix.needsUpdate = true
     lenses.instanceMatrix.needsUpdate = true
@@ -2179,7 +2222,7 @@ export class GameEngine {
           g.rotation.y = cor.dx < 0 ? Math.PI : 0
           this.scene.add(g)
           // Solid pole: the car must not drive through signal posts
-          this.buildings.push({ minX: g.position.x - 0.3, maxX: g.position.x + 0.3, minZ: g.position.z - 0.3, maxZ: g.position.z + 0.3 })
+          this.addPropCollider({ minX: g.position.x - 0.3, maxX: g.position.x + 0.3, minZ: g.position.z - 0.3, maxZ: g.position.z + 0.3 })
           this.trafficLights.push({ red, amber, green, axis: cor.axis })
         }
       }
@@ -3447,6 +3490,10 @@ export class GameEngine {
   }
   /** One-shot action buttons reuse the keyboard handler (E / mash SPACE / C / H / T) */
   touchTap(k: string): void { this.onKeyDown(new KeyboardEvent('keydown', { key: k })) }
+  /** React onboarding tour is on screen → hide & freeze the FIRST NIGHT tutorial */
+  setOnboardingActive(v: boolean): void { this.onboardingActive = v }
+  /** UI platform for wording (toasts): touch vs desktop */
+  setUiTouch(v: boolean): void { this.uiTouch = v }
 
   private bindInput(): void {
     window.addEventListener('keydown', this.onKeyDown)
@@ -3472,9 +3519,19 @@ export class GameEngine {
   }
 
   // =============== MAIN LOOP ===============
+  // Thermal guard: rAF runs at the display's refresh rate, so on 120/144Hz
+  // laptops an uncapped loop does 2× the GPU work of 60fps and cooks the
+  // machine. Cap gameplay rendering at 60fps; when the world is frozen
+  // (pause menus, overlays) the frozen scene only needs ~5fps to stay alive.
+  private frameCapFps = 60
+  private lastRenderT = 0
   private loop = (): void => {
     if (this.disposed) return
     this.raf = requestAnimationFrame(this.loop)
+    const now = performance.now()
+    const cap = this.paused && !this.photoMode ? 5 : this.frameCapFps
+    if (now - this.lastRenderT < 1000 / cap - 0.2) return
+    this.lastRenderT = now
     this.timer.update()
     const dt = Math.min(this.timer.getDelta(), 0.05)
     // NaN watchdog: a bad physics step must never poison the whole session —
@@ -3532,7 +3589,7 @@ export class GameEngine {
 
   private applyQuality(): void {
     const dpr = window.devicePixelRatio || 1
-    const pr = this.qualityLevel === 0 ? Math.min(dpr, 1.75) : this.qualityLevel === 1 ? Math.min(dpr, 1.25) : 1
+    const pr = this.qualityLevel === 0 ? Math.min(dpr, 1.5) : this.qualityLevel === 1 ? Math.min(dpr, 1.25) : 1
     this.renderer.setPixelRatio(pr)
     this.composer.setPixelRatio(pr)
     this.resize()
@@ -5113,8 +5170,10 @@ export class GameEngine {
     this.synth.updateAmbience(beach01, city01, this.time)
 
     // First-night tutorial: runs once, T skips. Advances through TUTORIAL_STEPS.
+    // Hidden AND frozen while the React onboarding tour is up — one onboarding
+    // at a time, never two guides fighting on screen.
     let tutorial: HudState['tutorial'] = null
-    if (!save.tutorialDone && !this.attract) {
+    if (!save.tutorialDone && !this.attract && !this.onboardingActive) {
       if (this.tutSnapShards < 0) {
         this.tutSnapShards = save.shards.length
         this.tutSnapDeliveries = save.stats.deliveries
@@ -5123,7 +5182,7 @@ export class GameEngine {
       const spKmh = this.vel.length() * 3.6
       const steering = this.keys.has('a') || this.keys.has('d') || this.keys.has('arrowleft') || this.keys.has('arrowright')
       const checks = [
-        spKmh > 15,
+        spKmh > 5,
         spKmh > 8 && steering,
         this.boosting || this.boost < 95,
         this.drifting || this.driftScore > 20,
@@ -5142,7 +5201,12 @@ export class GameEngine {
         this.hooks.onToast('Tutorial complete — the harbor is yours. Good luck out there!', 'good')
       } else {
         if (this.tutLastIdx === -1) {
-          this.hooks.onToast('Welcome to Neon Harbor — follow the FIRST NIGHT card up top', 'info')
+          this.hooks.onToast(
+            this.uiTouch
+              ? 'Welcome to Neon Harbor — the FIRST NIGHT guide rides on the right, under the map'
+              : 'Welcome to Neon Harbor — follow the FIRST NIGHT card up top',
+            'info',
+          )
         } else if (idx !== this.tutLastIdx) {
           this.synth.pickup()
         }

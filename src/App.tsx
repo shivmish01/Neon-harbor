@@ -84,6 +84,11 @@ export default function App() {
         'ontouchstart' in window ||
         new URLSearchParams(window.location.search).has('forcetouch')),
   )
+  // Short landscape phones (≤440px tall) run the compact HUD — matches the
+  // CSS media query. Used for content triage (what renders at all, not just
+  // how big it is).
+  const compactHud =
+    isTouch && typeof window !== 'undefined' && window.matchMedia('(max-height: 440px)').matches
   // Mobile plays in landscape. We never ask the player to rotate: Android
   // Chrome gets a real orientation lock from the entry tap, and everything
   // else (iOS Safari…) gets the root div CSS-rotated into landscape below.
@@ -370,11 +375,15 @@ export default function App() {
         })
       },
     }, assets)
-    // MOB-3: quality watchdog — touch devices always get it; desktop keeps full
-    // quality UNLESS the browser is CPU-rendering (SwiftShader/llvmpipe), where
-    // full effects can hard-lock a weak renderer. Real desktops stay untouched.
+    // Quality watchdog — now on EVERY platform: it is the thermal safety net
+    // that steps quality down if the machine can't hold the frame rate (a
+    // throttling laptop shows up as sustained low fps). Healthy desktops run
+    // at the 60fps cap and never trigger it; touch/software rigs get lower
+    // thresholds because their baseline is weaker.
     const software = engine.isSoftwareRenderer()
-    engine.setAutoQualityEnabled(isTouch || software, isTouch ? 42 : 24)
+    engine.setAutoQualityEnabled(true, isTouch ? 42 : software ? 24 : 30)
+    engine.setUiTouch(isTouch)
+    engine.setOnboardingActive(onboardStep !== null)
     engineRef.current = engine
     // Dev-only introspection handle for automated play-testing (position,
     // speed, stuck state). Never shipped — tree-shaken from release builds.
@@ -492,6 +501,16 @@ export default function App() {
   }, [isTouch, screen, goImmersive])
 
   enterGameRef.current = enterGame
+
+  // Keep the engine in sync with UI state: while the tap-through onboarding
+  // tour is up, the engine's FIRST NIGHT tutorial stays hidden and frozen —
+  // one guide at a time. uiTouch drives toast wording (touch vs desktop).
+  useEffect(() => {
+    engineRef.current?.setOnboardingActive(onboardStep !== null)
+  }, [onboardStep])
+  useEffect(() => {
+    engineRef.current?.setUiTouch(isTouch)
+  }, [isTouch])
 
   // Dev-only test hooks (?autostart / ?theme / ?hud=0) — never active in the
   // shipped build. The engine handle is likewise dev-only.
@@ -1074,16 +1093,26 @@ export default function App() {
               ON MOBILE this column is THE notification shade: ACTION MODE, the
               mission tracker, the FIRST NIGHT guide, mission-complete and toasts
               all stack here at the edge — nothing ever floats in front of the car. */}
-          <div className={`absolute z-20 flex flex-col items-end gap-2 ${isTouch ? 'top-[7.5rem] right-2' : 'top-[196px] right-4'}`}>
+          <div className={`absolute z-20 flex flex-col items-end gap-2 ${isTouch ? `nc-col${save.controls === 'buttons' ? ' nc-pads' : ''}` : 'top-[196px] right-4'}`}>
+            {/* utility row — Map / Horn (+ contextual E / Reset) docked at the
+                top of the notification column, right under the minimap */}
+            {isTouch && (!overlay || overlay === 'map') && (
+              <div className="flex gap-2 pointer-events-auto">
+                {hud.nearGarage && <TouchBtn engine={engineRef.current} label="E" aria="Job board" tap="e" small />}
+                {hud.stuck && <TouchBtn engine={engineRef.current} label={<IcoReset />} aria="Reset car" tap="r" small />}
+                <button onClick={() => setOverlay(overlay === 'map' ? null : 'map')} className="touch-btn touch-btn-sm" aria-label="Map"><IcoMap /></button>
+                <TouchBtn engine={engineRef.current} label={<IcoHorn />} aria="Horn" tap="h" small />
+              </div>
+            )}
             {/* ACTION MODE — pinned alert pill while the Patrol is chasing (mobile) */}
             {isTouch && hud.pursued && !hud.busted && !overlay && (
-              <div className="pointer-events-none px-2.5 py-1 rounded-md border border-red-500/80 bg-red-950/70 backdrop-blur-sm text-red-300 font-black tracking-[0.18em] text-[10px] animate-pulse">
+              <div className="nc-action pointer-events-none px-2.5 py-1 rounded-md border border-red-500/80 bg-red-950/70 backdrop-blur-sm text-red-300 font-black tracking-[0.18em] text-[10px] animate-pulse">
                 ⚠ ACTION MODE — SAVE YOURSELF
               </div>
             )}
             {/* mission tracker — compact edge card (mobile) */}
             {isTouch && hud.mission && (
-              <div className="hud-panel border-yellow-400/40 w-44 px-2 py-1.5 pointer-events-none">
+              <div className="nc-mission hud-panel border-yellow-400/40 w-44 px-2 py-1.5 pointer-events-none">
                 <div className="flex justify-between items-center gap-2">
                   <span className="text-yellow-300 font-bold text-[11px] leading-tight">{hud.mission.name}</span>
                   {hud.mission.timer >= 0 ? (
@@ -1094,15 +1123,18 @@ export default function App() {
                     <span className="font-mono text-sm font-bold text-red-400 animate-pulse shrink-0">EVADE</span>
                   )}
                 </div>
-                <div className="flex justify-between text-[10px] text-slate-300 mt-0.5 gap-2">
+                <div className="nc-stage flex justify-between text-[10px] text-slate-300 mt-0.5 gap-2">
                   <span className="leading-tight">{hud.mission.stage === 'pickup' ? 'Reach the pickup beacon' : hud.mission.stage}</span>
                   {hud.mission.timer >= 0 && <span className="shrink-0">{Math.round(hud.mission.dist)}m</span>}
                 </div>
               </div>
             )}
             {/* FIRST NIGHT guide — same card, edge-docked with ✕ (mobile) */}
-            {isTouch && hud.tutorial && !tutorialHidden && (
-              <div key={hud.tutorial.step} className="tutorial-dim w-48">
+            {/* FIRST NIGHT guide — same card, edge-docked with ✕ (mobile).
+                On short landscape screens a police chase takes priority:
+                the card steps aside while pursued and resumes after. */}
+            {isTouch && hud.tutorial && !tutorialHidden && !(compactHud && hud.pursued) && (
+              <div key={hud.tutorial.step} className="nc-tut tutorial-dim w-48">
                 <div className="hud-panel border-cyan-400/70 shadow-[0_0_28px_rgba(34,211,238,0.3)]" style={{ background: 'rgba(2,6,18,0.88)' }}>
                   <div className="flex justify-between items-center text-[9px] tracking-[0.2em] text-cyan-300">
                     <span>FIRST NIGHT {hud.tutorial.step}/{hud.tutorial.total}</span>
@@ -1112,8 +1144,8 @@ export default function App() {
                       aria-label="Hide tutorial"
                     >✕</button>
                   </div>
-                  <div className="text-white font-bold leading-snug text-[11px] mt-0.5">{touchTitle(hud.tutorial.title)}</div>
-                  <div className="text-slate-200 leading-relaxed text-[10px]">{touchHint(hud.tutorial.hint)}</div>
+                  <div className="nc-title text-white font-bold leading-snug text-[11px] mt-0.5">{touchTitle(hud.tutorial.title)}</div>
+                  <div className="nc-hint text-slate-200 leading-relaxed text-[10px]">{touchHint(hud.tutorial.hint)}</div>
                 </div>
               </div>
             )}
@@ -1138,7 +1170,7 @@ export default function App() {
                 >✕</button>
               </div>
             )}
-            {toasts.length > 0 && (
+            {!isTouch && toasts.length > 0 && (
               <div className="flex flex-col items-end gap-1 pointer-events-none">
                 {toasts.map((t) => (
                   <div key={t.id} className={`toast toast-feed toast-${t.kind}`}>
@@ -1148,15 +1180,18 @@ export default function App() {
                 ))}
               </div>
             )}
+            {/* PATROL stars — on touch only shown once you actually have heat
+                (saves column space for the guide on a fresh save) */}
+            {(!isTouch || hud.heatStars > 0) && (
             <div className={`hud-panel flex flex-col items-end gap-1 ${isTouch ? 'px-2 py-1' : ''} ${hud.heatStars > 0 ? 'border-red-500/70 shadow-[0_0_18px_rgba(255,50,80,0.4)]' : ''}`}>
               <div className="flex gap-1 items-center">
                 <span className={`text-slate-400 mr-1 tracking-widest ${isTouch ? 'text-[10px]' : 'text-xs'}`}>PATROL</span>
                 {[1, 2, 3, 4, 5].map((i) => (
-                  <span key={i} className={`${isTouch ? 'text-sm' : 'text-base'} ${hud.heat >= i ? 'text-red-500 drop-shadow-[0_0_6px_rgba(255,50,80,0.9)]' : 'text-slate-700'}`}>★</span>
+                  <span key={i} className={`${isTouch ? 'text-xs' : 'text-base'} ${hud.heat >= i ? 'text-red-500 drop-shadow-[0_0_6px_rgba(255,50,80,0.9)]' : 'text-slate-700'}`}>★</span>
                 ))}
               </div>
               {hud.heatStars > 0 && !(isTouch && hud.bustedProgress > 0.08) && (
-                <div className={`text-xs text-red-200 text-right leading-snug ${isTouch ? 'max-w-[9.5rem] text-[11px]' : 'max-w-[13rem]'}`}>
+                <div className={`nc-patrol-cap text-xs text-red-200 text-right leading-snug ${isTouch ? 'max-w-[9.5rem] text-[11px]' : 'max-w-[13rem]'}`}>
                   {hud.bustedProgress > 0.25 ? (
                     <span className="text-red-400 font-bold animate-pulse text-[13px]">
                       {isTouch ? '⚠ MASH THE BUTTON!' : <>⚠ GRABBED — MASH <span className="key-cap key-cap-amber" style={{ animationDuration: '0.4s' }}>SPACE</span> to break free!</>}
@@ -1175,12 +1210,26 @@ export default function App() {
                 </div>
               )}
             </div>
+            )}
             {!isTouch && (
               <div className="hud-panel text-xs text-slate-400">
                 Shards <span className="text-cyan-300 font-bold">{hud.shards}/{hud.totalShards}</span>
               </div>
             )}
           </div>
+
+          {/* touch toasts — slim left-edge chips under the cash/level chips
+              (notification style), latest 2, never behind the pedals */}
+          {isTouch && toasts.length > 0 && (
+            <div className="nc-toasts absolute z-20 flex flex-col items-start gap-1 pointer-events-none">
+              {toasts.slice(-2).map((t) => (
+                <div key={t.id} className={`toast toast-feed toast-${t.kind}`}>
+                  <span className="toast-tag">[{t.kind === 'cash' ? 'PAYOUT' : t.kind === 'warn' ? 'ALERT' : t.kind === 'good' ? 'HARBOR RADIO' : 'DISPATCH'}]</span>
+                  <span>{t.msg}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* bottom-left: desktop speed panel (mobile: joystick owns this corner, speed sits bottom-right) */}
           {!isTouch && (
@@ -1207,8 +1256,7 @@ export default function App() {
               roll like a mechanical counter; slim nitro line underneath */}
           {isTouch && (
             <div
-              className="absolute left-4 z-20 flex flex-col items-start gap-0.5 pointer-events-none"
-              style={{ bottom: 'calc(max(3.5rem, env(safe-area-inset-bottom)) + 9rem)' }}
+              className="nc-odo absolute left-4 z-20 flex flex-col items-start gap-0.5 pointer-events-none"
             >
               <div className="flex items-baseline gap-1">
                 <SpeedDigits value={hud.speedKmh} boosting={hud.boosting} />
@@ -1246,8 +1294,7 @@ export default function App() {
           {isTouch && (!overlay || overlay === 'map') && save.controls !== 'buttons' && (
             <div className="absolute inset-0 z-30 pointer-events-none">
               <div
-                className="absolute inset-x-0 bottom-0 flex justify-between items-end gap-3 px-3 sm:px-4"
-                style={{ paddingBottom: 'max(3.5rem, env(safe-area-inset-bottom))' }}
+                className="touch-cluster absolute inset-x-0 bottom-0 flex justify-between items-end gap-3 px-3 sm:px-4"
               >
                 {/* virtual joystick: push forward = gas, side = steer, back = brake */}
                 <div className="pointer-events-auto">
@@ -1255,12 +1302,6 @@ export default function App() {
                 </div>
                 {/* actions + nitro/drift/brake */}
                 <div className="flex flex-col items-end gap-2 pointer-events-auto">
-                  <div className="flex gap-2">
-                    {hud.nearGarage && <TouchBtn engine={engineRef.current} label="E" aria="Job board" tap="e" small />}
-                    {hud.stuck && <TouchBtn engine={engineRef.current} label={<IcoReset />} aria="Reset car" tap="r" small />}
-                    <button onClick={() => setOverlay(overlay === 'map' ? null : 'map')} className="touch-btn touch-btn-sm" aria-label="Map"><IcoMap /></button>
-                    <TouchBtn engine={engineRef.current} label={<IcoHorn />} aria="Horn" tap="h" small />
-                  </div>
                   <div className="flex items-end gap-2">
                     <TouchBtn engine={engineRef.current} label={<IcoDrift />} aria="Drift" hold=" " variant="drift" />
                     <TouchBtn engine={engineRef.current} label={<IcoBolt />} aria="Nitro" hold="shift" variant="nitro" ready={hud.boost >= 95} lit={hud.boosting} />
@@ -1288,8 +1329,7 @@ export default function App() {
           {isTouch && (!overlay || overlay === 'map') && save.controls === 'buttons' && (
             <div className="absolute inset-0 z-30 pointer-events-none">
               <div
-                className="absolute inset-x-0 bottom-0 flex justify-between items-end gap-3 px-3 sm:px-4"
-                style={{ paddingBottom: 'max(3.5rem, env(safe-area-inset-bottom))' }}
+                className="touch-cluster absolute inset-x-0 bottom-0 flex justify-between items-end gap-3 px-3 sm:px-4"
               >
                 {/* steering */}
                 <div className="flex gap-3 pointer-events-auto">
@@ -1298,12 +1338,6 @@ export default function App() {
                 </div>
                 {/* actions (top-right) + pedals (2x2 grid, bottom-right) */}
                 <div className="flex flex-col items-end gap-2 pointer-events-auto">
-                  <div className="flex gap-2">
-                    {hud.nearGarage && <TouchBtn engine={engineRef.current} label="E" aria="Job board" tap="e" small />}
-                    {hud.stuck && <TouchBtn engine={engineRef.current} label={<IcoReset />} aria="Reset car" tap="r" small />}
-                    <button onClick={() => setOverlay(overlay === 'map' ? null : 'map')} className="touch-btn touch-btn-sm" aria-label="Map"><IcoMap /></button>
-                    <TouchBtn engine={engineRef.current} label={<IcoHorn />} aria="Horn" tap="h" small />
-                  </div>
                   <div className="flex items-end gap-2">
                     <div className="flex flex-col gap-2">
                       <TouchBtn engine={engineRef.current} label={<IcoBolt />} aria="Nitro" hold="shift" variant="nitro" ready={hud.boost >= 95} lit={hud.boosting} />
@@ -1588,25 +1622,24 @@ export default function App() {
             </div>
           )}
 
-          {/* desktop step 2 — power buttons */}
+          {/* desktop step 2 — power keys */}
           {!isTouch && onboardStep === 2 && (
             <div className="onboard-card onboard-card-low">
-              <div className="text-[11px] tracking-[0.3em] text-cyan-300 font-bold">POWER BUTTONS</div>
+              <div className="text-[11px] tracking-[0.3em] text-cyan-300 font-bold">POWER KEYS</div>
               <div className="mt-2 space-y-1.5 text-left">
                 <div className="flex items-center gap-2.5 text-slate-200 text-sm">
                   <span className="onboard-ico text-fuchsia-300"><IcoBolt /></span>
-                  <span><b className="text-white">NITRO</b> — a burst of speed. Drifting refills it.</span>
+                  <span><b className="text-white">NITRO</b> — hold <span className="key-cap">SHIFT</span> for a burst of speed. Drifting refills it.</span>
                 </div>
                 <div className="flex items-center gap-2.5 text-slate-200 text-sm">
                   <span className="onboard-ico text-amber-300"><IcoDrift /></span>
-                  <span><b className="text-white">DRIFT</b> — slide around corners, builds nitro.</span>
+                  <span><b className="text-white">DRIFT</b> — hold <span className="key-cap">SPACE</span> while turning to slide. Builds nitro.</span>
                 </div>
                 <div className="flex items-center gap-2.5 text-slate-200 text-sm">
                   <span className="onboard-ico text-sky-300"><IcoBrake /></span>
-                  <span><b className="text-white">BRAKE</b> — stop hard, swing the car around.</span>
+                  <span><b className="text-white">BRAKE</b> — hold <span className="key-cap">S</span> to stop hard and swing the car around.</span>
                 </div>
               </div>
-              <div className="text-[11px] text-slate-500 mt-2">SHIFT = nitro · SPACE = handbrake/drift · S = brake</div>
               <button className="onboard-next mt-3" onClick={() => setOnboardStep(3)}>GOT IT →</button>
             </div>
           )}
@@ -1637,7 +1670,7 @@ export default function App() {
                   setOnboardStep(null)
                 }}
               >
-                TAP TO START
+                CLICK TO START
               </button>
             </div>
           )}
@@ -1922,9 +1955,9 @@ export default function App() {
       {/* ================= SHOP ================= */}
       {overlay === 'shop' && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-          <div className="w-[52rem] max-w-[94vw] max-h-[86vh] overflow-y-auto bg-slate-900/95 border border-fuchsia-500/30 rounded-2xl p-6 shadow-[0_0_60px_rgba(232,121,249,0.15)]">
-            <h2 className="text-2xl font-black text-white tracking-widest mb-1">GARAGE SHOP</h2>
-            <div className="flex justify-between items-start mb-4">
+          <div className="shop-panel w-[52rem] max-w-[94vw] max-h-[86vh] overflow-y-auto bg-slate-900/95 border border-fuchsia-500/30 rounded-2xl p-6 shadow-[0_0_60px_rgba(232,121,249,0.15)]">
+            <h2 className="shop-title text-2xl font-black text-white tracking-widest mb-1">GARAGE SHOP</h2>
+            <div className="shop-head flex justify-between items-start mb-4">
               <div className="text-slate-400 text-xs pt-1">
                 Balance: <span className="text-emerald-400 font-bold">${save.cash.toLocaleString()}</span> · Level {save.level}
                 {vplay?.mode === 'vplay' && (
@@ -1936,7 +1969,7 @@ export default function App() {
 
             {/* Body repair — visible the moment the car has any damage */}
             {hud && hud.damage > 0 && (
-              <div className="w-full mb-5 p-4 rounded-xl border border-cyan-400/40 bg-cyan-500/10">
+              <div className="shop-repair w-full mb-5 p-4 rounded-xl border border-cyan-400/40 bg-cyan-500/10">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-cyan-300 font-black tracking-widest">🔧 BODY REPAIR</div>
@@ -1961,15 +1994,15 @@ export default function App() {
 
             {/* Harbor Pass banner */}
             {isOwned(HARBOR_PASS_ID) ? (
-              <div className="w-full mb-5 p-3 rounded-xl border border-emerald-400/40 bg-emerald-500/10 text-emerald-300 text-sm text-center">
+              <div className="shop-pass w-full mb-5 p-3 rounded-xl border border-emerald-400/40 bg-emerald-500/10 text-emerald-300 text-sm text-center">
                 🔓 HARBOR PASS owned — all premium content unlocked
               </div>
             ) : vplay?.mode === 'vplay' ? (
-              <div className="w-full mb-5 p-4 rounded-xl border border-amber-400/50 bg-gradient-to-r from-amber-500/15 to-fuchsia-500/15">
+              <div className="shop-pass w-full mb-5 p-4 rounded-xl border border-amber-400/50 bg-gradient-to-r from-amber-500/15 to-fuchsia-500/15">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-amber-300 font-black tracking-widest">HARBOR PASS</div>
-                    <div className="text-slate-300 text-xs mt-1">Unlocks all {HARBOR_PASS_ITEMS.length} premium cars and environments (Ghost, Royal, Solar, Oni, Sakura Dusk, Acid Rain) in one go.</div>
+                    <div className="shop-pass-title text-amber-300 font-black tracking-widest">HARBOR PASS</div>
+                    <div className="shop-pass-desc text-slate-300 text-xs mt-1">Unlocks all {HARBOR_PASS_ITEMS.length} premium cars and environments (Ghost, Royal, Solar, Oni, Sakura Dusk, Acid Rain) in one go.</div>
                   </div>
                   <button
                     onClick={() => buyVc(HARBOR_PASS_ID, HARBOR_PASS_ID)}
@@ -1981,11 +2014,11 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              <div className="w-full mb-5 p-4 rounded-xl border border-amber-400/50 bg-gradient-to-r from-amber-500/15 to-fuchsia-500/15">
+              <div className="shop-pass w-full mb-5 p-4 rounded-xl border border-amber-400/50 bg-gradient-to-r from-amber-500/15 to-fuchsia-500/15">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-amber-300 font-black tracking-widest">HARBOR PASS</div>
-                    <div className="text-slate-300 text-xs mt-1">Unlocks all premium cars and environments with one purchase on vplay.gg.</div>
+                    <div className="shop-pass-title text-amber-300 font-black tracking-widest">HARBOR PASS</div>
+                    <div className="shop-pass-desc text-slate-300 text-xs mt-1">Unlocks all premium cars and environments with one purchase on vplay.gg.</div>
                   </div>
                   <button
                     onClick={() => VPlay.openOnVplay()}
@@ -1998,7 +2031,7 @@ export default function App() {
             )}
 
             {/* Tabs */}
-            <div className="flex gap-2 mb-4">
+            <div className="shop-tabs flex gap-2 mb-4">
               <button onClick={() => setShopTab('skins')} className={`shop-tab ${shopTab === 'skins' ? 'shop-tab-on' : ''}`}>CARS &amp; PAINT</button>
               <button onClick={() => setShopTab('themes')} className={`shop-tab ${shopTab === 'themes' ? 'shop-tab-on' : ''}`}>CITY THEMES</button>
               <button onClick={() => setShopTab('upgrades')} className={`shop-tab ${shopTab === 'upgrades' ? 'shop-tab-on' : ''}`}>UPGRADES</button>

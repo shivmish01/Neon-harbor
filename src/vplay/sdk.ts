@@ -21,6 +21,14 @@ const ALLOWED_ORIGINS = ['https://vplay.gg', 'https://www.vplay.gg', 'http://loc
 const INIT_TIMEOUT_MS = 6000
 const PURCHASE_TIMEOUT_MS = 180000
 
+function isAllowedOrigin(origin: string): boolean {
+  if (ALLOWED_ORIGINS.includes(origin)) return true
+  // Dev/test rigs only: the mock host (vplay-host-mock.html) can run on any
+  // localhost port. Release builds keep the strict allowlist above.
+  if (import.meta.env.DEV && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true
+  return false
+}
+
 type EventName = 'pause' | 'resume' | 'mute' | 'unmute' | 'entitlements' | 'vcoins'
 
 function hostOriginFromReferrer(): string | null {
@@ -28,7 +36,7 @@ function hostOriginFromReferrer(): string | null {
     const ref = document.referrer
     if (!ref) return null
     const origin = new URL(ref).origin
-    return ALLOWED_ORIGINS.includes(origin) ? origin : null
+    return isAllowedOrigin(origin) ? origin : null
   } catch {
     return null
   }
