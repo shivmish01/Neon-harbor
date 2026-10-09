@@ -357,6 +357,7 @@ export default function App() {
         window.setTimeout(() => setWreckFlash(false), 2200)
       },
       onLevelUp: (level) => pushToast(`LEVEL UP — you reached level ${level}!`, 'good'),
+      onMilestone: (id) => reportMilestone(id),
       onMissionDone: (name, reward) => {
         pushToast(`${name} complete!  +$${reward}`, 'good')
         setWinBanner({ name, reward })
@@ -391,7 +392,9 @@ export default function App() {
     // speed, stuck state). Never shipped — tree-shaken from release builds.
     if (import.meta.env.DEV) (window as unknown as { __nh: unknown }).__nh = engine
     return engine
-  }, [commit, pushToast, isTouch])
+    // onboardStep intentionally omitted: the engine is created once and
+    // setOnboardingActive is kept current by a separate effect.
+  }, [commit, pushToast, isTouch, reportMilestone])
 
   // Load the 3D model packs first, then create the engine so the menus
   // float over the fully-built live city.

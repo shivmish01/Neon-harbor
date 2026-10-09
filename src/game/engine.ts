@@ -75,6 +75,8 @@ export interface EngineHooks {
   onPressE(): void
   onPauseToggle?(): void
   onPhotoToggle?(): void
+  /** one-time progress milestones for vplay.gg (deduped per save in App) */
+  onMilestone?(id: string): void
 }
 
 // ---------- World layout constants ----------
@@ -5272,7 +5274,10 @@ export class GameEngine {
       save.shift.goals = this.rollShiftGoals(save.level)
       this.synth.missionDone()
       this.hooks.onToast(`🌙 NIGHT SHIFT COMPLETE +$${bonus} +500 XP — new goals posted`, 'cash')
-      // step 5 wires shift.complete.1/5/20 milestones off completedCount
+      const c = save.shift.completedCount
+      if (c >= 1) this.hooks.onMilestone?.('shift.complete.1')
+      if (c >= 5) this.hooks.onMilestone?.('shift.complete.5')
+      if (c >= 20) this.hooks.onMilestone?.('shift.complete.20')
     }
     this.hooks.commit()
   }
@@ -5280,7 +5285,11 @@ export class GameEngine {
   /** Contract-finish hooks shared by all four job types. */
   private shiftOnMissionDone(m: Mission): void {
     if (this.missionPeakStars >= 2) this.bumpGoal('hot2star')
-    if (m.mods.includes('fragile')) this.bumpGoal('fragile2')
+    if (this.missionPeakStars >= 3) this.hooks.onMilestone?.('heat.payout3')
+    if (m.mods.includes('fragile')) {
+      this.bumpGoal('fragile2')
+      if (m.damageHits === 0) this.hooks.onMilestone?.('modifier.fragile.clean')
+    }
   }
 
   // =============== HEAT PAYS (Phase 1, step 2) ===============
@@ -6363,6 +6372,9 @@ export class GameEngine {
       this.hooks.onToast(`×${now} STREET CRED!`, 'good')
       this.synth.chainUp()
     }
+    // vplay.gg milestones: first ×3 and ×5 chains (per save)
+    if (now >= 3) this.hooks.onMilestone?.('cred.x3')
+    if (now >= 5) this.hooks.onMilestone?.('cred.x5')
   }
 
   /** 3s without a style action banks the chain: XP (1:1 on a contract, 1:2
