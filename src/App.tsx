@@ -976,6 +976,14 @@ export default function App() {
               </div>
             </div>
           )}
+          {/* Night Shift on the FIRST screen too: a returning player sees
+              tonight's goal (and how close they are) before they even drive. */}
+          {save.tutorialDone && save.shift.goals.length > 0 && (
+            <div className="mt-4 text-xs text-indigo-300 tracking-wide text-center px-3 max-w-sm">
+              🌙 Night Shift {save.shift.goals.filter((g) => g.done).length}/{save.shift.goals.length} done
+              {save.shift.goals.find((g) => !g.done) && <> — next: {save.shift.goals.find((g) => !g.done)!.label}</>}
+            </div>
+          )}
           {/* Carried-over damage is said out loud on the FIRST screen every
               visit — a returning player never drives a dented car blind. */}
           {save.damage > 0 && (
