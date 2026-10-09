@@ -176,7 +176,7 @@ function createApi() {
     },
 
     openOnVplay(): void {
-      window.open('https://vplay.gg/games/neon-harbor', '_blank', 'noopener')
+      window.open('https://vplay.gg/exclusive', '_blank', 'noopener')
     },
 
     on(event: EventName, cb: (data?: unknown) => void): () => void {
