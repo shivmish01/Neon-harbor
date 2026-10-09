@@ -4185,7 +4185,9 @@ export class GameEngine {
         if (impact > 2.5) {
           this.shake = Math.min(this.shake + impact * 0.05, 0.85)
           this.synth.thud()
-          this.addDamage(impact * 0.4)
+          // Only a real crash (>14 km/h into the wall) dents the body — a
+          // learner's low-speed nudges thud and shake but don't cost money.
+          if (impact > 4) this.addDamage(impact * 0.4)
           this.emitPuff(
             this.pos.x + nx * 1.6, 0.5 + Math.random() * 0.4, this.pos.z + nz * 1.6,
             0xffd27d, 0.2 + Math.random() * 0.15, 0.25, true
@@ -4636,7 +4638,9 @@ export class GameEngine {
           if (impact > 4) {
             this.shake = Math.min(this.shake + impact * 0.04, 0.8)
             this.synth.thud()
-            this.addDamage(impact * 0.3)
+            // Traffic dents only above ~25 km/h closing speed (Kimi's tuning
+            // run: slow city bumps were bankrupting careful-but-bad drivers).
+            if (impact > 7) this.addDamage(impact * 0.3)
             if (impact > 10 && this.heatAllowed) this.heat = Math.min(5, this.heat + 0.25)
           }
         }
