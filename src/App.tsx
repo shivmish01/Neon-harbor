@@ -174,11 +174,12 @@ export default function App() {
       return
     }
     if (splashStep >= 2) return
-    // vplay.gg asks for a fast boot — keep the whole splash under 3s there
-    const stepMs = vplay?.mode === 'vplay' ? 1300 : 2200
-    const t = setTimeout(() => setSplashStep((s) => s + 1), stepMs)
+    // The owner's cinematic opening (Vary Gaming PRESENTS → vplay.gg
+    // EXCLUSIVE) plays at the SAME pace everywhere, vplay.gg included —
+    // never shorten it. Tap to skip stays.
+    const t = setTimeout(() => setSplashStep((s) => s + 1), 2200)
     return () => clearTimeout(t)
-  }, [splashStep, vplay])
+  }, [splashStep])
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const minimapRef = useRef<HTMLCanvasElement>(null)
