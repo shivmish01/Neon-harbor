@@ -10,7 +10,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { getSkin, getTheme, ACHIEVEMENTS, DISTRICTS, districtAt, ENGINE_MUL, NITRO_REGEN_MUL, NITRO_DRAIN_MUL, TIRES_MUL, ARMOR_MUL, LAUNCH_MUL, HORN_RANGE } from './content'
-import { grantXp, xpForLevel, type SaveData } from './save'
+import { grantXp, xpForLevel, type SaveData, type ShiftGoal } from './save'
 import { Synth } from './audio'
 import { cloneCar, cloneCharacter, CITY_BY_KIND, type GameAssets } from './assets'
 
@@ -50,6 +50,8 @@ export interface HudState {
   mission: HudMission | null
   /** map contract beacon in accept range (free-roam only): job + modifier chips */
   marker: { kind: string; mods: string[] } | null
+  /** Night Shift goal set — null while the First Night guide is still running */
+  shift: { done: number; total: number; goals: { label: string; progress: number; target: number; done: boolean }[] } | null
   nearGarage: boolean
   busted: boolean
   boosting: boolean
@@ -566,6 +568,8 @@ export class GameEngine {
     this.spawnContractMarker()
     this.spawnContractMarker()
     this.spawnContractMarker()
+    // Phase 1 step 4: post the Night Shift goal set (rolls one for old saves)
+    this.ensureShift()
     this.buildLandmarks()
     this.prunePropColliders()
     this.spawnCruisers()
@@ -4120,6 +4124,7 @@ export class GameEngine {
         sh.mesh.visible = false
         save.shards.push(sh.id)
         this.addChain(45, 'Data shard secured')
+        this.bumpGoal('shards3')
         this.grantXp(30)
         this.synth.pickup()
         this.hooks.commit()
@@ -4956,6 +4961,7 @@ export class GameEngine {
       }
     } else if (heatInt === 0 && this.lastHeatInt >= 1) {
       this.hooks.onToast('You lost them. Heat cleared.', 'good')
+      this.bumpGoal('escape')
       this.firstChaseDone = true // survived the first chase — full heat rules from here
     }
     this.lastHeatInt = heatInt
@@ -5207,6 +5213,76 @@ export class GameEngine {
     }
   }
 
+  // =============== NIGHT SHIFT (Phase 1, step 4) ===============
+  // 3 small goals per set, no expiry — a 5-minute visit still finishes
+  // something. All 3 done → cash 250×level + 500 XP + a fresh set.
+  private rollShiftGoals(level: number): ShiftGoal[] {
+    // Chain goal scales with driver level (Claude's call: ×4 is too hard early)
+    const chainNeed = level <= 2 ? 2 : level <= 4 ? 3 : 4
+    const pool: ShiftGoal[] = [
+      { id: 'chain', label: `Bank a ×${chainNeed} Street Cred chain`, target: 1, progress: 0, done: false },
+      { id: 'fragile2', label: 'Finish 2 🥚 Fragile contracts', target: 2, progress: 0, done: false },
+      { id: 'hot2star', label: 'Finish a contract at ★2+ heat', target: 1, progress: 0, done: false },
+      { id: 'shards3', label: 'Collect 3 data shards', target: 3, progress: 0, done: false },
+      { id: 'racefast', label: 'Win a street race under 100 s', target: 1, progress: 0, done: false },
+      { id: 'jumps3', label: 'Stick 3 clean landings', target: 3, progress: 0, done: false },
+      { id: 'escape', label: 'Escape a Patrol chase', target: 1, progress: 0, done: false },
+    ]
+    // 3 distinct goals per set
+    const picks: ShiftGoal[] = []
+    while (picks.length < 3 && pool.length > 0) {
+      picks.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0])
+    }
+    return picks
+  }
+
+  /** Post a goal set if the save has none (first boot after the update). */
+  private ensureShift(): void {
+    const save = this.hooks.getSave()
+    if (save.shift.goals.length === 0) {
+      save.shift.goals = this.rollShiftGoals(save.level)
+      this.hooks.commit()
+    }
+  }
+
+  /** The chain multiplier this set's chain goal demands (∞ if no chain goal). */
+  private shiftChainNeed(): number {
+    const g = this.hooks.getSave().shift.goals.find((x) => x.id === 'chain' && !x.done)
+    if (!g) return Infinity
+    const m = /×(\d+)/.exec(g.label)
+    return m ? parseInt(m[1], 10) : Infinity
+  }
+
+  /** Advance a shift goal; completing the whole set pays out and reposts. */
+  private bumpGoal(id: string, by = 1): void {
+    const save = this.hooks.getSave()
+    const g = save.shift.goals.find((x) => x.id === id && !x.done)
+    if (!g) return
+    g.progress = Math.min(g.target, g.progress + by)
+    if (g.progress >= g.target) {
+      g.done = true
+      this.hooks.onToast(`✅ SHIFT GOAL — ${g.label}`, 'good')
+      this.synth.pickup()
+    }
+    if (save.shift.goals.every((x) => x.done)) {
+      const bonus = 250 * save.level
+      save.shift.completedCount += 1
+      this.grantCash(bonus)
+      this.grantXp(500)
+      save.shift.goals = this.rollShiftGoals(save.level)
+      this.synth.missionDone()
+      this.hooks.onToast(`🌙 NIGHT SHIFT COMPLETE +$${bonus} +500 XP — new goals posted`, 'cash')
+      // step 5 wires shift.complete.1/5/20 milestones off completedCount
+    }
+    this.hooks.commit()
+  }
+
+  /** Contract-finish hooks shared by all four job types. */
+  private shiftOnMissionDone(m: Mission): void {
+    if (this.missionPeakStars >= 2) this.bumpGoal('hot2star')
+    if (m.mods.includes('fragile')) this.bumpGoal('fragile2')
+  }
+
   // =============== HEAT PAYS (Phase 1, step 2) ===============
   /** Payout multiplier from the HIGHEST star level reached during the contract. */
   private heatPayMult(): number {
@@ -5287,6 +5363,7 @@ export class GameEngine {
         this.grantXp(280)
         this.synth.missionDone()
         this.hooks.onMissionDone(m.name, reward)
+        this.shiftOnMissionDone(m)
         this.clearMission()
       }
       return
@@ -5314,6 +5391,7 @@ export class GameEngine {
           this.grantXp(150)
           this.synth.missionDone()
           this.hooks.onMissionDone(m.name, reward)
+          this.shiftOnMissionDone(m)
           this.clearMission()
         } else {
           // Taxi fare: base + distance + tip from time remaining (speed pays)
@@ -5325,6 +5403,7 @@ export class GameEngine {
           this.grantXp(180)
           this.synth.missionDone()
           this.hooks.onMissionDone(m.name, fare)
+          this.shiftOnMissionDone(m)
           this.clearMission()
         }
       }
@@ -5335,19 +5414,23 @@ export class GameEngine {
       if (this.pos.distanceTo(cp) < 8) {
         m.idx += 1
         m.total += m.timer
-        m.timer = 14
+        // ⚡ Rush races run tighter gates all the way through, not just gate 1
+        const gateTime = Math.round(14 * (m.mods.includes('rush') ? 0.7 : 1))
+        m.timer = gateTime
         this.synth.checkpoint()
         if (m.idx >= m.cps.length) {
           const reward = this.payContract(Math.round(380 + m.total * 22))
           const save = this.hooks.getSave()
           save.stats.races += 1
           this.unlockAchievement('first-race')
-          const raceTime = Math.round(8 * 14 - m.total)
+          const raceTime = Math.round(m.cps.length * gateTime - m.total)
+          if (raceTime < 100) this.bumpGoal('racefast')
           if (!save.stats.bestRace || raceTime < save.stats.bestRace) save.stats.bestRace = raceTime
           this.grantCash(reward)
           this.grantXp(320)
           this.synth.missionDone()
           this.hooks.onMissionDone(m.name, reward)
+          this.shiftOnMissionDone(m)
           this.clearMission()
         } else {
           this.hooks.onToast(`Gate ${m.idx}/8 — keep going!`, 'info')
@@ -5551,6 +5634,13 @@ export class GameEngine {
       mission,
       marker: this.nearMarker && !this.mission
         ? { kind: this.nearMarker.kind, mods: this.nearMarker.mods.map((mod) => MOD_INFO[mod].chip) }
+        : null,
+      shift: save.tutorialDone
+        ? {
+            done: save.shift.goals.filter((g) => g.done).length,
+            total: save.shift.goals.length,
+            goals: save.shift.goals.map((g) => ({ label: g.label, progress: g.progress, target: g.target, done: g.done })),
+          }
         : null,
       nearGarage: this.nearGarage,
       busted: this.busted,
@@ -6279,6 +6369,7 @@ export class GameEngine {
       free-roam with the 400 XP / 10 min anti-farm cap) + lifetime stat. */
   private bankCred(): void {
     const banked = Math.round(this.credChain)
+    const mult = this.credMult()
     this.credChain = 0
     this.credIdle = 0
     if (banked < 10) return
@@ -6297,6 +6388,7 @@ export class GameEngine {
       this.freeCredXp += xp
     }
     if (xp > 0) this.grantXp(xp)
+    if (mult >= this.shiftChainNeed()) this.bumpGoal('chain')
     this.hooks.commit()
     this.hooks.onToast(`CRED BANKED +${banked}${xp > 0 ? ` → +${xp} XP` : ' (free-roam cap)'}`, 'good')
   }
@@ -6336,7 +6428,10 @@ export class GameEngine {
   /** Landing handler (called from updateCar when the wheels touch down). */
   private landJumpCred(): void {
     if (this.jumpCred > 0) {
-      if (!this.jumpDamaged) this.jumpCred *= 2 // clean landing doubles the jump
+      if (!this.jumpDamaged) {
+        this.jumpCred *= 2 // clean landing doubles the jump
+        this.bumpGoal('jumps3')
+      }
       this.addCred(this.jumpCred)
     }
     this.jumpCred = 0

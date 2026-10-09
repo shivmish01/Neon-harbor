@@ -17,6 +17,21 @@ export interface Stats {
   cred: number // lifetime Street Cred banked (Phase 1)
 }
 
+/** Night Shift (Phase 1, step 4): 3 small goals per set. They never expire —
+    a 5-minute visit still finishes something. Completing a set pays
+    cash 250×level + 500 XP and posts a fresh set. */
+export interface ShiftGoal {
+  id: string
+  label: string
+  target: number
+  progress: number
+  done: boolean
+}
+export interface NightShift {
+  goals: ShiftGoal[]
+  completedCount: number // sets finished (drives shift.complete.* milestones)
+}
+
 export interface SaveData {
   cash: number
   xp: number
@@ -42,6 +57,7 @@ export interface SaveData {
   /** vplay.gg milestone ids already reported — each is sent at most once */
   reportedMilestones: string[]
   stats: Stats
+  shift: NightShift
 }
 
 const KEY = 'neon-harbor-save-v1'
@@ -68,6 +84,7 @@ export function defaultSave(): SaveData {
     damage: 0,
     reportedMilestones: [],
     stats: { deliveries: 0, races: 0, bestRace: 0, bestDrift: 0, busts: 0, fares: 0, getaways: 0, tows: 0, repairs: 0, cred: 0 },
+    shift: { goals: [], completedCount: 0 },
   }
 }
 
@@ -87,6 +104,10 @@ export function loadSave(): SaveData {
       landmarks: parsed.landmarks ?? [],
       legend: parsed.legend ?? false,
       reportedMilestones: parsed.reportedMilestones ?? [],
+      shift: {
+        completedCount: parsed.shift?.completedCount ?? 0,
+        goals: (parsed.shift?.goals ?? []).map((g) => ({ ...g })),
+      },
     }
     // Legacy Early Access demo: fullAccess/legend granted everything locally.
     // Keep whatever items the player already owned (it was a free demo), but

@@ -43,6 +43,8 @@ export default function App() {
   const [shopTab, setShopTab] = useState<'skins' | 'themes' | 'upgrades'>('skins')
   const [progressTab, setProgressTab] = useState<'trophies' | 'districts'>('trophies')
   const [tutorialHidden, setTutorialHidden] = useState(false)
+  // Night Shift card: expanded on desktop, collapsed one-liner on touch
+  const [shiftOpen, setShiftOpen] = useState(() => !window.matchMedia?.('(pointer: coarse)').matches)
   // First-run tap-through onboarding overlay (separate localStorage flag —
   // never touches the save format). Shown once before the FIRST NIGHT steps.
   const [onboardStep, setOnboardStep] = useState<number | null>(null)
@@ -1005,6 +1007,13 @@ export default function App() {
             <span>Races <b className="text-cyan-400">{save.stats.races}</b></span>
             <span>Cred <b className="text-amber-300">{save.stats.cred.toLocaleString()}</b></span>
           </div>
+          {/* Night Shift: a returning player sees tonight's goals before driving */}
+          {save.tutorialDone && save.shift.goals.length > 0 && (
+            <div className="menu-in mt-2 text-xs text-indigo-300 tracking-wide text-center px-3">
+              🌙 Night Shift {save.shift.goals.filter((g) => g.done).length}/{save.shift.goals.length} done
+              {save.shift.goals.find((g) => !g.done) && <> — next: {save.shift.goals.find((g) => !g.done)!.label}</>}
+            </div>
+          )}
           {/* Carried-over body damage is a feature — but never a mystery.
               Say it once, here on the title screen, before they drive. */}
           {save.damage > 0 && (
@@ -1225,6 +1234,31 @@ export default function App() {
                   className="text-slate-400 hover:text-white leading-none shrink-0"
                   aria-label="Dismiss"
                 >✕</button>
+              </div>
+            )}
+            {/* NIGHT SHIFT — 3 small goals, never expire; collapsible edge card */}
+            {hud.shift && !overlay && (
+              <div className={`hud-panel border-indigo-400/40 ${isTouch ? 'w-44 px-2 py-1' : 'w-56 px-3 py-2'}`}>
+                <button
+                  onClick={() => setShiftOpen(!shiftOpen)}
+                  className="flex justify-between items-center w-full pointer-events-auto"
+                  aria-label="Toggle Night Shift goals"
+                >
+                  <span className={`tracking-[0.2em] text-indigo-300 font-bold ${isTouch ? 'text-[9px]' : 'text-[10px]'}`}>
+                    🌙 SHIFT {hud.shift.done}/{hud.shift.total}
+                  </span>
+                  <span className="text-slate-500 text-[10px]">{shiftOpen ? '▾' : '▸'}</span>
+                </button>
+                {shiftOpen && (
+                  <div className="mt-1 flex flex-col gap-0.5">
+                    {hud.shift.goals.map((g) => (
+                      <div key={g.label} className={`flex justify-between gap-2 leading-tight ${isTouch ? 'text-[9px]' : 'text-[11px]'} ${g.done ? 'text-emerald-300 line-through opacity-70' : 'text-slate-200'}`}>
+                        <span>{g.label}</span>
+                        <span className="shrink-0 font-mono">{g.progress}/{g.target}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             {!isTouch && toasts.length > 0 && (
