@@ -1078,9 +1078,24 @@ export default function App() {
                   {hud.mission.credPct > 0 && <span className="text-amber-300"> · CRED +{hud.mission.credPct}%</span>}
                 </div>
               </div>
+            ) : hud.marker ? (
+              /* contract beacon accept card — drive in, read the terms, press E */
+              <div className={`hud-panel ${JOB_BORDER_CLS[hud.marker.kind] ?? 'border-cyan-400/40'} w-56 max-w-[62vw] sm:w-[22rem] sm:max-w-[80vw]`}>
+                <div className="flex justify-between items-center">
+                  <span className={`font-bold text-sm ${JOB_TEXT_CLS[hud.marker.kind] ?? 'text-cyan-300'}`}>{JOB_LABEL[hud.marker.kind] ?? hud.marker.kind}</span>
+                  <span className="text-[11px] text-slate-300">press <span className="key-cap">E</span> to accept</span>
+                </div>
+                {hud.marker.mods.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {hud.marker.mods.map((chip) => (
+                      <span key={chip} className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-slate-100">{chip}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="hud-panel text-center text-[13px] text-slate-300">
-                <>Free roam — visit the <span className="text-cyan-300">glowing garage beam</span> and press <span className="key-cap">E</span> for jobs</>
+                <>Free roam — drive into a <span className="text-cyan-300">colored beacon</span> for a job, or visit the <span className="text-cyan-300">garage</span> for the full board</>
               </div>
             )}
 
@@ -1119,7 +1134,7 @@ export default function App() {
                 top of the notification column, right under the minimap */}
             {isTouch && (!overlay || overlay === 'map') && (
               <div className="flex gap-2 pointer-events-auto">
-                {hud.nearGarage && <TouchBtn engine={engineRef.current} label="E" aria="Job board" tap="e" small />}
+                {(hud.nearGarage || hud.marker) && <TouchBtn engine={engineRef.current} label="E" aria="Accept job" tap="e" small />}
                 {hud.stuck && <TouchBtn engine={engineRef.current} label={<IcoReset />} aria="Reset car" tap="r" small />}
                 <button onClick={() => setOverlay(overlay === 'map' ? null : 'map')} className="touch-btn touch-btn-sm" aria-label="Map"><IcoMap /></button>
                 <TouchBtn engine={engineRef.current} label={<IcoHorn />} aria="Horn" tap="h" small />
@@ -1153,6 +1168,22 @@ export default function App() {
                   {hud.mission.heatMult > 1 && <span className="text-red-300"> ×{hud.mission.heatMult} heat</span>}
                   {hud.mission.credPct > 0 && <span className="text-amber-300"> +{hud.mission.credPct}% cred</span>}
                 </div>
+              </div>
+            )}
+            {/* contract beacon accept card — edge-docked like the mission tracker (mobile) */}
+            {isTouch && !hud.mission && hud.marker && !overlay && (
+              <div className={`nc-mission hud-panel ${JOB_BORDER_CLS[hud.marker.kind] ?? 'border-cyan-400/40'} w-44 px-2 py-1.5 pointer-events-none`}>
+                <div className={`font-bold text-[11px] leading-tight ${JOB_TEXT_CLS[hud.marker.kind] ?? 'text-cyan-300'}`}>
+                  {JOB_LABEL[hud.marker.kind] ?? hud.marker.kind}
+                </div>
+                {hud.marker.mods.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-0.5">
+                    {hud.marker.mods.map((chip) => (
+                      <span key={chip} className="text-[9px] font-bold px-1 py-0.5 rounded bg-white/10 border border-white/20 text-slate-100">{chip}</span>
+                    ))}
+                  </div>
+                )}
+                <div className="text-[10px] text-slate-300 mt-0.5">Tap <span className="key-cap">E</span> to accept</div>
               </div>
             )}
             {/* FIRST NIGHT guide — same card, edge-docked with ✕ (mobile) */}
@@ -1437,10 +1468,15 @@ export default function App() {
             </>
           )}
 
-          {/* E prompt — job board at the garage */}
+          {/* E prompt — job board at the garage / contract at a beacon */}
           {!overlay && !isTouch && hud.nearGarage && (
             <div className="nh-prompt absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2.5 bg-cyan-500/20 border border-cyan-400 rounded text-cyan-100 text-base animate-pulse">
               Press <span className="key-cap">E</span> — open the Job Board
+            </div>
+          )}
+          {!overlay && !isTouch && !hud.nearGarage && hud.marker && (
+            <div className={`nh-prompt absolute bottom-24 left-1/2 -translate-x-1/2 z-20 px-4 py-2.5 bg-white/10 border rounded text-base animate-pulse ${JOB_BORDER_CLS[hud.marker.kind] ?? 'border-cyan-400'} ${JOB_TEXT_CLS[hud.marker.kind] ?? 'text-cyan-100'}`}>
+              Press <span className="key-cap">E</span> — take the {JOB_LABEL[hud.marker.kind] ?? 'contract'}
             </div>
           )}
 
@@ -2476,6 +2512,12 @@ function touchTitle(t: string) {
   if (/press E|GARAGE|Job/i.test(t)) return t.replace(/press E/i, 'Tap E')
   return t
 }
+
+// Contract beacons on the map (Phase 1 step 3): per-job labels and colors for
+// the accept card that appears when you drive into one.
+const JOB_LABEL: Record<string, string> = { delivery: 'COURIER RUN', taxi: 'TAXI FARE', race: 'STREET RACE', getaway: 'GETAWAY' }
+const JOB_TEXT_CLS: Record<string, string> = { delivery: 'text-cyan-300', taxi: 'text-amber-300', race: 'text-pink-300', getaway: 'text-red-300' }
+const JOB_BORDER_CLS: Record<string, string> = { delivery: 'border-cyan-400/40', taxi: 'border-amber-400/40', race: 'border-pink-400/40', getaway: 'border-red-400/40' }
 function touchHint(h: string) {
   if (/WASD|arrow keys|HOLD W/i.test(h)) return 'Push the joystick UP to drive — steer by swiping the RIGHT side of the screen'
   if (/Tap A or D/i.test(h)) return 'Swipe LEFT or RIGHT on the right side to turn — flick for sharp turns. Try a corner'

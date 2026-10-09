@@ -48,6 +48,8 @@ export interface HudState {
   /** first-time onboarding: current objective, or null when tutorial is finished */
   tutorial: { step: number; total: number; title: string; hint: string } | null
   mission: HudMission | null
+  /** map contract beacon in accept range (free-roam only): job + modifier chips */
+  marker: { kind: string; mods: string[] } | null
   nearGarage: boolean
   busted: boolean
   boosting: boolean
@@ -177,10 +179,31 @@ interface TrafficCar {
 }
 
 type Mission =
-  | { kind: 'delivery'; stage: 'pickup' | 'deliver'; a: THREE.Vector3; b: THREE.Vector3; timer: number; name: string }
-  | { kind: 'race'; cps: THREE.Vector3[]; idx: number; timer: number; total: number; name: string }
-  | { kind: 'taxi'; stage: 'pickup' | 'ride'; a: THREE.Vector3; b: THREE.Vector3; timer: number; name: string; passenger: THREE.Group | null; dist: number }
-  | { kind: 'getaway'; heat0: number; name: string }
+  | { kind: 'delivery'; stage: 'pickup' | 'deliver'; a: THREE.Vector3; b: THREE.Vector3; timer: number; name: string; mods: ModId[]; damageHits: number }
+  | { kind: 'race'; cps: THREE.Vector3[]; idx: number; timer: number; total: number; name: string; mods: ModId[]; damageHits: number }
+  | { kind: 'taxi'; stage: 'pickup' | 'ride'; a: THREE.Vector3; b: THREE.Vector3; timer: number; name: string; passenger: THREE.Group | null; dist: number; mods: ModId[]; damageHits: number }
+  | { kind: 'getaway'; heat0: number; name: string; mods: ModId[]; damageHits: number }
+
+// Contract modifiers (Phase 1, step 3): change HOW you drive, not just the pay
+type ModId = 'rush' | 'fragile' | 'hot' | 'vip' | 'clean'
+const MOD_INFO: Record<ModId, { chip: string; blurb: string }> = {
+  rush: { chip: '⚡ RUSH', blurb: 'timer −30%, pay +50%' },
+  fragile: { chip: '🥚 FRAGILE', blurb: 'every crash −10% payout' },
+  hot: { chip: '🔥 HOT CARGO', blurb: 'starts at ★1, pay +30% (+ heat mult)' },
+  vip: { chip: '🎩 VIP', blurb: 'no crashes = double tip' },
+  clean: { chip: '🌙 CLEAN RUN', blurb: 'finish undamaged: +25%' },
+}
+const JOB_COLORS: Record<Mission['kind'], number> = { delivery: 0x22d3ee, taxi: 0xfbbf24, race: 0xf472b6, getaway: 0xf87171 }
+
+/** A contract marker on the map: small colored beam, drive in + E to accept. */
+interface ContractMarker {
+  id: number
+  kind: Mission['kind']
+  mods: ModId[]
+  pos: THREE.Vector3
+  expiresAt: number // engine time
+  mesh: THREE.Group
+}
 
 function blockOrigin(i: number): number {
   return -HALF + ROAD + i * CELL
@@ -424,6 +447,17 @@ export class GameEngine {
   private tailTrack = new Map<object, { closeT: number; counted: boolean }>()
   private cruiserNmCd = new Map<object, number>()
 
+  // =============== MAP CONTRACT MARKERS (Phase 1, step 3) ===============
+  // 3 job beacons live on the map at all times; drive in + E to take the job —
+  // no more driving back to the garage between contracts. Beacons expire after
+  // 3 min; a new one spawns 60 s after one is taken or expires. One contract
+  // at a time: while a mission runs, beacons stay visible but can't be taken.
+  private contractMarkers: ContractMarker[] = []
+  private markerSeq = 0
+  private markerRespawnAt: number[] = []
+  private nearMarker: ContractMarker | null = null
+  private markerToastCd = 0
+
   constructor(canvas: HTMLCanvasElement, minimap: HTMLCanvasElement, hooks: EngineHooks, assets: GameAssets) {
     this.mmCanvas = minimap
     this.hooks = hooks
@@ -528,6 +562,10 @@ export class GameEngine {
     this.spawnTraffic()
     this.spawnPedestrians()
     this.spawnCrates()
+    // Phase 1 step 3: three contract beacons live on the map from the first frame
+    this.spawnContractMarker()
+    this.spawnContractMarker()
+    this.spawnContractMarker()
     this.buildLandmarks()
     this.prunePropColliders()
     this.spawnCruisers()
@@ -3472,6 +3510,10 @@ export class GameEngine {
     this.keys.add(k)
     if (k === 'e' && !this.paused && !this.attract) {
       if (this.nearGarage) this.hooks.onPressE()
+      else if (this.nearMarker) {
+        if (this.mission) this.hooks.onToast('Finish your current job first', 'warn')
+        else this.acceptMarker()
+      }
     }
     if (k === ' ' && this.bustedMeter > 0.25 && this.mashCooldown <= 0 && !this.busted && !this.paused && !this.attract) {
       // Struggle free from the patrol grab
@@ -3658,6 +3700,7 @@ export class GameEngine {
     this.updateRoadEvents(dt)
     this.updateCruisers(dt)
     this.updateCred(dt)
+    this.updateContractMarkers()
     this.updateSmoke(dt)
     this.updatePedestrians(dt)
     this.updateBirds(dt)
@@ -4211,6 +4254,8 @@ export class GameEngine {
     if (this.damage > before) {
       this.breakCred()
       if (!this.grounded) this.jumpDamaged = true
+      // Contract modifiers (fragile/clean/vip) count every hit that stuck
+      if (this.mission) this.mission.damageHits++
     }
     this.applyDamageLook()
     if (this.damage >= 50 && !this.damageWarned50) {
@@ -4967,29 +5012,31 @@ export class GameEngine {
     return p
   }
 
-  startMission(kind: 'delivery' | 'race' | 'taxi' | 'getaway'): void {
+  startMission(kind: 'delivery' | 'race' | 'taxi' | 'getaway', mods: ModId[] = []): void {
     const rand = Math.random
     const save = this.hooks.getSave()
     // Starting a new contract must never orphan the previous one's world props
     this.clearMission()
     this.synth.jobStart()
+    // ⚡ RUSH: the clock runs tighter (applied per mission shape below)
+    const rush = mods.includes('rush') ? 0.7 : 1
     if (kind === 'delivery') {
       const a = this.openPoint(rand, this.pos, 50)
       const b = this.openPoint(rand, a, 90)
-      const timer = Math.round(a.distanceTo(b) / 9 + 26)
-      this.mission = { kind, stage: 'pickup', a, b, timer, name: `Courier Run ${save.stats.deliveries + 1}` }
+      const timer = Math.round((a.distanceTo(b) / 9 + 26) * rush)
+      this.mission = { kind, stage: 'pickup', a, b, timer, name: `Courier Run ${save.stats.deliveries + 1}`, mods, damageHits: 0 }
       this.hooks.onToast('Courier contract accepted — reach the pickup beacon', 'good')
     } else if (kind === 'taxi') {
       const a = this.openPoint(rand, this.pos, 40)
       const b = this.openPoint(rand, a, 90)
-      const timer = Math.round(a.distanceTo(b) / 8 + 30)
+      const timer = Math.round((a.distanceTo(b) / 8 + 30) * rush)
       const passenger = this.makePassenger(a)
-      this.mission = { kind, stage: 'pickup', a, b, timer, name: `Taxi Fare ${save.stats.fares + 1}`, passenger, dist: a.distanceTo(b) }
+      this.mission = { kind, stage: 'pickup', a, b, timer, name: `Taxi Fare ${save.stats.fares + 1}`, passenger, dist: a.distanceTo(b), mods, damageHits: 0 }
       this.hooks.onToast('Fare waiting — pick up your passenger at the beacon', 'good')
     } else if (kind === 'getaway') {
       // The contract starts hot: Patrol is already hunting you. Survive until the heat dies.
       this.heat = Math.max(this.heat, 3.2)
-      this.mission = { kind, heat0: 3.2, name: `Getaway Contract ${save.stats.getaways + 1}` }
+      this.mission = { kind, heat0: 3.2, name: `Getaway Contract ${save.stats.getaways + 1}`, mods, damageHits: 0 }
       this.hooks.onToast('The Patrol is onto this run — lose them and stay lost!', 'warn')
     } else {
       const cps: THREE.Vector3[] = []
@@ -4999,8 +5046,17 @@ export class GameEngine {
         cps.push(cp)
         prev = cp
       }
-      this.mission = { kind, cps, idx: 0, timer: 14, total: 0, name: `Harbor GP ${save.stats.races + 1}` }
+      this.mission = { kind, cps, idx: 0, timer: Math.round(14 * rush), total: 0, name: `Harbor GP ${save.stats.races + 1}`, mods, damageHits: 0 }
       this.hooks.onToast('Street race started — hit every gate before it closes!', 'good')
+    }
+    // 🔥 HOT CARGO: the run starts at ★1 — but only once the Patrol is awake
+    // (new-player protection still holds; first-ever chase stays capped at ★1).
+    if (mods.includes('hot') && kind !== 'getaway' && this.heatAllowed) {
+      this.heat = Math.max(this.heat, 1.0)
+      this.hooks.onToast('🔥 Hot cargo — the Patrol clocked this run already!', 'warn')
+    }
+    if (mods.length > 0) {
+      this.hooks.onToast(`Contract terms: ${mods.map((mod) => `${MOD_INFO[mod].chip} — ${MOD_INFO[mod].blurb}`).join(' · ')}`, 'info')
     }
     this.synth.checkpoint()
   }
@@ -5041,6 +5097,116 @@ export class GameEngine {
     }
   }
 
+  // =============== MAP CONTRACT MARKERS (Phase 1, step 3) ===============
+  /** Roll a modifier set for a marker, gated by driver level: L1-2 get at most
+      one (sometimes none — plain jobs while learning), L3+ get 1-2. */
+  private rollMods(kind: Mission['kind'], level: number): ModId[] {
+    const pool: ModId[] = ['fragile', 'clean']
+    if (kind === 'taxi') pool.push('vip')
+    if (kind !== 'getaway') pool.push('rush', 'hot')
+    const count = level <= 2 ? (Math.random() < 0.5 ? 0 : 1) : 1 + (Math.random() < 0.4 ? 1 : 0)
+    const mods: ModId[] = []
+    for (let i = 0; i < count && pool.length > 0; i++) {
+      const idx = Math.floor(Math.random() * pool.length)
+      mods.push(pool.splice(idx, 1)[0])
+    }
+    return mods
+  }
+
+  /** Spawn one contract beacon on an open road point, ≥120 m from the others. */
+  private spawnContractMarker(): void {
+    const kinds: Mission['kind'][] = ['delivery', 'taxi', 'race', 'getaway']
+    let kind = kinds[Math.floor(Math.random() * kinds.length)]
+    // Avoid doubling a kind that's already on the map when a re-roll agrees
+    if (this.contractMarkers.some((mk) => mk.kind === kind) && Math.random() < 0.7) {
+      kind = kinds[Math.floor(Math.random() * kinds.length)]
+    }
+    let pos = this.openPoint(Math.random, this.pos, 60)
+    for (let i = 0; i < 12; i++) {
+      if (this.contractMarkers.every((mk) => mk.pos.distanceTo(pos) >= 120)) break
+      pos = this.openPoint(Math.random, this.pos, 60)
+    }
+    const color = JOB_COLORS[kind]
+    const group = new THREE.Group()
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.9, 0.9, 18, 12, 1, true),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.38, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }),
+    )
+    beam.position.y = 9
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(1.4, 2.1, 24),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }),
+    )
+    ring.rotation.x = -Math.PI / 2
+    ring.position.y = 0.15
+    group.add(beam, ring)
+    group.position.copy(pos)
+    this.scene.add(group)
+    const save = this.hooks.getSave()
+    this.contractMarkers.push({
+      id: ++this.markerSeq,
+      kind,
+      mods: this.rollMods(kind, save.level),
+      pos,
+      expiresAt: this.time + 180,
+      mesh: group,
+    })
+  }
+
+  private removeContractMarker(mk: ContractMarker): void {
+    this.scene.remove(mk.mesh)
+    this.contractMarkers = this.contractMarkers.filter((m) => m !== mk)
+    if (this.nearMarker === mk) this.nearMarker = null
+  }
+
+  /** Take the job at the beacon you're standing in (E key / touch button). */
+  private acceptMarker(): void {
+    const mk = this.nearMarker
+    if (!mk || this.mission) return
+    this.removeContractMarker(mk)
+    this.markerRespawnAt.push(this.time + 60)
+    this.startMission(mk.kind, mk.mods)
+  }
+
+  private updateContractMarkers(): void {
+    // Expire stale beacons; a replacement arrives 60 s later
+    for (const mk of [...this.contractMarkers]) {
+      if (this.time >= mk.expiresAt) {
+        this.removeContractMarker(mk)
+        this.markerRespawnAt.push(this.time + 60)
+      }
+    }
+    this.markerRespawnAt = this.markerRespawnAt.filter((t) => {
+      if (this.time >= t) {
+        this.spawnContractMarker()
+        return false
+      }
+      return true
+    })
+    // Safety net: the map never sits empty of work
+    while (this.contractMarkers.length < 3 && this.markerRespawnAt.length === 0) {
+      this.spawnContractMarker()
+    }
+    // Pulse animation + nearest-beacon detection (7 m accept radius)
+    let nearest: ContractMarker | null = null
+    let nearestD = 7
+    for (const mk of this.contractMarkers) {
+      const ring = mk.mesh.children[1]
+      ring.scale.setScalar(1 + 0.18 * Math.sin(this.time * 3.5 + mk.id))
+      const d = this.pos.distanceTo(mk.pos)
+      if (d < nearestD) {
+        nearest = mk
+        nearestD = d
+      }
+    }
+    this.nearMarker = nearest
+    // One contract at a time: explain why the beacon won't take you right now
+    if (nearest && this.mission && this.time > this.markerToastCd) {
+      this.markerToastCd = this.time + 6
+      this.hooks.onToast('Finish your current job first', 'warn')
+    }
+  }
+
   // =============== HEAT PAYS (Phase 1, step 2) ===============
   /** Payout multiplier from the HIGHEST star level reached during the contract. */
   private heatPayMult(): number {
@@ -5051,14 +5217,42 @@ export class GameEngine {
   private credPayPct(): number {
     return Math.min(50, Math.floor(this.credMissionBanked / 20))
   }
-  /** Final contract payout: base × heat × (1 + cred%). Always shows the math. */
+  /** Final contract payout: base × modifier terms × heat × (1 + cred%).
+      Fragile docks 10% per crash; Clean/VIP pay only on an undamaged run.
+      Always shows the math so the payout never feels arbitrary. */
   private payContract(base: number): number {
+    const m = this.mission
+    const mods = m?.mods ?? []
+    const hits = m?.damageHits ?? 0
+    let effBase = base
+    const parts = [`$${base} base`]
+    // 🎩 VIP: an unharmed passenger doubles the leftover-time tip
+    if (mods.includes('vip') && m && m.kind === 'taxi') {
+      if (hits === 0) {
+        const tip = Math.round(Math.max(0, m.timer) * 4)
+        effBase += tip
+        parts.push(`🎩VIP +$${tip}`)
+      } else {
+        parts.push('🎩VIP lost')
+      }
+    }
+    let modMult = 1
+    if (mods.includes('rush')) modMult += 0.5
+    if (mods.includes('hot')) modMult += 0.3
+    if (mods.includes('clean')) {
+      if (hits === 0) modMult += 0.25
+      else parts.push('🌙Clean lost')
+    }
     const hm = this.heatPayMult()
     const cp = this.credPayPct()
-    const final = Math.round(base * hm * (1 + cp / 100))
-    const parts = [`$${base} base`]
+    const fragileMul = mods.includes('fragile') ? Math.max(0, 1 - 0.1 * hits) : 1
+    const final = Math.round(effBase * modMult * hm * (1 + cp / 100) * fragileMul)
+    if (mods.includes('rush')) parts.push('⚡Rush +50%')
+    if (mods.includes('hot')) parts.push('🔥Hot +30%')
+    if (mods.includes('clean') && hits === 0) parts.push('🌙Clean +25%')
     if (hm > 1) parts.push(`×${hm} heat`)
     if (cp > 0) parts.push(`+${cp}% cred`)
+    if (mods.includes('fragile')) parts.push(hits > 0 ? `🥚-${Math.min(100, hits * 10)}% bumps` : '🥚intact')
     parts.push(`= $${final}`)
     this.hooks.onToast(parts.join(' '), 'cash')
     return final
@@ -5355,6 +5549,9 @@ export class GameEngine {
       pursued: this.heat >= 1 && !this.busted && chasedClose,
       tutorial,
       mission,
+      marker: this.nearMarker && !this.mission
+        ? { kind: this.nearMarker.kind, mods: this.nearMarker.mods.map((mod) => MOD_INFO[mod].chip) }
+        : null,
       nearGarage: this.nearGarage,
       busted: this.busted,
       boosting: this.boosting,
@@ -5500,6 +5697,23 @@ export class GameEngine {
       ctx.lineTo(px - 3.5, pz)
       ctx.closePath()
       ctx.fill()
+    }
+    // contract beacons: job-colored dots, dimmed while a mission is running
+    for (const mk of this.contractMarkers) {
+      const hex = JOB_COLORS[mk.kind].toString(16).padStart(6, '0')
+      const px = toPx(mk.pos.x)
+      const pz = toPx(mk.pos.z)
+      ctx.fillStyle = `#${hex}${this.mission ? '66' : 'ff'}`
+      ctx.beginPath()
+      ctx.arc(px, pz, 3, 0, Math.PI * 2)
+      ctx.fill()
+      if (!this.mission) {
+        ctx.strokeStyle = `#${hex}88`
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.arc(px, pz, 4.5 + 1.5 * Math.sin(this.time * 3.5 + mk.id), 0, Math.PI * 2)
+        ctx.stroke()
+      }
     }
     ctx.fillStyle = '#ff3355'
     for (const d of this.drones) {
