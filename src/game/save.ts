@@ -58,6 +58,9 @@ export interface SaveData {
   reportedMilestones: string[]
   stats: Stats
   shift: NightShift
+  /** Free-roam cred XP anti-farm window. Saved (not in memory) and timed with
+      real clock ms, so reloading the page can't reset the 400 XP / 10 min cap. */
+  credCap: { windowStartMs: number; xpUsed: number }
 }
 
 const KEY = 'neon-harbor-save-v1'
@@ -85,6 +88,7 @@ export function defaultSave(): SaveData {
     reportedMilestones: [],
     stats: { deliveries: 0, races: 0, bestRace: 0, bestDrift: 0, busts: 0, fares: 0, getaways: 0, tows: 0, repairs: 0, cred: 0 },
     shift: { goals: [], completedCount: 0 },
+    credCap: { windowStartMs: 0, xpUsed: 0 },
   }
 }
 
@@ -107,6 +111,10 @@ export function loadSave(): SaveData {
       shift: {
         completedCount: parsed.shift?.completedCount ?? 0,
         goals: (parsed.shift?.goals ?? []).map((g) => ({ ...g })),
+      },
+      credCap: {
+        windowStartMs: parsed.credCap?.windowStartMs ?? 0,
+        xpUsed: parsed.credCap?.xpUsed ?? 0,
       },
     }
     // Legacy Early Access demo: fullAccess/legend granted everything locally.

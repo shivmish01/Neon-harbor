@@ -446,8 +446,6 @@ export class GameEngine {
   private jumpDamaged = false
   private credMissionBanked = 0
   private missionPeakStars = 0
-  private freeCredXp = 0
-  private freeCredXpT = -9999
   private tailTrack = new Map<object, { closeT: number; counted: boolean }>()
   private cruiserNmCd = new Map<object, number>()
 
@@ -4328,7 +4326,8 @@ export class GameEngine {
     if (!this.wrecked) return
     const save = this.hooks.getSave()
     const firstTow = save.stats.tows === 0
-    const fee = firstTow ? 0 : Math.min(save.cash, 150)
+    // Design 4.5: tow = 10% of cash, min $50, max $250 (never more than you have)
+    const fee = firstTow ? 0 : Math.min(save.cash, Math.max(50, Math.min(250, Math.round(save.cash * 0.1))))
     save.cash -= fee
     save.stats.tows += 1
     this.damage = 45
@@ -4344,11 +4343,12 @@ export class GameEngine {
     this.hooks.onToast(firstTow ? "First tow's on the house — get her repaired" : `Towed to the garage (-$${fee}) — get her repaired`, 'info')
   }
 
-  /** Repair quote at the garage: $4 per damage point. The first repair of a
-      save is free — nobody learns to drive and pays full price for it. */
+  /** Repair quote at the garage: $3 per damage point, capped at $200 (design
+      4.5). The first repair of a save is free — nobody learns to drive and
+      pays full price for it. */
   repairCost(): number {
     if (this.hooks.getSave().stats.repairs === 0 && this.damage >= 1) return 0
-    return Math.ceil(this.damage * 4)
+    return Math.min(200, Math.ceil(this.damage * 3))
   }
 
   /** Full repair at the garage. Returns true if paid and fixed. */
@@ -6359,12 +6359,14 @@ export class GameEngine {
     return m
   }
 
-  /** Add style points at the CURRENT multiplier. Every award resets the 3s
-      bank timer. Stepping up pops a toast (max 1 per 2s). */
+  /** Add RAW style points to the chain (the multiplier steps on raw cred and
+      is applied once, at bank time — score × multiplier, no snowballing).
+      Steady drift = 20 raw/s → ×2 at 5 s, ×3 at 12.5 s, ×4 at 25 s, ×5 at 45 s.
+      Every award resets the 3s bank timer. Stepping up pops a toast (max 1 per 2s). */
   private addCred(base: number): void {
     if (base <= 0 || this.attract) return
     const before = this.credMult()
-    this.credChain += Math.round(base * before)
+    this.credChain += Math.round(base)
     this.credIdle = 0
     const now = this.credMult()
     if (now > before && this.credPopCd <= 0) {
@@ -6380,29 +6382,35 @@ export class GameEngine {
   /** 3s without a style action banks the chain: XP (1:1 on a contract, 1:2
       free-roam with the 400 XP / 10 min anti-farm cap) + lifetime stat. */
   private bankCred(): void {
-    const banked = Math.round(this.credChain)
+    const raw = Math.round(this.credChain)
     const mult = this.credMult()
     this.credChain = 0
     this.credIdle = 0
-    if (banked < 10) return
+    if (raw < 10) return
+    const banked = raw * mult
     const save = this.hooks.getSave()
     save.stats.cred += banked
     let xp = banked
     if (this.mission) {
       this.credMissionBanked += banked
     } else {
+      // Free-roam anti-farm: 1:2 XP, max 400 XP per 10 real minutes. The
+      // window lives in the save on the wall clock, so a reload can't reset it.
       xp = Math.round(banked / 2)
-      if (this.time - this.freeCredXpT > 600) {
-        this.freeCredXpT = this.time
-        this.freeCredXp = 0
+      const cap = save.credCap
+      const now = Date.now()
+      if (now - cap.windowStartMs > 600_000 || now < cap.windowStartMs) {
+        cap.windowStartMs = now
+        cap.xpUsed = 0
       }
-      xp = Math.min(xp, Math.max(0, 400 - this.freeCredXp))
-      this.freeCredXp += xp
+      xp = Math.min(xp, Math.max(0, 400 - cap.xpUsed))
+      cap.xpUsed += xp
     }
     if (xp > 0) this.grantXp(xp)
     if (mult >= this.shiftChainNeed()) this.bumpGoal('chain')
     this.hooks.commit()
-    this.hooks.onToast(`CRED BANKED +${banked}${xp > 0 ? ` → +${xp} XP` : ' (free-roam cap)'}`, 'good')
+    const math = mult > 1 ? `${raw} ×${mult} = ${banked}` : `+${banked}`
+    this.hooks.onToast(`CRED BANKED ${math}${xp > 0 ? ` → +${xp} XP` : ' (free-roam cap)'}`, 'good')
   }
 
   /** Any damage breaks the chain — the unbanked cred is lost. */
