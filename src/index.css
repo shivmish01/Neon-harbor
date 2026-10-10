@@ -1340,3 +1340,11 @@
     display: none;
   }
 }
+
+/* Title screen on short landscape phones: keep the compact status chips,
+   drop the longer one-line explanations so the title never clips. */
+@media (max-height: 460px) {
+  .nh-boot-long { display: none; }
+  .nh-boot-status { margin-top: 0.4rem; }
+  .nh-district-pick { margin-top: 0.5rem; }
+}

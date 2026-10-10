@@ -12,7 +12,7 @@ import {
   ACHIEVEMENTS, DISTRICTS, UPGRADES,
   type Skin, type Theme, type UpgradeId,
 } from './game/content'
-import { loadSave, persistSave, defaultSave, type SaveData } from './game/save'
+import { loadSave, persistSave, defaultSave, type SaveData, dailyKey } from './game/save'
 import { CREWS, CREW_STEPS, HOME_TURF_BONUS, crewFor, crewRep, districtOwned, districtsOwned } from './game/crews'
 import { VPlay, type VPlayInit, type PurchaseResult } from './vplay/sdk'
 import { BUILD_HASH, BUILD_TIME } from './gen-build'
@@ -1011,15 +1011,28 @@ export default function App() {
               </div>
             </div>
           )}
+          {/* One compact status row (fits a 640x320 phone): daily best, districts
+              taken, Night Shift progress. The longer Night Shift line below is
+              hidden on short screens (.nh-boot-long in index.css). */}
           {save.tutorialDone && (
-            <div className="mt-3 text-xs text-amber-300/90 tracking-wide text-center px-3 max-w-sm">
-              ⚔️ Districts taken {districtsOwned(save.crews)}/{CREWS.length} — rival crews are waiting: Pause › Districts & Crews
+            <div className="nh-boot-status mt-3 flex flex-wrap items-center justify-center gap-1.5 px-3 text-[11px] font-bold">
+              <span className="px-2 py-0.5 rounded-full border border-amber-400/50 text-amber-200 bg-amber-500/10">
+                ⭐ Daily {save.daily.day === dailyKey() && save.daily.best > 0 ? `$${save.daily.best.toLocaleString()}` : 'not run'}
+              </span>
+              <span className="px-2 py-0.5 rounded-full border border-fuchsia-400/50 text-fuchsia-200 bg-fuchsia-500/10">
+                ⚔️ Districts {districtsOwned(save.crews)}/{CREWS.length}
+              </span>
+              {save.shift.goals.length > 0 && (
+                <span className="px-2 py-0.5 rounded-full border border-indigo-400/50 text-indigo-200 bg-indigo-500/10">
+                  🌙 Shift {save.shift.goals.filter((g) => g.done).length}/{save.shift.goals.length}
+                </span>
+              )}
             </div>
           )}
           {/* Night Shift on the FIRST screen too: a returning player sees
               tonight's goal (and how close they are) before they even drive. */}
           {save.tutorialDone && save.shift.goals.length > 0 && (
-            <div className="mt-4 text-xs text-indigo-300 tracking-wide text-center px-3 max-w-sm">
+            <div className="nh-boot-long mt-3 text-xs text-indigo-300 tracking-wide text-center px-3 max-w-sm">
               🌙 Night Shift {save.shift.goals.filter((g) => g.done).length}/{save.shift.goals.length} done
               {save.shift.goals.find((g) => !g.done) && <> — next: {save.shift.goals.find((g) => !g.done)!.label}</>}
             </div>
@@ -2114,6 +2127,18 @@ export default function App() {
               <h2 className="text-2xl font-black text-white tracking-widest">JOB BOARD</h2>
               <button onClick={() => setOverlay(null)} className="text-slate-400 hover:text-white text-xl">✕</button>
             </div>
+            <button
+              onClick={() => { if (engineRef.current?.startDailyContract()) setOverlay(null) }}
+              className="w-full mb-4 p-3 rounded-xl border border-amber-400/60 bg-gradient-to-r from-amber-500/15 to-fuchsia-500/10 hover:from-amber-500/25 text-left flex items-center justify-between gap-3"
+            >
+              <span>
+                <span className="block text-amber-300 font-black tracking-widest text-sm">⭐ DAILY HARBOR CONTRACT</span>
+                <span className="block text-xs text-slate-300 mt-0.5">One job a day, the same for every player. Your payout is your score — run it again to beat it.</span>
+              </span>
+              <span className="shrink-0 text-right text-xs font-bold text-amber-200">
+                {save.daily.day === dailyKey() && save.daily.best > 0 ? <>BEST TODAY<br />${save.daily.best.toLocaleString()}</> : <>NOT RUN<br />TODAY</>}
+              </span>
+            </button>
             <div className="grid md:grid-cols-2 gap-4">
               <button
                 onClick={() => { engineRef.current?.startMission('delivery'); setOverlay(null) }}

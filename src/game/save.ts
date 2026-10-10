@@ -63,6 +63,8 @@ export interface SaveData {
   credCap: { windowStartMs: number; xpUsed: number }
   /** Rival-crew challenges beaten per district id (0..5). 5 = district taken. */
   crews: Record<string, number>
+  /** Daily Harbor Contract: best payout for `day` (UTC yyyy-mm-dd) and runs that day. */
+  daily: { day: string; best: number; runs: number }
 }
 
 const KEY = 'neon-harbor-save-v1'
@@ -92,6 +94,7 @@ export function defaultSave(): SaveData {
     shift: { goals: [], completedCount: 0 },
     credCap: { windowStartMs: 0, xpUsed: 0 },
     crews: {},
+    daily: { day: '', best: 0, runs: 0 },
   }
 }
 
@@ -120,6 +123,7 @@ export function loadSave(): SaveData {
         xpUsed: parsed.credCap?.xpUsed ?? 0,
       },
       crews: { ...(parsed.crews ?? {}) },
+      daily: { day: parsed.daily?.day ?? '', best: parsed.daily?.best ?? 0, runs: parsed.daily?.runs ?? 0 },
     }
     // Legacy Early Access demo: fullAccess/legend granted everything locally.
     // Keep whatever items the player already owned (it was a free demo), but
@@ -165,4 +169,9 @@ export function grantXp(save: SaveData, amount: number): number {
     ups += 1
   }
   return ups
+}
+
+/** Today's key for the Daily Harbor Contract (UTC, so every player shares it). */
+export function dailyKey(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 10)
 }

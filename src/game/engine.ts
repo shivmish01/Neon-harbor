@@ -11,7 +11,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { getSkin, getTheme, ACHIEVEMENTS, DISTRICTS, districtAt, ENGINE_MUL, NITRO_REGEN_MUL, NITRO_DRAIN_MUL, TIRES_MUL, ARMOR_MUL, LAUNCH_MUL, HORN_RANGE } from './content'
 import { CREW_STEPS, HOME_TURF_BONUS, crewFor, crewRep, districtOwned, districtsOwned } from './crews'
-import { grantXp, xpForLevel, type SaveData, type ShiftGoal } from './save'
+import { grantXp, xpForLevel, type SaveData, type ShiftGoal, dailyKey } from './save'
 import { Synth } from './audio'
 import { cloneCar, cloneCharacter, CITY_BY_KIND, type GameAssets } from './assets'
 
@@ -5109,8 +5109,7 @@ export class GameEngine {
     return p
   }
 
-  startMission(kind: 'delivery' | 'race' | 'taxi' | 'getaway', mods: ModId[] = []): void {
-    const rand = Math.random
+  startMission(kind: 'delivery' | 'race' | 'taxi' | 'getaway', mods: ModId[] = [], rand: () => number = Math.random): void {
     const save = this.hooks.getSave()
     // Starting a new contract must never orphan the previous one's world props
     this.clearMission()
@@ -5181,6 +5180,60 @@ export class GameEngine {
   /** The rival-crew challenge the current mission belongs to, if any. */
   private crewJob: { district: string; step: number } | null = null
 
+  /** Set while the current mission is today's Daily Harbor Contract (its day key). */
+  private dailyJob: string | null = null
+  /** Final payout of the contract that just finished (the daily's score). */
+  private lastPayout = 0
+
+  /** The Daily Harbor Contract: one job per UTC day, laid out from a seed so
+      every player gets the same job from the same start line at Garage 97.
+      Score = the payout, so speed, Street Cred and heat all count. Replayable. */
+  startDailyContract(): boolean {
+    const day = dailyKey()
+    if (!this.travelToDistrict('downtown')) return false
+    let h = 2166136261
+    for (let i = 0; i < day.length; i++) { h ^= day.charCodeAt(i); h = Math.imul(h, 16777619) }
+    let a = h >>> 0
+    const rand = (): number => {
+      a = (a + 0x6d2b79f5) | 0
+      let t = Math.imul(a ^ (a >>> 15), 1 | a)
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    }
+    const kinds = ['delivery', 'taxi', 'race'] as const
+    const kind = kinds[Math.floor(rand() * kinds.length)]
+    const pool: ModId[] = kind === 'taxi' ? ['rush', 'vip'] : kind === 'race' ? ['rush', 'hot'] : ['rush', 'fragile', 'hot', 'clean']
+    const first = pool[Math.floor(rand() * pool.length)]
+    const rest = pool.filter((m) => m !== first)
+    const mods: ModId[] = rand() < 0.5 && rest.length ? [first, rest[Math.floor(rand() * rest.length)]] : [first]
+    this.startMission(kind, mods, rand)
+    this.dailyJob = day
+    if (this.mission) this.mission.name = `Daily Contract · ${day.slice(5)}`
+    const best = this.hooks.getSave().daily
+    this.hooks.onToast(
+      `⭐ DAILY HARBOR CONTRACT — same job for every player today.${best.day === day && best.best > 0 ? ` Your best: $${best.best.toLocaleString()}` : ' Set your score.'}`,
+      'good',
+    )
+    return true
+  }
+
+  private dailyOnMissionDone(): void {
+    const day = this.dailyJob
+    if (!day) return
+    const save = this.hooks.getSave()
+    if (!save.daily || save.daily.day !== day) save.daily = { day, best: 0, runs: 0 }
+    save.daily.runs += 1
+    const score = this.lastPayout
+    if (score > save.daily.best) {
+      save.daily.best = score
+      this.hooks.onToast(`⭐ DAILY CONTRACT — new best: $${score.toLocaleString()}. Run it again to beat it.`, 'good')
+    } else {
+      this.hooks.onToast(`Daily Contract: $${score.toLocaleString()} — your best today is $${save.daily.best.toLocaleString()}`, 'info')
+    }
+    this.hooks.onMilestone?.('daily.complete.1')
+    this.hooks.commit()
+  }
+
   /** Start the next challenge of the crew that holds `districtId`. The player
       is moved into the district first; the mission's beacons stay inside it. */
   startCrewChallenge(districtId: string): boolean {
@@ -5239,6 +5292,7 @@ export class GameEngine {
     const m = this.mission
     if (m && m.kind === 'taxi' && m.passenger) this.scene.remove(m.passenger)
     this.crewJob = null
+    this.dailyJob = null
     this.mission = null
     this.markerBeacon.visible = false
     this.credMissionBanked = 0 // contract-scoped cred bonus resets with the job
@@ -5432,6 +5486,7 @@ export class GameEngine {
   /** Contract-finish hooks shared by all four job types. */
   private shiftOnMissionDone(m: Mission): void {
     this.crewOnMissionDone()
+    this.dailyOnMissionDone()
     if (this.missionPeakStars >= 2) this.bumpGoal('hot2star')
     if (this.missionPeakStars >= 3) this.hooks.onMilestone?.('heat.payout3')
     if (m.mods.includes('fragile')) {
@@ -5491,6 +5546,7 @@ export class GameEngine {
     if (hm > 1) parts.push(`×${hm} heat`)
     if (cp > 0) parts.push(`+${cp}% cred`)
     if (mods.includes('fragile')) parts.push(hits > 0 ? `🥚-${Math.min(100, hits * 10)}% bumps` : '🥚intact')
+    this.lastPayout = final
     parts.push(`= $${final}`)
     this.hooks.onToast(parts.join(' '), 'cash')
     return final
