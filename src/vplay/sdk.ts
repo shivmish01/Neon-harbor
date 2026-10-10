@@ -170,6 +170,12 @@ function createApi() {
       void send('saveCloud', { data: JSON.parse(json) }, false)
     },
 
+    /** Leaderboard score (fire-and-forget): daily = payout, weekly = seconds. */
+    score(board: 'daily' | 'weekly', key: string, value: number): void {
+      if (!ready || !Number.isFinite(value)) return
+      void send('score', { board, key, value }, false)
+    },
+
     milestone(id: string): void {
       if (!ready) return
       void send('milestone', { id }, false)

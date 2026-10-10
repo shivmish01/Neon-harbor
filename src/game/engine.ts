@@ -11,7 +11,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { getSkin, getTheme, ACHIEVEMENTS, DISTRICTS, districtAt, ENGINE_MUL, NITRO_REGEN_MUL, NITRO_DRAIN_MUL, TIRES_MUL, ARMOR_MUL, LAUNCH_MUL, HORN_RANGE } from './content'
 import { CREW_STEPS, HOME_TURF_BONUS, crewFor, crewRep, districtOwned, districtsOwned } from './crews'
-import { grantXp, xpForLevel, type SaveData, type ShiftGoal, dailyKey } from './save'
+import { grantXp, xpForLevel, type SaveData, type ShiftGoal, dailyKey, weekKey } from './save'
 import { Synth } from './audio'
 import { cloneCar, cloneCharacter, CITY_BY_KIND, type GameAssets } from './assets'
 
@@ -78,6 +78,8 @@ export interface EngineHooks {
   onPhotoToggle?(): void
   /** one-time progress milestones for vplay.gg (deduped per save in App) */
   onMilestone?(id: string): void
+  /** A leaderboard score for vplay.gg: daily = payout (higher wins), weekly = seconds (lower wins). */
+  onScore?(board: 'daily' | 'weekly', key: string, value: number): void
 }
 
 // ---------- World layout constants ----------
@@ -3741,6 +3743,7 @@ export class GameEngine {
     this.updateRoadEvents(dt)
     this.updateCruisers(dt)
     this.updateCred(dt)
+    this.updateGhost(dt)
     this.updateContractMarkers()
     this.updateSmoke(dt)
     this.updatePedestrians(dt)
@@ -5114,6 +5117,7 @@ export class GameEngine {
     // Starting a new contract must never orphan the previous one's world props
     this.clearMission()
     this.synth.jobStart()
+    this.missionStartT = this.time
     // ⚡ RUSH: the clock runs tighter (applied per mission shape below)
     const rush = mods.includes('rush') ? 0.7 : 1
     if (kind === 'delivery') {
@@ -5138,11 +5142,14 @@ export class GameEngine {
       const cps: THREE.Vector3[] = []
       let prev = this.pos.clone()
       for (let i = 0; i < 8; i++) {
-        const cp = this.openPoint(rand, prev, 55)
+        // Gates sit 55–150 m apart: far enough to race, never a cross-map
+        // dash no clock could cover (a flat 14 s used to make some unwinnable).
+        let cp = this.openPoint(rand, prev, 55)
+        for (let t = 0; t < 30 && cp.distanceTo(prev) > 150; t++) cp = this.openPoint(rand, prev, 55)
         cps.push(cp)
         prev = cp
       }
-      this.mission = { kind, cps, idx: 0, timer: Math.round(14 * rush), total: 0, name: `Harbor GP ${save.stats.races + 1}`, mods, damageHits: 0 }
+      this.mission = { kind, cps, idx: 0, timer: gateSeconds(this.pos, cps[0], rush), total: 0, name: `Harbor GP ${save.stats.races + 1}`, mods, damageHits: 0 }
       this.hooks.onToast('Street race started — hit every gate before it closes!', 'good')
     }
     // 🔥 HOT CARGO: the run starts at ★1 — but only once the Patrol is awake
@@ -5217,6 +5224,108 @@ export class GameEngine {
     return true
   }
 
+  // =============== WEEKLY HARBOR GP + GHOST ===============
+  private missionStartT = 0
+  /** Set while the current mission is this week's Harbor GP (its week key). */
+  private weeklyJob: string | null = null
+  private ghostMesh: THREE.Mesh | null = null
+  /** x, z, heading triples at 10 Hz for the run in progress / the best run. */
+  private ghostRec: number[] = []
+  private ghostPlay: number[] | null = null
+  private ghostAcc = 0
+  private static readonly GHOST_KEY = 'neon-harbor-ghost-v1'
+
+  /** The Weekly Harbor GP: one seeded 8-gate race per ISO week from the Garage
+      97 start line — the same route for every player. Score = finish time.
+      Your best run of the week races beside you as a ghost. */
+  startWeeklyRace(): boolean {
+    const key = weekKey()
+    if (!this.travelToDistrict('downtown')) return false
+    let h = 2166136261
+    const seedStr = `gp:${key}`
+    for (let i = 0; i < seedStr.length; i++) { h ^= seedStr.charCodeAt(i); h = Math.imul(h, 16777619) }
+    let a = h >>> 0
+    const rand = (): number => {
+      a = (a + 0x6d2b79f5) | 0
+      let t = Math.imul(a ^ (a >>> 15), 1 | a)
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    }
+    this.startMission('race', [], rand)
+    this.weeklyJob = key
+    if (this.mission) this.mission.name = `Weekly Harbor GP · ${key.slice(5)}`
+    this.ghostRec = []
+    this.ghostAcc = 0
+    this.ghostPlay = null
+    try {
+      const raw = localStorage.getItem(GameEngine.GHOST_KEY)
+      const g = raw ? (JSON.parse(raw) as { key?: string; s?: number[] }) : null
+      if (g && g.key === key && Array.isArray(g.s) && g.s.length >= 6) this.ghostPlay = g.s
+    } catch { /* no ghost — race alone */ }
+    const w = this.hooks.getSave().weekly
+    this.hooks.onToast(
+      `🏁 WEEKLY HARBOR GP — same route for every player this week.${w.key === key && w.best > 0 ? ` Beat your ghost: ${w.best.toFixed(1)}s` : ' Set a time.'}`,
+      'good',
+    )
+    return true
+  }
+
+  private weeklyOnMissionDone(): void {
+    const key = this.weeklyJob
+    if (!key) return
+    const save = this.hooks.getSave()
+    if (!save.weekly || save.weekly.key !== key) save.weekly = { key, best: 0, runs: 0 }
+    save.weekly.runs += 1
+    const secs = Math.round((this.time - this.missionStartT) * 100) / 100
+    if (save.weekly.best === 0 || secs < save.weekly.best) {
+      save.weekly.best = secs
+      try { localStorage.setItem(GameEngine.GHOST_KEY, JSON.stringify({ key, t: secs, s: this.ghostRec })) } catch { /* storage full/blocked */ }
+      this.hooks.onToast(`🏁 WEEKLY GP — new best: ${secs.toFixed(1)}s. Your ghost is waiting.`, 'good')
+      this.hooks.onScore?.('weekly', key, secs)
+    } else {
+      this.hooks.onToast(`Weekly GP: ${secs.toFixed(1)}s — your best this week is ${save.weekly.best.toFixed(1)}s`, 'info')
+    }
+    this.hooks.onMilestone?.('weekly.complete.1')
+    this.hooks.commit()
+  }
+
+  /** Records this run at 10 Hz and moves the ghost of the best run alongside. */
+  private updateGhost(dt: number): void {
+    if (!this.weeklyJob || !this.mission) {
+      if (this.ghostMesh) this.ghostMesh.visible = false
+      return
+    }
+    this.ghostAcc += dt
+    while (this.ghostAcc >= 0.1) {
+      this.ghostAcc -= 0.1
+      if (this.ghostRec.length < 9000) {
+        this.ghostRec.push(Math.round(this.pos.x * 100) / 100, Math.round(this.pos.z * 100) / 100, Math.round(this.heading * 1000) / 1000)
+      }
+    }
+    const g = this.ghostPlay
+    if (!g) return
+    if (!this.ghostMesh) {
+      this.ghostMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(1.9, 0.9, 4.2),
+        new THREE.MeshBasicMaterial({ color: 0x67e8f9, transparent: true, opacity: 0.3, depthWrite: false }),
+      )
+      this.scene.add(this.ghostMesh)
+    }
+    const f = (this.time - this.missionStartT) / 0.1
+    const i = Math.floor(f)
+    const n = g.length / 3
+    if (i < 0 || i >= n - 1) {
+      this.ghostMesh.visible = false
+      return
+    }
+    const k = f - i
+    const x = g[i * 3] + (g[i * 3 + 3] - g[i * 3]) * k
+    const z = g[i * 3 + 1] + (g[i * 3 + 4] - g[i * 3 + 1]) * k
+    this.ghostMesh.visible = true
+    this.ghostMesh.position.set(x, 0.75, z)
+    this.ghostMesh.rotation.y = g[i * 3 + 2]
+  }
+
   private dailyOnMissionDone(): void {
     const day = this.dailyJob
     if (!day) return
@@ -5226,6 +5335,7 @@ export class GameEngine {
     const score = this.lastPayout
     if (score > save.daily.best) {
       save.daily.best = score
+      this.hooks.onScore?.('daily', day, score)
       this.hooks.onToast(`⭐ DAILY CONTRACT — new best: $${score.toLocaleString()}. Run it again to beat it.`, 'good')
     } else {
       this.hooks.onToast(`Daily Contract: $${score.toLocaleString()} — your best today is $${save.daily.best.toLocaleString()}`, 'info')
@@ -5293,6 +5403,7 @@ export class GameEngine {
     if (m && m.kind === 'taxi' && m.passenger) this.scene.remove(m.passenger)
     this.crewJob = null
     this.dailyJob = null
+    this.weeklyJob = null
     this.mission = null
     this.markerBeacon.visible = false
     this.credMissionBanked = 0 // contract-scoped cred bonus resets with the job
@@ -5487,6 +5598,7 @@ export class GameEngine {
   private shiftOnMissionDone(m: Mission): void {
     this.crewOnMissionDone()
     this.dailyOnMissionDone()
+    this.weeklyOnMissionDone()
     if (this.missionPeakStars >= 2) this.bumpGoal('hot2star')
     if (this.missionPeakStars >= 3) this.hooks.onMilestone?.('heat.payout3')
     if (m.mods.includes('fragile')) {
@@ -5632,16 +5744,15 @@ export class GameEngine {
       if (this.pos.distanceTo(cp) < 8) {
         m.idx += 1
         m.total += m.timer
-        // ⚡ Rush races run tighter gates all the way through, not just gate 1
-        const gateTime = Math.round(14 * (m.mods.includes('rush') ? 0.7 : 1))
-        m.timer = gateTime
+        // Each gate's clock follows the distance to it; ⚡ Rush runs 30% tighter
+        if (m.idx < m.cps.length) m.timer = gateSeconds(cp, m.cps[m.idx], m.mods.includes('rush') ? 0.7 : 1)
         this.synth.checkpoint()
         if (m.idx >= m.cps.length) {
           const reward = this.payContract(Math.round(380 + m.total * 22))
           const save = this.hooks.getSave()
           save.stats.races += 1
           this.unlockAchievement('first-race')
-          const raceTime = Math.round(m.cps.length * gateTime - m.total)
+          const raceTime = Math.round(this.time - this.missionStartT) // real elapsed seconds
           if (raceTime < 100) this.bumpGoal('racefast')
           if (!save.stats.bestRace || raceTime < save.stats.bestRace) save.stats.bestRace = raceTime
           this.grantCash(reward)
@@ -7163,6 +7274,11 @@ function districtOf(i: number, j: number): District {
   if (j >= 6) return 'construction'
   if (i >= 6) return 'beijing'
   return 'london'
+}
+
+/** Seconds allowed to reach a race gate: ~50 km/h average plus a 6 s cushion, never under 10 s. */
+function gateSeconds(from: THREE.Vector3, to: THREE.Vector3, rush: number): number {
+  return Math.round(Math.max(10, from.distanceTo(to) / 14 + 6) * rush)
 }
 
 function roadPoint(rand: () => number, from?: THREE.Vector3, minDist = 0): THREE.Vector3 {

@@ -12,7 +12,7 @@ import {
   ACHIEVEMENTS, DISTRICTS, UPGRADES,
   type Skin, type Theme, type UpgradeId,
 } from './game/content'
-import { loadSave, persistSave, defaultSave, type SaveData, dailyKey } from './game/save'
+import { loadSave, persistSave, defaultSave, type SaveData, dailyKey, weekKey } from './game/save'
 import { CREWS, CREW_STEPS, HOME_TURF_BONUS, crewFor, crewRep, districtOwned, districtsOwned } from './game/crews'
 import { VPlay, type VPlayInit, type PurchaseResult } from './vplay/sdk'
 import { BUILD_HASH, BUILD_TIME } from './gen-build'
@@ -221,7 +221,7 @@ export default function App() {
     if (!force && now - lastCloudSaveRef.current < 15000) return
     lastCloudSaveRef.current = now
     const s = saveRef.current
-    VPlay.saveCloud({ cash: s.cash, xp: s.xp, level: s.level, shards: s.shards, owned: s.owned, skin: s.skin, theme: s.theme, achievements: s.achievements, districts: s.districts, landmarks: s.landmarks, stats: s.stats, tutorialDone: s.tutorialDone })
+    VPlay.saveCloud({ cash: s.cash, xp: s.xp, level: s.level, shards: s.shards, owned: s.owned, skin: s.skin, theme: s.theme, achievements: s.achievements, districts: s.districts, landmarks: s.landmarks, stats: s.stats, tutorialDone: s.tutorialDone, upgrades: s.upgrades, crews: s.crews, shift: s.shift, daily: s.daily, weekly: s.weekly, damage: s.damage, reportedMilestones: s.reportedMilestones })
   }, [])
 
   const commit = useCallback(() => {
@@ -242,6 +242,13 @@ export default function App() {
         reportMilestone(`district.${id}`)
       }
     }
+    // Levels and first jobs (reportMilestone dedupes per save, so a plain
+    // "is it true now" check is enough — no extra diff state needed).
+    for (let lv = 2; lv <= Math.min(s.level, 30); lv++) reportMilestone(`level.${lv}`)
+    if (s.stats.deliveries > 0) reportMilestone('job.first.courier')
+    if (s.stats.races > 0) reportMilestone('job.first.race')
+    if (s.stats.fares > 0) reportMilestone('job.first.taxi')
+    if (s.stats.getaways > 0) reportMilestone('job.first.getaway')
     saveCloudThrottled()
   }, [reportMilestone, saveCloudThrottled])
 
@@ -267,7 +274,13 @@ export default function App() {
             ...cloud,
             stats: { ...local.stats, ...(cloud.stats ?? {}) },
             owned: [...new Set([...(local.owned ?? []), ...(cloud.owned ?? [])])],
-            reportedMilestones: local.reportedMilestones ?? [],
+            reportedMilestones: [...new Set([...(local.reportedMilestones ?? []), ...(cloud.reportedMilestones ?? [])])],
+            upgrades: { ...local.upgrades, ...(cloud.upgrades ?? {}) },
+            crews: { ...local.crews, ...(cloud.crews ?? {}) },
+            shift: cloud.shift ?? local.shift,
+            daily: cloud.daily ?? local.daily,
+            weekly: cloud.weekly ?? local.weekly,
+            credCap: local.credCap,
           }
           saveRef.current = merged
           persistSave(merged)
@@ -362,6 +375,7 @@ export default function App() {
       },
       onLevelUp: (level) => pushToast(`LEVEL UP — you reached level ${level}!`, 'good'),
       onMilestone: (id) => reportMilestone(id),
+      onScore: (board, key, value) => { if (vplayRef.current?.mode === 'vplay') VPlay.score(board, key, value) },
       onMissionDone: (name, reward) => {
         pushToast(`${name} complete!  +$${reward}`, 'good')
         setWinBanner({ name, reward })
@@ -2137,6 +2151,18 @@ export default function App() {
               </span>
               <span className="shrink-0 text-right text-xs font-bold text-amber-200">
                 {save.daily.day === dailyKey() && save.daily.best > 0 ? <>BEST TODAY<br />${save.daily.best.toLocaleString()}</> : <>NOT RUN<br />TODAY</>}
+              </span>
+            </button>
+            <button
+              onClick={() => { if (engineRef.current?.startWeeklyRace()) setOverlay(null) }}
+              className="w-full mb-4 p-3 rounded-xl border border-fuchsia-400/60 bg-gradient-to-r from-fuchsia-500/15 to-cyan-500/10 hover:from-fuchsia-500/25 text-left flex items-center justify-between gap-3"
+            >
+              <span>
+                <span className="block text-fuchsia-300 font-black tracking-widest text-sm">🏁 WEEKLY HARBOR GP</span>
+                <span className="block text-xs text-slate-300 mt-0.5">One race route a week, the same for every player. Fastest time wins — your best run races you as a ghost.</span>
+              </span>
+              <span className="shrink-0 text-right text-xs font-bold text-fuchsia-200">
+                {save.weekly.key === weekKey() && save.weekly.best > 0 ? <>BEST<br />{save.weekly.best.toFixed(1)}s</> : <>NO TIME<br />YET</>}
               </span>
             </button>
             <div className="grid md:grid-cols-2 gap-4">

@@ -65,6 +65,8 @@ export interface SaveData {
   crews: Record<string, number>
   /** Daily Harbor Contract: best payout for `day` (UTC yyyy-mm-dd) and runs that day. */
   daily: { day: string; best: number; runs: number }
+  /** Weekly Harbor GP: best finish time in seconds for ISO week `key` (0 = none yet). */
+  weekly: { key: string; best: number; runs: number }
 }
 
 const KEY = 'neon-harbor-save-v1'
@@ -95,6 +97,7 @@ export function defaultSave(): SaveData {
     credCap: { windowStartMs: 0, xpUsed: 0 },
     crews: {},
     daily: { day: '', best: 0, runs: 0 },
+    weekly: { key: '', best: 0, runs: 0 },
   }
 }
 
@@ -124,6 +127,7 @@ export function loadSave(): SaveData {
       },
       crews: { ...(parsed.crews ?? {}) },
       daily: { day: parsed.daily?.day ?? '', best: parsed.daily?.best ?? 0, runs: parsed.daily?.runs ?? 0 },
+      weekly: { key: parsed.weekly?.key ?? '', best: parsed.weekly?.best ?? 0, runs: parsed.weekly?.runs ?? 0 },
     }
     // Legacy Early Access demo: fullAccess/legend granted everything locally.
     // Keep whatever items the player already owned (it was a free demo), but
@@ -174,4 +178,14 @@ export function grantXp(save: SaveData, amount: number): number {
 /** Today's key for the Daily Harbor Contract (UTC, so every player shares it). */
 export function dailyKey(now: Date = new Date()): string {
   return now.toISOString().slice(0, 10)
+}
+
+/** This week's key for the Weekly Harbor GP (ISO week, UTC), e.g. "2026-W41". */
+export function weekKey(now: Date = new Date()): string {
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+  const dow = d.getUTCDay() || 7
+  d.setUTCDate(d.getUTCDate() + 4 - dow)
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  const week = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7)
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2, '0')}`
 }
