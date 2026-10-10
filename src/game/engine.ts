@@ -487,7 +487,16 @@ export class GameEngine {
     this.camera.position.set(0, 5, 30)
 
     // Post-processing: neon bloom
-    this.composer = new EffectComposer(renderer)
+    // `antialias: true` on the renderer does nothing once the scene is drawn
+    // through EffectComposer (its off-screen targets aren't multisampled), which
+    // left every building edge jagged. Give the composer a 4x MSAA target so
+    // our own game never looks pixelated; applyQuality() drops it to 0 only in
+    // the lowest performance tier.
+    const bufSize = renderer.getDrawingBufferSize(new THREE.Vector2())
+    this.composer = new EffectComposer(
+      renderer,
+      new THREE.WebGLRenderTarget(Math.max(1, bufSize.x), Math.max(1, bufSize.y), { type: THREE.HalfFloatType, samples: 4 }),
+    )
     this.composer.addPass(new RenderPass(this.scene, this.camera))
     this.bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.42, 0.5, 0.72)
     this.composer.addPass(this.bloomPass)
@@ -1344,9 +1353,10 @@ export class GameEngine {
     this.buildings.push({ minX: gx + 7.6, maxX: gx + 8.4, minZ: gz + 11.6, maxZ: gz + 12.4 })
     const sign = (() => {
       const c = document.createElement('canvas')
-      c.width = 512; c.height = 128
+      c.width = 2048; c.height = 512
       const g = c.getContext('2d')
       if (!g) return null
+      g.scale(4, 4)
       g.fillStyle = '#0a0f1c'
       g.fillRect(0, 0, 512, 128)
       g.font = 'bold 72px monospace'
@@ -1354,7 +1364,9 @@ export class GameEngine {
       g.shadowColor = '#22d3ee'; g.shadowBlur = 14
       g.fillStyle = '#67e8f9'
       g.fillText('NEON HARBOR', 256, 88)
-      return new THREE.CanvasTexture(c)
+      const t = new THREE.CanvasTexture(c)
+      t.anisotropy = 8
+      return t
     })()
     if (sign) {
       const signMesh = new THREE.Mesh(
@@ -3684,6 +3696,9 @@ export class GameEngine {
     this.composer.setPixelRatio(pr)
     this.resize()
     if (this.qualityLevel >= 2) {
+      for (const rt of [this.composer.renderTarget1, this.composer.renderTarget2]) {
+        if (rt.samples !== 0) { rt.samples = 0; rt.dispose() }
+      }
       this.bloomPass.enabled = false
       if (this.moon.shadow.mapSize.x > 1024) {
         this.moon.shadow.mapSize.set(1024, 1024)
@@ -4492,7 +4507,50 @@ export class GameEngine {
   // PC-7: district gates — locked districts block the player at the border.
   // The gate is a SOFT WALL: only the inward velocity component is removed, so
   // the car slides along the border instead of being teleported and wedged.
-  // Districts open purely by LEVEL — no tolls, no payments.
+  /** Fast travel — every district is open from the first minute. Drops the
+      car on the road junction nearest the district's centre, facing downtown.
+      Refused mid-job and mid-chase so it can never be an escape button. */
+  travelToDistrict(id: string): boolean {
+    const d = DISTRICTS.find((x) => x.id === id)
+    if (!d || this.wrecked || this.busted || this.attract) return false
+    if (this.mission) {
+      this.hooks.onToast('Finish your current job first — then pick a district', 'warn')
+      return false
+    }
+    if (this.heat >= 1) {
+      this.hooks.onToast('Lose the Patrol first — no travelling mid-chase', 'warn')
+      return false
+    }
+    if (id === 'downtown') {
+      this.debugTeleport(this.garagePos.x, this.garagePos.z + 19, Math.PI)
+    } else {
+      // Road junctions sit on the same grid roadPoint() uses.
+      const snap = (v: number, lo: number, hi: number): number => {
+        let best = 0
+        let bestD = Infinity
+        for (let k = 0; k <= N; k++) {
+          const c = -HALF + ROAD / 2 + k * CELL
+          if (c < lo + 6 || c > hi - 6) continue
+          const dd = Math.abs(c - v)
+          if (dd < bestD) { bestD = dd; best = c }
+        }
+        return best
+      }
+      const x = snap((d.minX + d.maxX) / 2, d.minX, d.maxX)
+      const z = snap((d.minZ + d.maxZ) / 2, d.minZ, d.maxZ)
+      // Always face along the north–south avenue, towards the middle of the
+      // map: the east–west streets carry median barriers right off the
+      // junction, the avenues give a clear run.
+      const heading = z > 0 ? Math.PI : 0
+      this.debugTeleport(x, z, heading)
+    }
+    this.stuckTime = 0
+    this.synth.checkpoint()
+    this.hooks.onToast(`📍 ${d.name} — ${d.desc}`, 'good')
+    return true
+  }
+
+  // Every district is open from the start; first visits still pay a bonus.
   private districtCd = 0
   private districtToastAt: Record<string, number> = {}
   private updateDistricts(dt: number): void {
@@ -6962,11 +7020,13 @@ function roadPoint(rand: () => number, from?: THREE.Vector3, minDist = 0): THREE
 
 /** Canvas texture: neon billboard sign. */
 function makeSignTexture(text: string, color: string): THREE.Texture {
+  // Drawn at 4x (1024x512) so sign lettering stays crisp up close.
   const cv = document.createElement('canvas')
-  cv.width = 256
-  cv.height = 128
+  cv.width = 1024
+  cv.height = 512
   const ctx = cv.getContext('2d')
   if (!ctx) return new THREE.CanvasTexture(cv)
+  ctx.scale(4, 4)
   ctx.fillStyle = '#0a0d18'
   ctx.fillRect(0, 0, 256, 128)
   ctx.strokeStyle = color
@@ -6983,7 +7043,9 @@ function makeSignTexture(text: string, color: string): THREE.Texture {
   ctx.fillStyle = '#ffffff'
   ctx.globalAlpha = 0.85
   ctx.fillText(text, 128, 64)
-  return new THREE.CanvasTexture(cv)
+  const tex = new THREE.CanvasTexture(cv)
+  tex.anisotropy = 8
+  return tex
 }
 
 /** Canvas texture: soft radial glow (for puddles / light pools). */

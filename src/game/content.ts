@@ -74,9 +74,9 @@ export const HORN_RANGE = (lv: number) => 15 + 4 * lv
 export const SKINS: Skin[] = [
   { id: 'stock',    name: 'Harbor Gray',   desc: 'Factory fresh port-runner coupe.',        price: 0,   premium: false, minLevel: 1, body: 0x8a93a6, glow: 0x22d3ee },
   { id: 'blue',     name: 'Midnight Blue', desc: 'Deep-sea metallic with cyan underglow.',  price: 300, premium: false, minLevel: 1, body: 0x1d4ed8, glow: 0x38bdf8, vcId: 'skin.blue' },
-  { id: 'amber',    name: 'Taxi Amber',    desc: 'Ride-share legend. Smells like hustle.',  price: 450, premium: false, minLevel: 2, body: 0xf59e0b, glow: 0xfde047, model: 'taxi', vcId: 'skin.amber' },
-  { id: 'white',    name: 'Rally White',   desc: 'Clean, loud, and gone before the echo.',  price: 600, premium: false, minLevel: 2, body: 0xf1f5f9, glow: 0x4ade80, model: 'hatchback-sports', vcId: 'skin.white' },
-  { id: 'viper',    name: 'Viper Green',   desc: 'Toxic avenger of the dock district.',     price: 900, premium: false, minLevel: 3, body: 0x16a34a, glow: 0xa3e635, model: 'suv', vcId: 'skin.viper' },
+  { id: 'amber',    name: 'Taxi Amber',    desc: 'Ride-share legend. Smells like hustle.',  price: 450, premium: false, minLevel: 1, body: 0xf59e0b, glow: 0xfde047, model: 'taxi', vcId: 'skin.amber' },
+  { id: 'white',    name: 'Rally White',   desc: 'Clean, loud, and gone before the echo.',  price: 600, premium: false, minLevel: 1, body: 0xf1f5f9, glow: 0x4ade80, model: 'hatchback-sports', vcId: 'skin.white' },
+  { id: 'viper',    name: 'Viper Green',   desc: 'Toxic avenger of the dock district.',     price: 900, premium: false, minLevel: 1, body: 0x16a34a, glow: 0xa3e635, model: 'suv', vcId: 'skin.viper' },
   { id: 'ghost',    name: 'Crimson Ghost', desc: 'The patrol hates this one.',              price: 0,   premium: true,  minLevel: 1, body: 0x9f1239, glow: 0xfb7185, model: 'race', vcId: 'skin.ghost' },
   { id: 'royal',    name: 'Royal Violet',  desc: 'Harbor-night royalty.',                   price: 0,   premium: true,  minLevel: 1, body: 0x6d28d9, glow: 0xc084fc, model: 'suv-luxury', vcId: 'skin.royal' },
   { id: 'solar',    name: 'Solar Flare',   desc: 'Molten gold, zero subtlety.',             price: 0,   premium: true,  minLevel: 1, body: 0xd97706, glow: 0xfbbf24, model: 'race', vcId: 'skin.solar' },
@@ -161,7 +161,8 @@ export const ACHIEVEMENTS: Achievement[] = [
 
 // ---------- DISTRICTS (PC-7) ----------
 // The city square spans -HALF..HALF (HALF = 205). Anything outside it is the
-// free beach ring. Downtown is open from level 1; outer districts gate on level.
+// free beach ring. EVERY district is open from the first minute (owner's call,
+// 2026-10-10): the whole map is there to pick from, nothing is level-locked.
 export interface District {
   id: string
   name: string
@@ -175,10 +176,10 @@ export interface District {
 
 export const DISTRICTS: District[] = [
   { id: 'downtown', name: 'Downtown Core', desc: 'The neon heart of the harbor',              minLevel: 1, minX: -82, maxX: 82, minZ: -82, maxZ: 82 },
-  { id: 'north',    name: 'London Quarter', desc: 'Brick terraces, red phone boxes and the old clock tower', minLevel: 2, minX: -82, maxX: 82, minZ: -205, maxZ: -82 },
-  { id: 'south',    name: 'Construction Yards', desc: 'Cranes, containers and stunt ramps',   minLevel: 2, minX: -82, maxX: 82, minZ: 82, maxZ: 205 },
-  { id: 'west',     name: 'West End',      desc: 'London outskirts — terraced streets and markets', minLevel: 3, minX: -205, maxX: -82, minZ: -205, maxZ: 205 },
-  { id: 'east',     name: 'Beijing Quarter', desc: 'Lantern-lit avenues and the golden pagoda', minLevel: 4, minX: 82, maxX: 205, minZ: -205, maxZ: 205 },
+  { id: 'north',    name: 'London Quarter', desc: 'Brick terraces, red phone boxes and the old clock tower', minLevel: 1, minX: -82, maxX: 82, minZ: -205, maxZ: -82 },
+  { id: 'south',    name: 'Construction Yards', desc: 'Cranes, containers and stunt ramps',   minLevel: 1, minX: -82, maxX: 82, minZ: 82, maxZ: 205 },
+  { id: 'west',     name: 'West End',      desc: 'London outskirts — terraced streets and markets', minLevel: 1, minX: -205, maxX: -82, minZ: -205, maxZ: 205 },
+  { id: 'east',     name: 'Beijing Quarter', desc: 'Lantern-lit avenues and the golden pagoda', minLevel: 1, minX: 82, maxX: 205, minZ: -205, maxZ: 205 },
 ]
 
 export function districtAt(x: number, z: number): District | null {

@@ -42,6 +42,8 @@ export default function App() {
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [shopTab, setShopTab] = useState<'skins' | 'themes' | 'upgrades'>('skins')
   const [progressTab, setProgressTab] = useState<'trophies' | 'districts'>('trophies')
+  // Every district is open: a returning player picks where tonight starts.
+  const [startDistrict, setStartDistrict] = useState('downtown')
   const [tutorialHidden, setTutorialHidden] = useState(false)
   // Night Shift card: expanded on desktop, collapsed one-liner on touch
   const [shiftOpen, setShiftOpen] = useState(() => !window.matchMedia?.('(pointer: coarse)').matches)
@@ -743,6 +745,11 @@ export default function App() {
   }
   const fileRef = useRef<HTMLInputElement>(null)
 
+  /** Fast travel to any district (all open). Closes whatever panel asked. */
+  const goDistrict = (id: string) => {
+    if (engineRef.current?.travelToDistrict(id)) setOverlay(null)
+  }
+
   const buyItem = (id: string, price: number, premium: boolean, minLevel: number) => {
     const engine = engineRef.current
     const s = saveRef.current
@@ -958,12 +965,34 @@ export default function App() {
             An open-world neon port city. Run courier jobs, race the harbor, outrun the Patrol — and build your legend.
           </p>
           {assetsReady ? (
-            <button
-              onClick={enterGame}
-              className="nh-boot-btn mt-10 px-12 py-4 bg-cyan-500/20 border border-cyan-400 text-cyan-300 text-xl tracking-[0.3em] rounded hover:bg-cyan-400/30 hover:shadow-[0_0_30px_rgba(34,211,238,0.5)] transition-all btn-attend"
-            >
-              ENTER THE HARBOR
-            </button>
+            <>
+              <button
+                onClick={() => {
+                  enterGame()
+                  if (save.tutorialDone && startDistrict !== 'downtown') {
+                    window.setTimeout(() => engineRef.current?.travelToDistrict(startDistrict), 700)
+                  }
+                }}
+                className="nh-boot-btn mt-10 px-12 py-4 bg-cyan-500/20 border border-cyan-400 text-cyan-300 text-xl tracking-[0.3em] rounded hover:bg-cyan-400/30 hover:shadow-[0_0_30px_rgba(34,211,238,0.5)] transition-all btn-attend"
+              >
+                ENTER THE HARBOR
+              </button>
+              {save.tutorialDone && (
+                <div className="nh-district-pick mt-4 flex flex-wrap items-center justify-center gap-1.5 px-3 max-w-xl">
+                  <span className="text-[10px] tracking-[0.25em] text-slate-400 mr-1">START IN</span>
+                  {DISTRICTS.map((d) => (
+                    <button
+                      key={d.id}
+                      onClick={() => setStartDistrict(d.id)}
+                      aria-pressed={startDistrict === d.id}
+                      className={`px-2.5 py-1 rounded-full border text-[11px] font-bold transition-colors ${startDistrict === d.id ? 'border-cyan-300 bg-cyan-400/25 text-cyan-100' : 'border-slate-600 bg-slate-900/60 text-slate-300 hover:border-cyan-500/60'}`}
+                    >
+                      {d.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           ) : (
             <div className="mt-10 w-72">
               <div className="text-cyan-300/80 text-xs tracking-[0.3em] mb-2 text-center">
@@ -1780,7 +1809,7 @@ export default function App() {
               <div className="text-[11px] tracking-[0.3em] text-cyan-300 font-bold">YOUR GOAL</div>
               <div className="text-slate-200 text-sm mt-2 leading-relaxed text-left">
                 • Take <b className="text-cyan-300">jobs</b> at the glowing garage beam — earn cash, level up<br />
-                • Locked districts open as you <b className="text-amber-300">level up</b><br />
+                • All five districts are <b className="text-amber-300">open</b> — pick one on the map<br />
                 • <b className="text-fuchsia-300">Map icon</b> = tactical view · pause sits top-center<br />
                 • If the <b className="text-red-400">PATROL ★</b> light up… <b className="text-red-300">don't stop</b>
               </div>
@@ -1931,6 +1960,13 @@ export default function App() {
                 </button>
               </div>
               <canvas ref={tacMapRef} className="block w-full" style={{ aspectRatio: '1 / 1' }} />
+              <div className="flex flex-wrap gap-1 p-1.5 bg-slate-100/95 border-t border-slate-300">
+                {DISTRICTS.map((d) => (
+                  <button key={d.id} onClick={() => goDistrict(d.id)} className="px-2 py-1 rounded-full bg-slate-800 text-white text-[10px] font-bold">
+                    {d.name}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         ) : (
@@ -1941,6 +1977,14 @@ export default function App() {
                 className="rounded-xl border border-slate-600/80 shadow-[0_0_60px_rgba(34,211,238,0.15)]"
                 style={{ width: 'min(94vw, 86vh)', height: 'min(94vw, 86vh)' }}
               />
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2 px-3 py-2 rounded-xl bg-slate-950/85 border border-slate-600/80 max-w-[94vw]">
+                <span className="text-[10px] tracking-[0.25em] text-slate-400">DRIVE TO</span>
+                {DISTRICTS.map((d) => (
+                  <button key={d.id} onClick={() => goDistrict(d.id)} className="px-3 py-1.5 rounded-full border border-cyan-400/60 text-cyan-100 text-xs font-bold hover:bg-cyan-400/20">
+                    {d.name}
+                  </button>
+                ))}
+              </div>
               <button
                 onClick={() => setOverlay(null)}
                 className="absolute top-3 right-3 sm:top-5 sm:right-5 w-10 h-10 rounded-full bg-slate-900/80 border border-slate-600 text-slate-300 hover:text-white text-xl"
@@ -1989,23 +2033,26 @@ export default function App() {
             {progressTab === 'districts' && (
               <>
                 <div className="text-xs text-slate-400 mb-3">
-                  Explore all five districts — each first visit pays a $100 discovery bonus
+                  All five districts are open. Pick one and drive there — each first visit pays a $100 discovery bonus.
                 </div>
                 <div className="flex flex-col gap-2">
                   {DISTRICTS.map((d) => {
                     const visited = save.districts.includes(d.id)
-                    const locked = save.level < d.minLevel
                     return (
-                      <div key={d.id} className={`rounded-lg border p-3 flex items-center justify-between ${visited ? 'border-cyan-400/60 bg-cyan-400/10' : locked ? 'border-slate-700 bg-slate-800/40 opacity-55' : 'border-slate-600 bg-slate-800/60'}`}>
-                        <div>
+                      <div key={d.id} className={`rounded-lg border p-3 flex items-center justify-between gap-3 ${visited ? 'border-cyan-400/60 bg-cyan-400/10' : 'border-slate-600 bg-slate-800/60'}`}>
+                        <div className="min-w-0">
                           <div className={`font-bold text-sm ${visited ? 'text-cyan-300' : 'text-slate-200'}`}>
                             {d.name} {visited && <span className="text-[10px] text-emerald-400 ml-1">✓ VISITED</span>}
                           </div>
                           <div className="text-[11px] text-slate-400 mt-0.5">{d.desc}</div>
                         </div>
-                        <div className="text-[11px] font-bold text-right">
-                          {locked ? <span className="text-red-400">LV {d.minLevel}</span> : <span className="text-emerald-400">OPEN</span>}
-                        </div>
+                        {screen === 'game' ? (
+                          <button onClick={() => goDistrict(d.id)} className="shrink-0 px-3 py-1.5 text-[11px] font-black tracking-wider border border-cyan-400/70 text-cyan-200 rounded-lg hover:bg-cyan-400/15">
+                            DRIVE HERE
+                          </button>
+                        ) : (
+                          <span className="shrink-0 text-[11px] font-bold text-emerald-400">OPEN</span>
+                        )}
                       </div>
                     )
                   })}
