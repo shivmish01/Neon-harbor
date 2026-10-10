@@ -13,6 +13,7 @@ import {
   type Skin, type Theme, type UpgradeId,
 } from './game/content'
 import { loadSave, persistSave, defaultSave, type SaveData } from './game/save'
+import { CREWS, CREW_STEPS, HOME_TURF_BONUS, crewFor, crewRep, districtOwned, districtsOwned } from './game/crews'
 import { VPlay, type VPlayInit, type PurchaseResult } from './vplay/sdk'
 import { BUILD_HASH, BUILD_TIME } from './gen-build'
 import HowToPlay from './components/HowToPlay'
@@ -749,6 +750,10 @@ export default function App() {
   const goDistrict = (id: string) => {
     if (engineRef.current?.travelToDistrict(id)) setOverlay(null)
   }
+  /** Take on the next challenge of the crew that runs a district. */
+  const challengeCrew = (id: string) => {
+    if (engineRef.current?.startCrewChallenge(id)) setOverlay(null)
+  }
 
   const buyItem = (id: string, price: number, premium: boolean, minLevel: number) => {
     const engine = engineRef.current
@@ -1004,6 +1009,11 @@ export default function App() {
                   style={{ width: `${loadPct}%` }}
                 />
               </div>
+            </div>
+          )}
+          {save.tutorialDone && (
+            <div className="mt-3 text-xs text-amber-300/90 tracking-wide text-center px-3 max-w-sm">
+              ⚔️ Districts taken {districtsOwned(save.crews)}/{CREWS.length} — rival crews are waiting: Pause › Districts & Crews
             </div>
           )}
           {/* Night Shift on the FIRST screen too: a returning player sees
@@ -1877,6 +1887,7 @@ export default function App() {
           <h2 className="text-4xl font-black text-white tracking-[0.3em] mb-8 shrink-0">PAUSED</h2>
           <div className="flex flex-col gap-3 w-64 shrink-0 menu-col" onClick={(e) => e.stopPropagation()}>
             <button onClick={() => setOverlay(null)} className="menu-btn menu-btn-primary btn-attend">RESUME</button>
+            <button onClick={() => { setProgressTab('districts'); setOverlay('progress') }} className="menu-btn border-amber-400/60 text-amber-200">⚔️ DISTRICTS &amp; CREWS</button>
             <button onClick={() => setOverlay('shop')} className="menu-btn">GARAGE SHOP</button>
             <button onClick={() => setOverlay('help')} className="menu-btn">HOW TO PLAY</button>
             <button
@@ -1966,6 +1977,9 @@ export default function App() {
                     {d.name}
                   </button>
                 ))}
+                <button onClick={() => { setProgressTab('districts'); setOverlay('progress') }} className="px-2 py-1 rounded-full bg-amber-600 text-white text-[10px] font-bold">
+                  ⚔️ Crews {districtsOwned(save.crews)}/{CREWS.length}
+                </button>
               </div>
             </div>
           </div>
@@ -1981,9 +1995,12 @@ export default function App() {
                 <span className="text-[10px] tracking-[0.25em] text-slate-400">DRIVE TO</span>
                 {DISTRICTS.map((d) => (
                   <button key={d.id} onClick={() => goDistrict(d.id)} className="px-3 py-1.5 rounded-full border border-cyan-400/60 text-cyan-100 text-xs font-bold hover:bg-cyan-400/20">
-                    {d.name}
+                    {districtOwned(save.crews, d.id) ? '👑 ' : ''}{d.name}
                   </button>
                 ))}
+                <button onClick={() => { setProgressTab('districts'); setOverlay('progress') }} className="px-3 py-1.5 rounded-full border border-amber-400/70 text-amber-200 text-xs font-bold hover:bg-amber-400/20">
+                  ⚔️ Crews {districtsOwned(save.crews)}/{CREWS.length}
+                </button>
               </div>
               <button
                 onClick={() => setOverlay(null)}
@@ -2033,7 +2050,8 @@ export default function App() {
             {progressTab === 'districts' && (
               <>
                 <div className="text-xs text-slate-400 mb-3">
-                  All five districts are open. Pick one and drive there — each first visit pays a $100 discovery bonus.
+                  All five districts are open. Each outer district is run by a rival crew — beat its {CREW_STEPS} challenges to take it
+                  ({districtsOwned(save.crews)}/{CREWS.length} taken). A district you own pays +{Math.round(HOME_TURF_BONUS * 100)}% on every contract there.
                 </div>
                 <div className="flex flex-col gap-2">
                   {DISTRICTS.map((d) => {
@@ -2045,13 +2063,38 @@ export default function App() {
                             {d.name} {visited && <span className="text-[10px] text-emerald-400 ml-1">✓ VISITED</span>}
                           </div>
                           <div className="text-[11px] text-slate-400 mt-0.5">{d.desc}</div>
+                          {(() => {
+                            const crew = crewFor(d.id)
+                            if (!crew) return <div className="text-[11px] text-cyan-300/80 mt-1">Garage 97 — your home base</div>
+                            const rep = crewRep(save.crews, d.id)
+                            const owned = districtOwned(save.crews, d.id)
+                            return (
+                              <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+                                <span className="flex gap-1" aria-label={`${rep} of ${CREW_STEPS} challenges beaten`}>
+                                  {Array.from({ length: CREW_STEPS }, (_, i) => (
+                                    <span key={i} className="w-2.5 h-2.5 rounded-full border" style={{ borderColor: crew.color, background: i < rep ? crew.color : 'transparent' }} />
+                                  ))}
+                                </span>
+                                <span className="text-[11px] font-bold" style={{ color: owned ? '#34d399' : crew.color }}>
+                                  {owned ? '👑 YOURS — Home Turf bonus active' : `${crew.name} · boss ${crew.boss} · next: ${crew.steps[rep].title}`}
+                                </span>
+                              </div>
+                            )
+                          })()}
                         </div>
                         {screen === 'game' ? (
-                          <button onClick={() => goDistrict(d.id)} className="shrink-0 px-3 py-1.5 text-[11px] font-black tracking-wider border border-cyan-400/70 text-cyan-200 rounded-lg hover:bg-cyan-400/15">
-                            DRIVE HERE
-                          </button>
+                          <div className="shrink-0 flex flex-col gap-1.5 items-stretch">
+                            {crewFor(d.id) && !districtOwned(save.crews, d.id) && (
+                              <button onClick={() => challengeCrew(d.id)} className="px-3 py-1.5 text-[11px] font-black tracking-wider border border-amber-400/80 text-amber-200 rounded-lg hover:bg-amber-400/15">
+                                ⚔️ CHALLENGE {crewRep(save.crews, d.id) + 1}/{CREW_STEPS}
+                              </button>
+                            )}
+                            <button onClick={() => goDistrict(d.id)} className="px-3 py-1.5 text-[11px] font-black tracking-wider border border-cyan-400/70 text-cyan-200 rounded-lg hover:bg-cyan-400/15">
+                              DRIVE HERE
+                            </button>
+                          </div>
                         ) : (
-                          <span className="shrink-0 text-[11px] font-bold text-emerald-400">OPEN</span>
+                          <span className="shrink-0 text-[11px] font-bold text-emerald-400">{districtOwned(save.crews, d.id) ? 'YOURS' : 'OPEN'}</span>
                         )}
                       </div>
                     )

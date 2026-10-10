@@ -10,6 +10,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { getSkin, getTheme, ACHIEVEMENTS, DISTRICTS, districtAt, ENGINE_MUL, NITRO_REGEN_MUL, NITRO_DRAIN_MUL, TIRES_MUL, ARMOR_MUL, LAUNCH_MUL, HORN_RANGE } from './content'
+import { CREW_STEPS, HOME_TURF_BONUS, crewFor, crewRep, districtOwned, districtsOwned } from './crews'
 import { grantXp, xpForLevel, type SaveData, type ShiftGoal } from './save'
 import { Synth } from './audio'
 import { cloneCar, cloneCharacter, CITY_BY_KIND, type GameAssets } from './assets'
@@ -5092,12 +5093,17 @@ export class GameEngine {
   // =============== MISSIONS ===============
   /** Road point that respects district gates: resamples until the target lies in
       a district the player's level can enter (missions must always be reachable). */
+  /** While a crew challenge is being laid out, its beacons stay in that district. */
+  private missionDistrictHint: string | null = null
   private openPoint(rand: () => number, from: THREE.Vector3, dist: number): THREE.Vector3 {
     const save = this.hooks.getSave()
+    const want = this.missionDistrictHint
     let p = roadPoint(rand, from, dist)
-    for (let i = 0; i < 10; i++) {
+    // A district holds ~12 of the map's 100 junctions and the distance rule
+    // rejects some of those, so a crew layout needs many more draws to stay home.
+    for (let i = 0; i < (want ? 400 : 10); i++) {
       const d = districtAt(p.x, p.z)
-      if (!d || save.level >= d.minLevel) return p
+      if (want ? d?.id === want : !d || save.level >= d.minLevel) return p
       p = roadPoint(rand, from, dist)
     }
     return p
@@ -5172,9 +5178,67 @@ export class GameEngine {
   }
 
   /** End any mission and clean up its world attachments (waiting passengers etc.). */
+  /** The rival-crew challenge the current mission belongs to, if any. */
+  private crewJob: { district: string; step: number } | null = null
+
+  /** Start the next challenge of the crew that holds `districtId`. The player
+      is moved into the district first; the mission's beacons stay inside it. */
+  startCrewChallenge(districtId: string): boolean {
+    const crew = crewFor(districtId)
+    const save = this.hooks.getSave()
+    if (!crew) return false
+    const step = crewRep(save.crews, districtId)
+    if (step >= CREW_STEPS) {
+      this.hooks.onToast(`${crew.name} already answer to you — this district is yours`, 'info')
+      return false
+    }
+    if (!this.travelToDistrict(districtId)) return false
+    const def = crew.steps[step]
+    this.missionDistrictHint = districtId
+    this.startMission(def.kind, [...def.mods])
+    this.missionDistrictHint = null
+    // startMission clears any previous mission (and with it the crew job),
+    // so the job is tagged only after the new mission exists
+    this.crewJob = { district: districtId, step }
+    if (this.mission) this.mission.name = `${crew.name} ${step + 1}/${CREW_STEPS} — ${def.title}`
+    this.hooks.onToast(`⚔️ ${crew.name.toUpperCase()} · ${def.title} — ${def.brief}`, 'warn')
+    return true
+  }
+
+  /** A crew challenge was won: bank the step, and on the fifth take the district. */
+  private crewOnMissionDone(): void {
+    const job = this.crewJob
+    if (!job) return
+    const crew = crewFor(job.district)
+    const save = this.hooks.getSave()
+    if (!crew) return
+    if (!save.crews) save.crews = {}
+    // Only the next unbeaten step counts — replaying an old one changes nothing
+    if (crewRep(save.crews, job.district) !== job.step) return
+    save.crews[job.district] = job.step + 1
+    this.hooks.onToast(crew.steps[job.step].win, 'good')
+    this.grantXp(200)
+    if (job.step + 1 >= CREW_STEPS) {
+      const dName = DISTRICTS.find((d) => d.id === job.district)?.name ?? 'The district'
+      this.grantCash(crew.takeoverCash)
+      this.grantXp(800)
+      this.synth.missionDone()
+      this.hooks.onToast(`👑 ${dName.toUpperCase()} IS YOURS — ${crew.name} stand down. +$${crew.takeoverCash.toLocaleString()} · Home Turf +${Math.round(HOME_TURF_BONUS * 100)}% pay here`, 'good')
+      this.hooks.onMilestone?.(`crew.${job.district}.taken`)
+      if (districtsOwned(save.crews) >= 4) {
+        this.hooks.onToast('🌃 THE WHOLE HARBOR IS YOURS — every crew answers to you. Legend.', 'good')
+        this.hooks.onMilestone?.('crew.all')
+      }
+    } else {
+      this.hooks.onToast(`${crew.name}: ${job.step + 1}/${CREW_STEPS} beaten — next challenge: Pause › Districts & Crews`, 'info')
+    }
+    this.hooks.commit()
+  }
+
   private clearMission(): void {
     const m = this.mission
     if (m && m.kind === 'taxi' && m.passenger) this.scene.remove(m.passenger)
+    this.crewJob = null
     this.mission = null
     this.markerBeacon.visible = false
     this.credMissionBanked = 0 // contract-scoped cred bonus resets with the job
@@ -5367,6 +5431,7 @@ export class GameEngine {
 
   /** Contract-finish hooks shared by all four job types. */
   private shiftOnMissionDone(m: Mission): void {
+    this.crewOnMissionDone()
     if (this.missionPeakStars >= 2) this.bumpGoal('hot2star')
     if (this.missionPeakStars >= 3) this.hooks.onMilestone?.('heat.payout3')
     if (m.mods.includes('fragile')) {
@@ -5405,6 +5470,10 @@ export class GameEngine {
       }
     }
     let modMult = 1
+    // Home Turf: contracts finished inside a district you took from its crew
+    const here = districtAt(this.pos.x, this.pos.z)
+    const homeTurf = !!here && districtOwned(this.hooks.getSave().crews, here.id)
+    if (homeTurf) modMult += HOME_TURF_BONUS
     if (mods.includes('rush')) modMult += 0.5
     if (mods.includes('hot')) modMult += 0.3
     if (mods.includes('clean')) {
@@ -5415,6 +5484,7 @@ export class GameEngine {
     const cp = this.credPayPct()
     const fragileMul = mods.includes('fragile') ? Math.max(0, 1 - 0.1 * hits) : 1
     const final = Math.round(effBase * modMult * hm * (1 + cp / 100) * fragileMul)
+    if (homeTurf) parts.push(`👑Home Turf +${Math.round(HOME_TURF_BONUS * 100)}%`)
     if (mods.includes('rush')) parts.push('⚡Rush +50%')
     if (mods.includes('hot')) parts.push('🔥Hot +30%')
     if (mods.includes('clean') && hits === 0) parts.push('🌙Clean +25%')
@@ -6023,17 +6093,29 @@ export class GameEngine {
     const TINTS = ['rgba(34,211,238,0.10)', 'rgba(167,139,250,0.10)', 'rgba(74,222,128,0.10)', 'rgba(251,191,36,0.12)', 'rgba(244,114,182,0.10)']
     DISTRICTS.forEach((d, idx) => {
       const locked = save.level < d.minLevel
+      const crew = crewFor(d.id)
+      const owned = districtOwned(save.crews, d.id)
       const x = toPx(d.minX), y = toPx(d.minZ)
       const w = (d.maxX - d.minX) * scale, h = (d.maxZ - d.minZ) * scale
-      ctx.fillStyle = locked ? 'rgba(255,51,85,0.08)' : TINTS[idx % TINTS.length]
+      // Taken districts glow in the player's underglow colour
+      const mine = `#${getSkin(save.skin).glow.toString(16).padStart(6, '0')}`
+      ctx.fillStyle = owned ? mine : locked ? 'rgba(255,51,85,0.08)' : TINTS[idx % TINTS.length]
+      ctx.globalAlpha = owned ? 0.22 : 1
       ctx.fillRect(x, y, w, h)
-      ctx.strokeStyle = locked ? 'rgba(220,60,90,0.5)' : 'rgba(100,116,139,0.35)'
-      ctx.lineWidth = Math.max(S * 0.0012, 1)
+      ctx.globalAlpha = 1
+      ctx.strokeStyle = owned ? mine : crew ? crew.color : locked ? 'rgba(220,60,90,0.5)' : 'rgba(100,116,139,0.35)'
+      ctx.lineWidth = Math.max(S * (owned ? 0.004 : crew ? 0.0025 : 0.0012), 1)
       ctx.setLineDash([S * 0.012, S * 0.008])
       ctx.strokeRect(x, y, w, h)
       ctx.setLineDash([])
       // white pill behind the name so it reads over any terrain, AMap-style
-      const label = locked ? `\u{1F512} ${d.name.toUpperCase()} \u00b7 LVL ${d.minLevel}` : d.name.toUpperCase()
+      const label = locked
+        ? `\u{1F512} ${d.name.toUpperCase()} \u00b7 LVL ${d.minLevel}`
+        : owned
+          ? `\u{1F451} ${d.name.toUpperCase()} \u00b7 YOURS`
+          : crew
+            ? `${d.name.toUpperCase()} \u00b7 ${crew.name.toUpperCase()} ${crewRep(save.crews, d.id)}/${CREW_STEPS}`
+            : d.name.toUpperCase()
       ctx.font = `bold ${Math.max(S * 0.02, 9)}px system-ui, sans-serif`
       const tw = ctx.measureText(label).width
       ctx.fillStyle = 'rgba(255,255,255,0.85)'
