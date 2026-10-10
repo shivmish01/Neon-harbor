@@ -1158,9 +1158,9 @@ export default function App() {
                     <span className="flex items-center gap-2">
                       {!isTouch && <span className="text-slate-500 hidden sm:inline">press T to skip</span>}
                       <button
-                        onClick={() => setTutorialHidden(true)}
+                        onClick={() => { engineRef.current?.skipTutorial(); setTutorialHidden(true) }}
                         className="text-slate-400 hover:text-white leading-none pointer-events-auto"
-                        aria-label="Hide tutorial"
+                        aria-label="Skip tutorial"
                       >✕</button>
                     </span>
                   </div>
@@ -1246,9 +1246,9 @@ export default function App() {
                   <div className="flex justify-between items-center text-[9px] tracking-[0.2em] text-cyan-300">
                     <span>FIRST NIGHT {hud.tutorial.step}/{hud.tutorial.total}</span>
                     <button
-                      onClick={() => setTutorialHidden(true)}
+                      onClick={() => { engineRef.current?.skipTutorial(); setTutorialHidden(true) }}
                       className="text-slate-400 hover:text-white leading-none pointer-events-auto"
-                      aria-label="Hide tutorial"
+                      aria-label="Skip tutorial"
                     >✕</button>
                   </div>
                   <div className="nc-title text-white font-bold leading-snug text-[11px] mt-0.5">{touchTitle(hud.tutorial.title)}</div>

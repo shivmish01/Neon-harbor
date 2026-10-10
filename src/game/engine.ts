@@ -402,6 +402,10 @@ export class GameEngine {
   private tutSnapShards = -1
   private tutSnapDeliveries = 0
   private tutSnapRaces = 0
+  // Seconds of real driving while the First Night guide is still unfinished.
+  // At TUT_AUTO_GRAD the training wheels come off automatically — nobody
+  // drives consequence-free forever just because they never read the card.
+  private tutDriveTime = 0
   private mission: Mission | null = null
   private nearGarage = false
   private camDist = 10
@@ -3547,16 +3551,7 @@ export class GameEngine {
     // 'h' horn: direct blast here (covers touchTap from the mobile HORN button);
     // the keys-set edge detect in updateCar covers held keys — hornCd dedupes.
     if (k === 'h') this.hornBlast()
-    if (k === 't' && !this.attract && !this.paused) {
-      const s = this.hooks.getSave()
-      if (!s.tutorialDone) {
-        s.tutorialDone = true
-        this.hooks.commit()
-        this.heatGraceUntil = this.time + 60
-        this.hooks.onToast('Tutorial skipped — the whole city is open. ESC opens the menu.', 'info')
-        this.hooks.onToast('The Patrol looks the other way for your first 60 seconds.', 'info')
-      }
-    }
+    if (k === 't' && !this.attract && !this.paused) this.skipTutorial()
     if (['arrowup', 'arrowdown', ' '].includes(k)) e.preventDefault()
   }
 
@@ -3594,6 +3589,25 @@ export class GameEngine {
   touchTap(k: string): void { this.onKeyDown(new KeyboardEvent('keydown', { key: k })) }
   /** React onboarding tour is on screen → hide & freeze the FIRST NIGHT tutorial */
   setOnboardingActive(v: boolean): void { this.onboardingActive = v }
+  /** Graduate from the First Night guide for good: damage can WRECK the car
+      and the Patrol wakes up (after a 60s grace). Reached three ways: the T
+      key (desktop), the guide card's ✕ (touch + desktop), and the 3-minute
+      auto-graduation in update() for players who never touch either. Until
+      this fires, damage caps at 60% and heat stays off — a player stuck here
+      can never see a game over, which read as "the game has no fail state". */
+  skipTutorial(auto = false): void {
+    const s = this.hooks.getSave()
+    if (s.tutorialDone) return
+    s.tutorialDone = true
+    this.hooks.commit()
+    this.heatGraceUntil = this.time + 60
+    if (auto) {
+      this.hooks.onToast('First Night over — training wheels off. Wrecks and the Patrol are real now.', 'info')
+    } else {
+      this.hooks.onToast('Tutorial skipped — the whole city is open.', 'info')
+      this.hooks.onToast('The Patrol looks the other way for your first 60 seconds.', 'info')
+    }
+  }
   /** UI platform for wording (toasts): touch vs desktop */
   setUiTouch(v: boolean): void { this.uiTouch = v }
 
@@ -3714,6 +3728,13 @@ export class GameEngine {
   }
 
   private update(dt: number): void {
+    // First Night auto-graduation: 3 minutes of real driving and the training
+    // wheels come off even if the guide was never finished or dismissed —
+    // otherwise a player who ignores the card can never WRECK or get BUSTED.
+    if (!this.hooks.getSave().tutorialDone && !this.attract && !this.onboardingActive && !this.paused) {
+      this.tutDriveTime += dt
+      if (this.tutDriveTime > 180) this.skipTutorial(true)
+    }
     this.updateCar(dt)
     this.updateTraffic(dt)
     this.updateRoadEvents(dt)
