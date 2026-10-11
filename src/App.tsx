@@ -60,6 +60,10 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([])
   const [bustedFlash, setBustedFlash] = useState(false)
   const [wreckFlash, setWreckFlash] = useState(false)
+  // Crash feedback: timestamp of the last damage spike (drives a short red
+  // edge flash). lastDamageRef tracks the previous frame's body damage.
+  const [dmgFlash, setDmgFlash] = useState(0)
+  const lastDamageRef = useRef(0)
   // Mission-complete result banner — carries the 📷 photo button on mobile
   const [winBanner, setWinBanner] = useState<{ name: string; reward: number } | null>(null)
   const [confirmReset, setConfirmReset] = useState(false)
@@ -363,7 +367,17 @@ export default function App() {
     const engine = new GameEngine(canvas, minimap, {
       getSave: () => saveRef.current,
       commit,
-      onHud: (h) => setHud(h),
+      onHud: (h) => {
+        // Damage spike → one short red edge flash, so a dent is FELT even with
+        // eyes on the road (no text, no overlay). Repairs lower damage — no flash.
+        if (h.damage > lastDamageRef.current + 1.5) {
+          lastDamageRef.current = h.damage
+          setDmgFlash(Date.now())
+        } else {
+          lastDamageRef.current = h.damage
+        }
+        setHud(h)
+      },
       onToast: (msg, kind) => pushToast(msg, kind),
       onBusted: () => {
         setBustedFlash(true)
@@ -1420,12 +1434,14 @@ export default function App() {
                     </div>
                   </div>
                 )}
-                {hud.damage > 15 && (
+                {hud.damage > 0 && (
                   <div className="mt-1.5">
                     <div className="w-48 h-1.5 bg-slate-800 rounded">
-                      <div className={`h-full rounded ${hud.damage > 80 ? 'bg-red-500' : hud.damage > 50 ? 'bg-amber-400' : 'bg-slate-400'}`} style={{ width: `${hud.damage}%` }} />
+                      <div className={`h-full rounded ${hud.damage > 80 ? 'bg-red-500 nh-dmg-bar-crit' : hud.damage > 50 ? 'bg-amber-400' : 'bg-slate-400'}`} style={{ width: `${hud.damage}%` }} />
                     </div>
-                    <div className={`text-[10px] mt-0.5 ${hud.damage > 80 ? 'text-red-400 font-bold' : 'text-amber-300'}`}>🔧 BODY {hud.damage}% — repair at the garage</div>
+                    <div className={`text-[10px] mt-0.5 ${hud.damage > 80 ? 'text-red-400 font-bold nh-dmg-text-crit' : hud.damage > 50 ? 'text-amber-300' : 'text-slate-400'}`}>
+                      {hud.damage > 80 ? `🔧 BODY ${hud.damage}% — CRITICAL: one hard hit and she burns` : hud.damage > 50 ? `🔧 BODY ${hud.damage}% — repair at the garage` : `🔧 BODY ${hud.damage}%`}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1460,13 +1476,13 @@ export default function App() {
                   </div>
                 </>
               )}
-              {hud.damage > 15 && (
+              {hud.damage > 0 && (
                 <div className="flex items-center gap-1 pointer-events-none">
                   <span className="text-[10px]">🔧</span>
                   <div className="w-16 h-1 bg-white/10 rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full ${hud.damage > 80 ? 'bg-red-500' : 'bg-amber-400'}`} style={{ width: `${hud.damage}%` }} />
+                    <div className={`h-full rounded-full ${hud.damage > 80 ? 'bg-red-500 nh-dmg-bar-crit' : hud.damage > 50 ? 'bg-amber-400' : 'bg-slate-300/70'}`} style={{ width: `${hud.damage}%` }} />
                   </div>
-                  <span className={`text-[9px] font-bold drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] ${hud.damage > 80 ? 'text-red-400' : 'text-amber-300'}`}>{hud.damage}%</span>
+                  <span className={`text-[9px] font-bold drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] ${hud.damage > 80 ? 'text-red-400 nh-dmg-text-crit' : hud.damage > 50 ? 'text-amber-300' : 'text-slate-300'}`}>{hud.damage}%</span>
                 </div>
               )}
             </div>
@@ -1620,6 +1636,16 @@ export default function App() {
                 </div>
               </div>
             </div>
+          )}
+
+          {/* crash feedback: a short red rim flash on every damaging hit —
+              felt at the edges of vision, never covering the road */}
+          {dmgFlash > 0 && (
+            <div key={dmgFlash} className="nh-dmg-flash absolute inset-0 z-30 pointer-events-none" />
+          )}
+          {/* critical body (>80%): soft pulsing red rim until repaired */}
+          {hud && hud.damage > 80 && !hud.wrecked && (
+            <div className="nh-dmg-crit absolute inset-0 z-30 pointer-events-none" />
           )}
 
           {/* WRECKED — explosion flash, then the game-over tow card */}

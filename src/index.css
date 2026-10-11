@@ -367,6 +367,37 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ============ Body-damage feedback (racing-game language, no text) ============ */
+/* One short red rim flash per damaging hit — felt at the edge of vision */
+@keyframes nh-dmg-flash {
+  0% { opacity: 0.55; }
+  100% { opacity: 0; }
+}
+.nh-dmg-flash {
+  box-shadow: inset 0 0 90px 30px rgba(239, 68, 68, 0.55);
+  animation: nh-dmg-flash 0.45s ease-out forwards;
+}
+/* Critical body (>80%): soft pulsing red rim until repaired */
+@keyframes nh-dmg-crit {
+  0%, 100% { opacity: 0.22; }
+  50% { opacity: 0.55; }
+}
+.nh-dmg-crit {
+  box-shadow: inset 0 0 110px 24px rgba(239, 68, 68, 0.5);
+  animation: nh-dmg-crit 1.1s ease-in-out infinite;
+}
+/* Critical gauge: the bar glows and the label breathes */
+@keyframes nh-dmg-bar-crit {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.7); }
+}
+.nh-dmg-bar-crit { animation: nh-dmg-bar-crit 0.9s ease-in-out infinite; }
+@keyframes nh-dmg-text-crit {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.nh-dmg-text-crit { animation: nh-dmg-text-crit 0.9s ease-in-out infinite; }
+
 /* ============ CoD-style swipe steering (right-half drag surface) ============ */
 .swipe-zone {
   position: absolute;
