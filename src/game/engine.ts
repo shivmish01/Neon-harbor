@@ -2196,6 +2196,11 @@ export class GameEngine {
   /** the most recent damaging hit — attributed on the WRECKED card */
   private lastHitKmh = 0
   private lastHitCause = ''
+  /** real-time seconds of kill-cam slow motion left after the explosion */
+  private slowmoT = 0
+  /** beach hint: edge-trigger + 45s cooldown so the toast never nags */
+  private onSand = false
+  private sandHintT = 0
   private baseBodyColor = new THREE.Color(0x8a93a6)
   private hornHeld = false
   private hornCd = 0
@@ -3682,7 +3687,7 @@ export class GameEngine {
     if (now - this.lastRenderT < 1000 / cap - 0.2) return
     this.lastRenderT = now
     this.timer.update()
-    const dt = Math.min(this.timer.getDelta(), 0.05)
+    let dt = Math.min(this.timer.getDelta(), 0.05)
     // NaN watchdog: a bad physics step must never poison the whole session —
     // reset the car to the garage instead of crashing the audio/render pipeline
     if (!Number.isFinite(this.pos.x + this.pos.z + this.vel.x + this.vel.z)) {
@@ -3693,6 +3698,9 @@ export class GameEngine {
     if (!this.paused) {
       if (this.photoMode) this.updatePhotoCamera()
       else {
+        // Kill-cam slow motion: the wreck explosion plays at quarter speed so
+        // the player SEES the car die before the WRECKED card drops in.
+        if (this.slowmoT > 0) { this.slowmoT -= dt; dt *= 0.25 }
         this.time += dt
         this.update(dt)
       }
@@ -4070,6 +4078,17 @@ export class GameEngine {
       // car to a standstill.
       const drag = onRoad ? 0.38 : 1.2
       this.vel.multiplyScalar(Math.exp(-dt * drag))
+      // Beach nudge: sand is a playground, never a trap — but a one-line toast
+      // (rate-limited, notification column, zero overlay) points the player
+      // back to the asphalt the first time they hit the beach.
+      const outCity = Math.abs(this.pos.x) > HALF + 2 || Math.abs(this.pos.z) > HALF + 2
+      const onSand = outCity && !onRoad
+      this.sandHintT -= dt
+      if (onSand && !this.onSand && this.sandHintT <= 0 && Math.abs(s) > 3 && !this.attract && !this.wrecked) {
+        this.hooks.onToast('🏖️ Sand eats your speed — the road is where she flies', 'info')
+        this.sandHintT = 45
+      }
+      this.onSand = onSand
       // Stuck detection — NET-PROGRESS based, so it can never interrupt a car
       // that is actually moving. Samples every 0.75s: gas held + barely moved
       // this sample → possible wedge. But if the car has made >4u of NET ground
@@ -4367,6 +4386,7 @@ export class GameEngine {
     if (this.wrecked) return
     this.wrecked = true
     this.wreckBurnT = 0
+    this.slowmoT = 1.4 // kill-cam: explosion plays in slow motion before the card
     this.synth.explosion()
     this.shake = 1.6
     this.speakPanic(true)
@@ -5809,6 +5829,18 @@ export class GameEngine {
       this.camera.position.lerp(target, 1 - Math.exp(-dt * 2))
       this.camera.lookAt(0, 8, 0)
       this.camera.fov += (58 - this.camera.fov) * Math.min(dt * 2, 1)
+      this.camera.updateProjectionMatrix()
+      return
+    }
+    if (this.wrecked) {
+      // Kill-cam: slow push-in orbit around the burning wreck, tight FOV —
+      // the player watches the car die instead of being ambushed by a card.
+      const t = this.time * 0.55
+      const side = new THREE.Vector3(Math.cos(t), 0, Math.sin(t))
+      const target = this.pos.clone().addScaledVector(side, -7.5).add(new THREE.Vector3(0, 2.4, 0))
+      this.camera.position.lerp(target, 1 - Math.exp(-dt * 2.4))
+      this.camera.lookAt(this.pos.x, 1.1, this.pos.z)
+      this.camera.fov += (44 - this.camera.fov) * Math.min(dt * 3, 1)
       this.camera.updateProjectionMatrix()
       return
     }
