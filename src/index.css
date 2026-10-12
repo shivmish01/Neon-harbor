@@ -746,6 +746,17 @@
   100% { transform: scale(1); }
 }
 
+/* WRECKED overlay: hold back ~1.6s so the player SEES the explosion and the
+   burning car before the game-over card drops in — the wreck must read as
+   "my crashes did this", never as a random stop on an open road. */
+.nh-wreck-in {
+  animation: nh-wreck-in 0.6s ease-out 1.6s backwards;
+}
+@keyframes nh-wreck-in {
+  0% { opacity: 0; transform: scale(1.06); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
 
 /* ============ Touch controls (mobile / tablet) — Asphalt 9 glass style ============
    Reference: Asphalt Legends TouchDrive HUD — icon-only circular glass buttons,

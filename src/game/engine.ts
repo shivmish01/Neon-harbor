@@ -60,6 +60,10 @@ export interface HudState {
   damage: number
   /** car exploded at 100% damage — game over overlay, tow to garage */
   wrecked: boolean
+  /** the hit that did the most recent damage — shown on the WRECKED card so the
+      crash that killed the car is never a mystery ("killing blow: wall, ~62 km/h") */
+  lastHitKmh: number
+  lastHitCause: string
   /** car is wedged (gas held but no movement) — HUD offers the reset recovery */
   stuck: boolean
 }
@@ -2189,6 +2193,9 @@ export class GameEngine {
   private damageCommitAt = 0
   private wrecked = false
   private wreckBurnT = 0
+  /** the most recent damaging hit — attributed on the WRECKED card */
+  private lastHitKmh = 0
+  private lastHitCause = ''
   private baseBodyColor = new THREE.Color(0x8a93a6)
   private hornHeld = false
   private hornCd = 0
@@ -4250,7 +4257,7 @@ export class GameEngine {
           this.synth.thud()
           // Only a real crash (>14 km/h into the wall) dents the body — a
           // learner's low-speed nudges thud and shake but don't cost money.
-          if (impact > 4) this.addDamage(impact * 0.4)
+          if (impact > 4) { this.lastHitKmh = Math.round(impact * 3.6); this.lastHitCause = 'a wall'; this.addDamage(impact * 0.4) }
           this.emitPuff(
             this.pos.x + nx * 1.6, 0.5 + Math.random() * 0.4, this.pos.z + nz * 1.6,
             0xffd27d, 0.2 + Math.random() * 0.15, 0.25, true
@@ -4401,6 +4408,8 @@ export class GameEngine {
     save.damage = 45
     this.hooks.commit()
     this.wrecked = false
+    this.lastHitKmh = 0
+    this.lastHitCause = ''
     this.applyDamageLook()
     this.vel.set(0, 0, 0)
     this.heat = 0
@@ -4746,7 +4755,7 @@ export class GameEngine {
             this.synth.thud()
             // Traffic dents only above ~25 km/h closing speed (Kimi's tuning
             // run: slow city bumps were bankrupting careful-but-bad drivers).
-            if (impact > 7) this.addDamage(impact * 0.3)
+            if (impact > 7) { this.lastHitKmh = Math.round(impact * 3.6); this.lastHitCause = 'another car'; this.addDamage(impact * 0.3) }
             if (impact > 10 && this.heatAllowed) this.heat = Math.min(5, this.heat + 0.25)
           }
         }
@@ -5999,6 +6008,8 @@ export class GameEngine {
       boosting: this.boosting,
       damage: Math.round(this.damage),
       wrecked: this.wrecked,
+      lastHitKmh: this.lastHitKmh,
+      lastHitCause: this.lastHitCause,
       stuck: (this.stuckTime > 2 || this.stuckLatch > 0) && !this.busted,
     })
   }
@@ -7152,6 +7163,8 @@ export class GameEngine {
         p.walk.stop()
         p.idle?.stop()
         p.pausing = false
+        this.lastHitKmh = Math.round(this.vel.length() * 3.6)
+        this.lastHitCause = 'a pedestrian'
         this.vel.multiplyScalar(0.82)
         this.shake = Math.min(this.shake + 0.35, 0.8)
         if (this.heatAllowed) {

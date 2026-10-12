@@ -1653,12 +1653,17 @@ export default function App() {
             <div className="absolute inset-0 z-30 bg-orange-500/30 pointer-events-none" />
           )}
           {hud?.wrecked && (
-            <div className="absolute inset-0 z-40 bg-black/60 flex items-center justify-center">
+            <div className="nh-wreck-in absolute inset-0 z-40 bg-black/60 flex items-center justify-center">
               <div className="text-center busted-anim px-6">
                 <div className="text-6xl font-black text-orange-400 tracking-[0.3em] drop-shadow-[0_0_24px_rgba(255,122,26,0.8)]">WRECKED</div>
                 <div className="mt-3 text-slate-200 text-sm max-w-sm mx-auto leading-relaxed">
                   She took too much and went up in flames. The tow truck drags her back to the garage — patched up enough to limp, but she needs real repairs.
                 </div>
+                {hud.lastHitCause && (
+                  <div className="mt-3 text-orange-300/90 text-xs font-bold tracking-wider">
+                    💥 The killing blow — {hud.lastHitCause}{hud.lastHitKmh > 0 ? ` at ~${hud.lastHitKmh} km/h` : ''}.
+                  </div>
+                )}
                 <button
                   onClick={() => {
                     engineRef.current?.towToGarage()
