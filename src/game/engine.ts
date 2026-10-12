@@ -124,7 +124,7 @@ const SKY_TOPS: Record<string, number> = {
   day: 0x3f8ef0,
   golden: 0xc96a2e,
   sakura: 0x4a2b52,
-  midnight: 0x060a16,
+  midnight: 0x0b1730,
   acid: 0x0a1410,
 }
 
@@ -151,6 +151,9 @@ interface ThemeMix {
   foamNight: number
   cloudColor: number
   cloudOpacity: number
+  /** lane-marking paint (pale at night, dark by day) + sidewalk slab color */
+  lane: number
+  walk: number
 }
 
 interface Drone {
@@ -376,6 +379,8 @@ export class GameEngine {
   private ambient: THREE.HemisphereLight
   private moon: THREE.DirectionalLight
   private groundMat!: THREE.MeshStandardMaterial
+  private laneMat: THREE.MeshBasicMaterial | null = null
+  private walkMat: THREE.MeshStandardMaterial | null = null
 
   // Game state
   private heat = 0
@@ -857,6 +862,7 @@ export class GameEngine {
 
     // Lane markings
     const laneMat = new THREE.MeshBasicMaterial({ color: 0x3f4b66 })
+    this.laneMat = laneMat
     const laneGeomH = new THREE.BoxGeometry(SIZE, 0.02, 0.28)
     const laneGeomV = new THREE.BoxGeometry(0.28, 0.02, SIZE)
     for (let k = 0; k <= N; k++) {
@@ -872,6 +878,7 @@ export class GameEngine {
     // Sidewalk frames around every block
     const walkGeom = new THREE.BoxGeometry(1, 1, 1)
     const walkMat = new THREE.MeshStandardMaterial({ color: 0x1c2334, roughness: 0.9 })
+    this.walkMat = walkMat
     const walks = new THREE.InstancedMesh(walkGeom, walkMat, N * N * 4)
     const m4 = new THREE.Matrix4()
     let wi = 0
@@ -991,11 +998,13 @@ export class GameEngine {
         pos.set(p.x, -cm.minY * scl.y, p.z)
         m4.compose(pos, quat, scl)
         inst.setMatrixAt(idx, m4)
-        // District tint: cool blue downtown, gold-red Beijing, brick London, dusty construction
-        if (p.dist === 'downtown') col.setRGB(0.72 * p.tint, 0.82 * p.tint, 1.05 * p.tint)
-        else if (p.dist === 'beijing') col.setRGB(1.08 * p.tint, 0.84 * p.tint, 0.6 * p.tint)
-        else if (p.dist === 'london') col.setRGB(1.02 * p.tint, 0.66 * p.tint, 0.55 * p.tint)
-        else col.setRGB(0.86 * p.tint, 0.86 * p.tint, 0.8 * p.tint)
+        // District tint (Vibrant Night City pass): slate blue-grey base toward
+        // #202B40 — district moods stay (cool downtown, gold Beijing, brick
+        // London) but pulled down from flat beige to desaturated night-city.
+        if (p.dist === 'downtown') col.setRGB(0.52 * p.tint, 0.62 * p.tint, 0.84 * p.tint)
+        else if (p.dist === 'beijing') col.setRGB(0.82 * p.tint, 0.62 * p.tint, 0.44 * p.tint)
+        else if (p.dist === 'london') col.setRGB(0.76 * p.tint, 0.48 * p.tint, 0.4 * p.tint)
+        else col.setRGB(0.6 * p.tint, 0.62 * p.tint, 0.6 * p.tint)
         inst.setColorAt(idx, col)
       })
       inst.instanceMatrix.needsUpdate = true
@@ -3384,17 +3393,28 @@ export class GameEngine {
       moonI: t.moonIntensity,
       ground: t.ground,
       water: t.water,
-      cityEm: day ? 0.1 : 0.38,
+      // Facade self-glow pulled back (0.38 → 0.24): the full-texture emissive
+      // was washing every building back to beige at night, hiding the slate
+      // district tints. Window pixels are the brightest in the texture, so
+      // they still glow through at the lower intensity.
+      cityEm: day ? 0.1 : 0.24,
       skyEm: day ? 0.12 : 0.55,
       headSpot: day ? 0 : 260,
       winColor: day ? 0x46566e : 0xffffff,
       lens: day ? 0x9aa6ad : 0xffe2b0,
-      pool: day ? 0 : 0.15,
       glow: day ? 0 : 0.35,
       track: day ? 0 : t.id === 'golden' ? 0.5 : 0.38,
       foamNight: day ? 1 : 1.9,
       cloudColor: dayGolden ? 0xffffff : t.id === 'sakura' ? 0x5a4a6e : 0x1a2333,
       cloudOpacity: dayGolden ? 0.95 : t.id === 'sakura' ? 0.7 : 0.42,
+      // Vibrant Night City: pale cyan-white paint (#E8F0F7) on dark asphalt so
+      // markings stay readable at speed; dark paint by day on the light tarmac.
+      lane: day ? 0x46536b : 0xe8f0f7,
+      // Sidewalks must never merge with the road: clearly lighter blue-grey at
+      // night, slightly darker than the sunlit ground by day.
+      walk: day ? 0x6b7683 : 0x55616f,
+      // Warmer, more present streetlight pools on the night asphalt (#FFC16B).
+      pool: day ? 0 : 0.22,
     }
   }
 
@@ -3412,6 +3432,7 @@ export class GameEngine {
       lens: cl(a.lens, b.lens), pool: nm(a.pool, b.pool), glow: nm(a.glow, b.glow),
       track: nm(a.track, b.track), foamNight: nm(a.foamNight, b.foamNight),
       cloudColor: cl(a.cloudColor, b.cloudColor), cloudOpacity: nm(a.cloudOpacity, b.cloudOpacity),
+      lane: cl(a.lane, b.lane), walk: cl(a.walk, b.walk),
     }
   }
 
@@ -3451,6 +3472,8 @@ export class GameEngine {
     this.foamNight = m.foamNight
     this.cloudMat.color.setHex(m.cloudColor)
     this.cloudMat.opacity = m.cloudOpacity
+    if (this.laneMat) this.laneMat.color.setHex(m.lane)
+    if (this.walkMat) this.walkMat.color.setHex(m.walk)
   }
 
   /** Repaint the sky gradient for an in-between theme mix. */
@@ -6842,29 +6865,57 @@ export class GameEngine {
     const rand = seededRand(4321)
     const charKeys = Object.keys(this.assets.chars)
     if (charKeys.length === 0) return
-    // Muted, realistic street-wear palette — keeps the crowd from looking cartoonish
-    const tints = [0xb9bec6, 0x8f867b, 0x6d7683, 0x7d6f7a, 0x5f6b5d, 0x9c8f7d, 0x565e6b, 0xa89f8d, 0x4f5a67]
+    // Vibrant Night City crowd (QA brief 2026-10-12): real skin-tone variety,
+    // colorful street-wear from the brief's palette (teal, mustard, coral,
+    // orange, cream, denim, burgundy, lavender, olive), kids + seniors — and a
+    // faint self-glow on every material so people separate from the dark city.
+    const SKIN_TONES = [0xf2c9a0, 0xe8b98d, 0xd0a075, 0xb07d52, 0x8a5a38, 0x6b4226]
+    const SHIRTS = [0x2a9d8f, 0xd4a017, 0xff7f6b, 0xe76f51, 0xf1e3d3, 0x4a6fa5, 0x7b2d43, 0x9b8ac4, 0x6b7f4e, 0x3a86c8]
+    const KID_SHIRTS = [0xd4a017, 0xff7f6b, 0xe76f51, 0xf1e3d3, 0x48a9a6, 0x9b8ac4]
+    const PANTS = [0x3b4a63, 0x2f3542, 0x4a6fa5, 0x5b4a3a, 0x6b7f4e, 0x8a93a6]
+    const HAIR = [0x1d1512, 0x3b2a1e, 0x5a4230, 0x8a6d4b, 0x2b2b30]
+    const GREY_HAIR = [0xb9b3ad, 0xd8d2ca, 0x9aa0a5]
+    const pick = <T,>(arr: T[]): T => arr[Math.floor(rand() * arr.length)]
     for (let i = 0; i < STREET + BEACH; i++) {
       const beach = i >= STREET
       const key = charKeys[Math.floor(rand() * charKeys.length)]
       const { obj, clips } = cloneCharacter(this.assets, key)
-      // Realistic height spread 1.62–1.9m, feet on the ground (no clone-stamp crowd)
+      // Crowd mix: ~12% kids (1.12–1.38m, bright jackets), ~10% seniors
+      // (shorter, grey hair where the model has a hair material), rest adults.
+      const kid = rand() < 0.12
+      const senior = !kid && rand() < 0.11
       const bb = new THREE.Box3().setFromObject(obj)
       const h = bb.max.y - bb.min.y
-      const targetH = 1.62 + rand() * 0.28
+      const targetH = kid ? 1.12 + rand() * 0.26 : senior ? 1.55 + rand() * 0.15 : 1.58 + rand() * 0.37
       const s = h > 0.01 ? targetH / h : 1
       obj.scale.setScalar(s)
-      // Individual muted tint with slight brightness spread (materials are cloned)
-      const tint = new THREE.Color(tints[Math.floor(rand() * tints.length)])
-      tint.multiplyScalar(0.82 + rand() * 0.36)
+      // Semantic tinting: Quaternius cast has named materials (Skin/Shirt/
+      // Pants/Hair…); the Kenney kit splits body/head; single-mesh models get
+      // one vibrant outfit tint. Slight brightness jitter kills the clone-stamp.
+      const skin = new THREE.Color(pick(SKIN_TONES))
+      const shirt = new THREE.Color(kid ? pick(KID_SHIRTS) : pick(SHIRTS))
+      const pants = new THREE.Color(pick(PANTS))
+      const hair = new THREE.Color(senior ? pick(GREY_HAIR) : pick(HAIR))
+      const jitter = 0.9 + rand() * 0.25
       obj.traverse((o) => {
         const m = o as THREE.Mesh
-        if (m.isMesh) {
-          const src = m.material as THREE.MeshStandardMaterial
-          const mat = src.clone()
-          mat.color = tint.clone()
-          m.material = mat
-        }
+        if (!m.isMesh) return
+        const src = m.material as THREE.MeshStandardMaterial
+        const mat = src.clone()
+        const label = `${src.name} ${m.name}`.toLowerCase()
+        let tint: THREE.Color
+        if (/skin|head/.test(label)) tint = skin
+        else if (/hair/.test(label)) tint = hair
+        else if (/pant|trouser|skirt|shorts/.test(label)) tint = pants
+        else if (/eye/.test(label)) tint = new THREE.Color(0x2b2b2b)
+        else if (/shoe|sock/.test(label)) tint = kid ? new THREE.Color(0xe8e8e8) : pants
+        else if (/shirt|top|jacket|body/.test(label)) tint = shirt
+        else tint = shirt
+        mat.color = tint.clone().multiplyScalar(jitter)
+        // Cool night separation: a whisper of self-glow in the material's own
+        // hue (cheap stand-in for rim light — no extra lights for 130 peds).
+        mat.emissive = tint.clone().multiplyScalar(0.16)
+        m.material = mat
       })
       const wrap = new THREE.Group()
       obj.position.y = -bb.min.y * s

@@ -89,9 +89,12 @@ export const THEMES: Theme[] = [
   {
     id: 'midnight', name: 'Midnight Rain', desc: 'The classic. Neon reflections, warm rain.',
     price: 0, premium: false,
-    sky: 0x070a18, fog: 0x0d1226, fogDensity: 0.006,
+    // Vibrant Night City pass (QA brief 2026-10-12): asphalt lifted from
+    // near-black to readable charcoal #20242D, sky to deep navy #080F20 —
+    // night stays moody but roads, markings and props no longer crush to black.
+    sky: 0x080f20, fog: 0x101a30, fogDensity: 0.006,
     ambient: 0x41527a, ambientIntensity: 1.55, moon: 0x9cc0ff, moonIntensity: 1.1,
-    ground: 0x0d1120, water: 0x0d2c40, rain: true,
+    ground: 0x20242d, water: 0x0d2c40, rain: true,
   },
   {
     id: 'day', name: 'Harbor Day', desc: 'Bright sun, blue water, the port wide awake.',
