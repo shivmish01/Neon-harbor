@@ -240,6 +240,13 @@ export class GameEngine {
   // MOB-3: FPS watchdog — on touch devices, sustained low FPS steps quality
   // down (display scale first, then bloom + shadow resolution). Never re-raises.
   private autoQuality = false
+  /** Phones and tablets: a lighter render setup from the very first frame
+      (fewer lights, one shadow map, smaller buffers). Every extra light is
+      paid by every pixel of every lit surface, and mobile GPUs can't afford
+      the desktop rig — waiting for the watchdog meant seconds of stutter. */
+  private lowPower =
+    typeof window !== 'undefined' &&
+    (window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window)
   private fpsThreshold = 42
   private qualityLevel = 0
   private fpsAccum = 0
@@ -494,7 +501,7 @@ export class GameEngine {
       )
     }
     this.renderer = renderer
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.lowPower ? 1.25 : 1.5))
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.15
     // Real-time shadows — the single biggest realism lift in the whole render
@@ -511,7 +518,7 @@ export class GameEngine {
     const bufSize = renderer.getDrawingBufferSize(new THREE.Vector2())
     this.composer = new EffectComposer(
       renderer,
-      new THREE.WebGLRenderTarget(Math.max(1, bufSize.x), Math.max(1, bufSize.y), { type: THREE.HalfFloatType, samples: 4 }),
+      new THREE.WebGLRenderTarget(Math.max(1, bufSize.x), Math.max(1, bufSize.y), { type: THREE.HalfFloatType, samples: this.lowPower ? 2 : 4 }),
     )
     this.composer.addPass(new RenderPass(this.scene, this.camera))
     this.bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.42, 0.5, 0.72)
@@ -531,7 +538,7 @@ export class GameEngine {
     this.moon.position.set(-120, 180, 60)
     // Sun/moon casts shadows; the ortho box follows the player each frame
     this.moon.castShadow = true
-    this.moon.shadow.mapSize.set(2048, 2048)
+    this.moon.shadow.mapSize.set(this.lowPower ? 1024 : 2048, this.lowPower ? 1024 : 2048)
     this.moon.shadow.camera.left = -110
     this.moon.shadow.camera.right = 110
     this.moon.shadow.camera.top = 110
@@ -548,10 +555,13 @@ export class GameEngine {
     // wall ahead of the car — players couldn't see the road at night.
     this.headL = new THREE.SpotLight(0xcfe8ff, 18, 42, 0.46, 0.55, 1.7)
     this.headR = new THREE.SpotLight(0xcfe8ff, 18, 42, 0.46, 0.55, 1.7)
+    // Phones keep only the main beam: two extra spot lights cost every pixel
+    if (this.lowPower) { this.headL.visible = false; this.headR.visible = false }
     this.scene.add(this.headL, this.headL.target, this.headR, this.headR.target)
     // The one real beam: shadow-casting, lights the tarmac ahead of the car
     this.headSpot = new THREE.SpotLight(0xfff3d6, 34, 38, 0.34, 0.65, 1.5)
-    this.headSpot.castShadow = true
+    // A second shadow map re-draws the whole nearby scene again — desktop only
+    this.headSpot.castShadow = !this.lowPower
     this.headSpot.shadow.mapSize.set(1024, 1024)
     this.headSpot.shadow.camera.near = 2
     this.headSpot.shadow.camera.far = 60
@@ -600,6 +610,7 @@ export class GameEngine {
     this.spawnCruisers()
     this.initSmoke()
     this.applyLoadout()
+    if (this.lowPower) this.trimShadowsForPhones()
     this.bindInput()
     this.resize()
     window.addEventListener('resize', this.resize)
@@ -1577,7 +1588,7 @@ export class GameEngine {
       this.scene.add(this.lighthouseBeam)
       const lhGlow = new THREE.PointLight(0xfff2b0, 60, 60, 1.6)
       lhGlow.position.set(lhX, 15.6, lhZ)
-      this.scene.add(lhGlow)
+      if (!this.lowPower) this.scene.add(lhGlow)
       this.buildings.push({ minX: lhX - 2.6, maxX: lhX + 2.6, minZ: lhZ - 2.6, maxZ: lhZ + 2.6 })
     }
 
@@ -2583,9 +2594,45 @@ export class GameEngine {
     }
   }
 
+  /** Phones: the shadow pass re-draws every caster. Detailed instanced props
+      (hundreds of thousands of triangles across the city) and the skinned
+      crowd stop casting; buildings, the player's car and traffic keep their
+      shadows, which is what the eye reads. */
+  private trimShadowsForPhones(): void {
+    this.scene.traverse((o) => {
+      if ((o as THREE.SkinnedMesh).isSkinnedMesh) { o.castShadow = false; return }
+      const im = o as THREE.InstancedMesh
+      if (!im.isInstancedMesh || !im.castShadow) return
+      const g = im.geometry
+      const tris = (g.index ? g.index.count : g.attributes.position.count) / 3
+      if (tris * im.count > 4000) im.castShadow = false
+    })
+  }
+
+  /** Phones: every character is a skinned mesh — its own draw call plus a
+      bone upload — so beyond 75 m (a few pixels tall, in the fog) they are
+      not drawn at all, and between 40 and 75 m they animate ~5 times a second
+      (with the time they skipped). Close ones animate every frame. */
+  private animLodDt = new WeakMap<THREE.AnimationMixer, number>()
+  private tickMixer(mixer: THREE.AnimationMixer, obj: THREE.Object3D, x: number, z: number, dt: number): void {
+    if (!this.lowPower) { mixer.update(dt); return }
+    const dx = x - this.pos.x
+    const dz = z - this.pos.z
+    const d2 = dx * dx + dz * dz
+    obj.visible = d2 < 75 * 75
+    if (!obj.visible) return
+    const acc = (this.animLodDt.get(mixer) ?? 0) + dt
+    if (d2 < 1600 || acc >= 0.2) {
+      mixer.update(acc)
+      this.animLodDt.set(mixer, 0)
+    } else {
+      this.animLodDt.set(mixer, acc)
+    }
+  }
+
   private updateIdlers(dt: number): void {
     for (const id of this.idlers) {
-      id.mixer.update(dt)
+      this.tickMixer(id.mixer, id.mesh, id.mesh.position.x, id.mesh.position.z, dt)
       // subtle life: a gentle idle bob so the crowd never looks frozen
       id.mesh.position.y = (id.baseY ?? 0) + Math.abs(Math.sin(this.time * 0.9 + id.mesh.position.x * 0.7)) * 0.02
     }
@@ -2971,7 +3018,7 @@ export class GameEngine {
         }
         const fire = new THREE.PointLight(0xff8a3d, 7, 13, 2)
         fire.position.set(x, 0.8, z)
-        this.scene.add(fire)
+        if (!this.lowPower) this.scene.add(fire)
         const fglow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xff9a4d, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }))
         fglow.position.set(x, 0.55, z)
         fglow.scale.setScalar(1.6)
@@ -3027,7 +3074,7 @@ export class GameEngine {
         }
         const stallLight = new THREE.PointLight(col, 5, 9, 2)
         stallLight.position.set(sx, 2.0, sz + 0.8)
-        this.scene.add(stallLight)
+        if (!this.lowPower) this.scene.add(stallLight)
         // vendor behind the counter, customers in front
         makeBeacher(sx, sz - 1.05, 0, false)
         const nc = 1 + Math.floor(rand() * 2)
@@ -3207,7 +3254,8 @@ export class GameEngine {
       sport: [0xfacc15, 0x22d3ee, 0xff4d6d, 0xf2f6ff],
     }
     const styles = ['sedan', 'sedan', 'hatch', 'hatch', 'van', 'taxi', 'sport', 'sedan', 'hatch', 'van', 'bus', 'sport', 'sedan', 'hatch', 'van', 'sedan', 'taxi', 'hatch', 'sport', 'sedan', 'taxi', 'hatch', 'sedan', 'van', 'sport', 'hatch', 'bus', 'taxi']
-    for (let k = 0; k < styles.length; k++) {
+    const trafficCount = this.lowPower ? 18 : styles.length
+    for (let k = 0; k < trafficCount; k++) {
       const style = styles[k]
       const palette = style === 'taxi' ? [0xf59e0b] : palettes[style] ?? palettes.sedan
       const g = this.makeTrafficCar(style, palette[Math.floor(rand() * palette.length)])
@@ -3746,7 +3794,8 @@ export class GameEngine {
 
   private applyQuality(): void {
     const dpr = window.devicePixelRatio || 1
-    const pr = this.qualityLevel === 0 ? Math.min(dpr, 1.5) : this.qualityLevel === 1 ? Math.min(dpr, 1.25) : 1
+    const top = this.lowPower ? 1.25 : 1.5
+    const pr = this.qualityLevel === 0 ? Math.min(dpr, top) : this.qualityLevel === 1 ? Math.min(dpr, top - 0.25) : this.lowPower ? 0.9 : 1
     this.renderer.setPixelRatio(pr)
     this.composer.setPixelRatio(pr)
     this.resize()
@@ -4520,7 +4569,9 @@ export class GameEngine {
     const active = this.heat >= 1 && !this.busted && !this.wrecked && this.cruiserNearest < 40
     if (active && !this.chaseSpot) {
       this.chaseSpot = new THREE.SpotLight(0xcfe6ff, 0, 140, 0.32, 0.45, 1)
-      this.scene.add(this.chaseSpot, this.chaseSpot.target)
+      // Adding a light mid-game recompiles every material: on a phone that is
+      // a visible freeze the moment a chase starts. Phones get the beam cone only.
+      if (!this.lowPower) this.scene.add(this.chaseSpot, this.chaseSpot.target)
       const coneGeom = new THREE.CylinderGeometry(0.6, 7.5, 34, 16, 1, true)
       coneGeom.translate(0, -17, 0) // origin at the top, opens downward
       this.chaseCone = new THREE.Mesh(coneGeom, new THREE.MeshBasicMaterial({
@@ -4983,7 +5034,7 @@ export class GameEngine {
     const styles = ['sedan', 'sedan', 'hatch', 'van', 'taxi', 'hatch', 'sedan', 'van', 'taxi', 'hatch', 'sedan', 'sport', 'van', 'sedan']
     const cols = [0x8d99ae, 0x6fa35f, 0x4f8fb8, 0xe23b3b, 0xb8c0cc, 0x2f9fd8, 0xf0a020, 0x98a5b5, 0x7f8a99, 0x5a6e8c, 0xa8563f, 0x3f7a6e, 0xc9b458, 0x6b5a8c]
     const kC = Math.floor(N / 2)
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < (this.lowPower ? 8 : 14); i++) {
       const style = styles[i % styles.length]
       const g = this.makeTrafficCar(style, style === 'taxi' ? 0xf59e0b : cols[i % cols.length])
       const axis: 'x' | 'z' = i % 2 === 0 ? 'x' : 'z'
@@ -6903,8 +6954,9 @@ export class GameEngine {
   }
 
   private spawnPedestrians(): void {
-    const STREET = 88
-    const BEACH = 42
+    // Phones: half the crowd — every walker is a skinned, animated character
+    const STREET = this.lowPower ? 44 : 88
+    const BEACH = this.lowPower ? 20 : 42
     const rand = seededRand(4321)
     const charKeys = Object.keys(this.assets.chars)
     if (charKeys.length === 0) return
@@ -7099,7 +7151,7 @@ export class GameEngine {
         p.z = Math.max(-lim, Math.min(lim, p.z))
         p.pausing = false
         p.walk.timeScale = 1.7
-        p.mixer.update(dt)
+        this.tickMixer(p.mixer, p.mesh, p.x, p.z, dt)
         p.mesh.position.set(p.x, 0, p.z)
         p.mesh.rotation.y = Math.atan2(dx, dz)
         continue
@@ -7175,7 +7227,7 @@ export class GameEngine {
       }
       // Walk-animation pace follows actual speed
       p.walk.timeScale = 0.6 + (speed / 1.8) * 0.8
-      p.mixer.update(dt)
+      this.tickMixer(p.mixer, p.mesh, p.x, p.z, dt)
       p.mesh.position.set(p.x, 0, p.z)
       // Startled glance: face a fast-approaching car for a beat, then carry on
       p.glanceT = Math.max(0, p.glanceT - dt)
