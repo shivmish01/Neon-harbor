@@ -167,13 +167,16 @@ export default function App() {
   // anywhere on screen and count it as "user did it".
   useEffect(() => {
     if (!isTouch || onboardStep !== 2) return
+    // Upright phones show the game rotated 90°: the game's left-right is the
+    // screen's up-down.
+    const across = (t: Touch | undefined) => (t ? (isPortrait ? t.clientY : t.clientX) : null)
     let startX: number | null = null
     const ts = (e: TouchEvent) => {
-      startX = e.touches[0]?.clientX ?? null
+      startX = across(e.touches[0])
     }
     const tm = (e: TouchEvent) => {
       if (startX === null || obAdvRef.current) return
-      const dx = (e.touches[0]?.clientX ?? startX) - startX
+      const dx = (across(e.touches[0]) ?? startX) - startX
       if (Math.abs(dx) > 50) {
         obAdvRef.current = true
         setTimeout(() => setOnboardStep(3), 950)
@@ -185,7 +188,7 @@ export default function App() {
       window.removeEventListener('touchstart', ts)
       window.removeEventListener('touchmove', tm)
     }
-  }, [isTouch, onboardStep])
+  }, [isTouch, onboardStep, isPortrait])
 
   // Splash sequence timing: each card holds ~2.2s (1.3s on vplay.gg);
   // ?autostart (dev builds only) skips straight into the game
@@ -1519,7 +1522,7 @@ export default function App() {
               >
                 {/* virtual joystick: push forward = gas, side = steer, back = brake */}
                 <div className="pointer-events-auto">
-                  <Joystick engine={engineRef.current} />
+                  <Joystick engine={engineRef.current} rotated={isPortrait} />
                 </div>
                 {/* actions + nitro/drift/brake */}
                 <div className="flex flex-col items-end gap-2 pointer-events-auto">
@@ -1543,7 +1546,7 @@ export default function App() {
               Only for the joystick scheme; sits under the buttons so button
               touches never steer. */}
           {isTouch && (!overlay || overlay === 'map') && save.controls !== 'buttons' && !photoMode && (
-            <SwipeSteerZone engine={engineRef.current} enabled />
+            <SwipeSteerZone engine={engineRef.current} enabled rotated={isPortrait} />
           )}
 
           {/* classic button scheme (opt-in from the pause menu) */}
@@ -2562,7 +2565,15 @@ const IcoMash = () => <Ico d="M12 1.8l1.9 5.3 5.3-1.9-2.9 4.5 4.9 2.2-5.9 2.6 2.
     and a held-still finger goes straight. The joystick keeps throttle; the
     right thumb owns direction. Sits below the on-screen buttons so touches
     that start on a button never steer. */
-function SwipeSteerZone({ engine, enabled }: { engine: GameEngine | null; enabled: boolean }) {
+/** Upright phones show the whole game CSS-rotated 90° clockwise, but pointer
+    events stay in screen space. Game-frame x is the screen's y, and game-frame
+    y is the screen's -x — without this the joystick read "push up" as "steer
+    right" and swipes steered with the wrong axis. */
+function toGameDelta(sx: number, sy: number, rotated: boolean): [number, number] {
+  return rotated ? [sy, -sx] : [sx, sy]
+}
+
+function SwipeSteerZone({ engine, enabled, rotated }: { engine: GameEngine | null; enabled: boolean; rotated: boolean }) {
   const [active, setActive] = useState(false)
   const lastX = useRef(0)
   const mag = useRef(0)
@@ -2616,13 +2627,14 @@ function SwipeSteerZone({ engine, enabled }: { engine: GameEngine | null; enable
           } catch {
             /* pointer capture unsupported */
           }
-          lastX.current = e.clientX
+          lastX.current = rotated ? e.clientY : e.clientX
           setActive(true)
         }}
         onPointerMove={(e) => {
           if (!active) return
-          const dx = e.clientX - lastX.current
-          lastX.current = e.clientX
+          const x = rotated ? e.clientY : e.clientX
+          const dx = x - lastX.current
+          lastX.current = x
           if (Math.abs(dx) < 0.5) return
           engine?.touchSwipeDelta(dx)
           if (Math.abs(dx) > 1) sign.current = Math.sign(dx)
@@ -2641,14 +2653,13 @@ function SwipeSteerZone({ engine, enabled }: { engine: GameEngine | null; enable
   )
 }
 
-function Joystick({ engine }: { engine: GameEngine | null }) {  const R = 44
+function Joystick({ engine, rotated }: { engine: GameEngine | null; rotated: boolean }) {  const R = 44
   const [knob, setKnob] = useState({ x: 0, y: 0, active: false })
   const apply = (e: React.PointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
     const cx = rect.left + rect.width / 2
     const cy = rect.top + rect.height / 2
-    let dx = e.clientX - cx
-    let dy = e.clientY - cy
+    let [dx, dy] = toGameDelta(e.clientX - cx, e.clientY - cy, rotated)
     const len = Math.hypot(dx, dy)
     if (len > R) {
       dx = (dx / len) * R
