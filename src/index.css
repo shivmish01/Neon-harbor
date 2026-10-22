@@ -231,9 +231,12 @@
 }
 
 /* ============ Short screens (landscape phones): compact layout ============
+   Phones held upright are CSS-rotated into landscape, so their game height
+   is the viewport WIDTH: every short-screen query below also matches a
+   portrait touch screen that narrow, or the rotated game looks zoomed in.
    Phone landscape leaves only ~400-500px of height after browser chrome —
    without this the title overflows and the play button sits off-screen. */
-@media (max-height: 560px) {
+@media (max-height: 560px), (orientation: portrait) and (pointer: coarse) and (max-width: 560px) {
   .nh-title {
     font-size: 2.3rem !important;
     line-height: 1.05;
@@ -1235,7 +1238,7 @@
 
 /* Short landscape phones (<= 440px tall: 640x320 … 932×430): shrink controls
    and cards so the whole HUD fits with zero overlaps. */
-@media (max-height: 440px) {
+@media (max-height: 440px), (orientation: portrait) and (pointer: coarse) and (max-width: 440px) {
   .nc-toasts {
     top: 3.7rem;
   }
@@ -1385,7 +1388,7 @@
 
 /* Title screen on short landscape phones: keep the compact status chips,
    drop the longer one-line explanations so the title never clips. */
-@media (max-height: 460px) {
+@media (max-height: 460px), (orientation: portrait) and (pointer: coarse) and (max-width: 460px) {
   .nh-boot-long { display: none; }
   .nh-boot-status { margin-top: 0.4rem; }
   .nh-district-pick { margin-top: 0.5rem; }

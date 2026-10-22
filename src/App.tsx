@@ -97,25 +97,39 @@ export default function App() {
   // CSS media query. Used for content triage (what renders at all, not just
   // how big it is).
   const compactHud =
-    isTouch && typeof window !== 'undefined' && window.matchMedia('(max-height: 440px)').matches
+    isTouch &&
+    typeof window !== 'undefined' &&
+    window.matchMedia('(max-height: 440px), (orientation: portrait) and (max-width: 440px)').matches
   // Mobile plays in landscape. We never ask the player to rotate: Android
   // Chrome gets a real orientation lock from the entry tap, and everything
   // else (iOS Safari…) gets the root div CSS-rotated into landscape below.
   const [isPortrait, setIsPortrait] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches,
   )
+  const [viewSize, setViewSize] = useState(() => ({
+    w: typeof window !== 'undefined' ? window.innerWidth : 0,
+    h: typeof window !== 'undefined' ? window.innerHeight : 0,
+  }))
   useEffect(() => {
     if (!isTouch) return
     const mq = window.matchMedia('(orientation: portrait)')
     const update = () => {
       setIsPortrait(mq.matches)
+      setViewSize({ w: window.innerWidth, h: window.innerHeight })
       // the rotated root changes the canvas box without a window resize —
       // nudge the engine so it re-sizes to what the player now sees
       requestAnimationFrame(() => window.dispatchEvent(new Event('resize')))
     }
     update()
     mq.addEventListener('change', update)
-    return () => mq.removeEventListener('change', update)
+    // The browser bar showing/hiding changes the size without a rotation;
+    // the rotated root must follow it or the game spills off-screen.
+    const onResize = () => setViewSize({ w: window.innerWidth, h: window.innerHeight })
+    window.addEventListener('resize', onResize)
+    return () => {
+      mq.removeEventListener('change', update)
+      window.removeEventListener('resize', onResize)
+    }
   }, [isTouch])
 
   // ---------- mobile FTUE logic: onboarding advances by DOING ----------
@@ -927,8 +941,8 @@ export default function App() {
               inset: 'auto',
               top: 0,
               left: 0,
-              width: window.innerHeight,
-              height: window.innerWidth,
+              width: viewSize.h,
+              height: viewSize.w,
               transform: 'rotate(90deg) translateY(-100%)',
               transformOrigin: 'left top',
             }
