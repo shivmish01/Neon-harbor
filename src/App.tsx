@@ -601,7 +601,14 @@ export default function App() {
       if (params.get('at') === 'beach') {
         engineRef.current?.debugTeleport(8, 226, Math.PI)
       }
-      ;(window as unknown as { __nh?: unknown }).__nh = engineRef.current
+      // The engine is created asynchronously after assets load — poll until
+      // it exists instead of capturing a null ref here.
+      const t = window.setInterval(() => {
+        if (engineRef.current) {
+          ;(window as unknown as { __nh?: unknown }).__nh = engineRef.current
+          window.clearInterval(t)
+        }
+      }, 250)
     }
   }, [assetsReady, enterGame, commit])
 
