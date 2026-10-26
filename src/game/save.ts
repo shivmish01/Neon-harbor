@@ -67,6 +67,16 @@ export interface SaveData {
   daily: { day: string; best: number; runs: number }
   /** Weekly Harbor GP: best finish time in seconds for ISO week `key` (0 = none yet). */
   weekly: { key: string; best: number; runs: number }
+  /** World Circuit (v2): total km driven across ALL runs — the odometer that
+      never resets. Drives the endless city-zone cycle. */
+  worldKm: number
+  /** full laps of the 7-city circuit completed */
+  laps: number
+  /** city zones the player has entered at least once (achievement + discovery) */
+  zonesSeen: string[]
+  /** broken part id from the last WRECK (see BREAKDOWNS). Null = nothing broken.
+      The part carries a driving penalty until the garage repairs it. */
+  breakdown: string | null
 }
 
 const KEY = 'neon-harbor-save-v1'
@@ -98,6 +108,10 @@ export function defaultSave(): SaveData {
     crews: {},
     daily: { day: '', best: 0, runs: 0 },
     weekly: { key: '', best: 0, runs: 0 },
+    worldKm: 0,
+    laps: 0,
+    zonesSeen: [],
+    breakdown: null,
   }
 }
 
@@ -128,6 +142,10 @@ export function loadSave(): SaveData {
       crews: { ...(parsed.crews ?? {}) },
       daily: { day: parsed.daily?.day ?? '', best: parsed.daily?.best ?? 0, runs: parsed.daily?.runs ?? 0 },
       weekly: { key: parsed.weekly?.key ?? '', best: parsed.weekly?.best ?? 0, runs: parsed.weekly?.runs ?? 0 },
+      worldKm: parsed.worldKm ?? 0,
+      laps: parsed.laps ?? 0,
+      zonesSeen: parsed.zonesSeen ?? [],
+      breakdown: parsed.breakdown ?? null,
     }
     // Legacy Early Access demo: fullAccess/legend granted everything locally.
     // Keep whatever items the player already owned (it was a free demo), but

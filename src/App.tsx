@@ -9,7 +9,7 @@ import { GameEngine, type HudState } from './game/engine'
 import { loadGameAssets, type GameAssets } from './game/assets'
 import {
   SKINS, THEMES, HARBOR_PASS_ID, HARBOR_PASS_ITEMS, GAME_VERSION, GAME_TITLE,
-  ACHIEVEMENTS, DISTRICTS, UPGRADES,
+  ACHIEVEMENTS, DISTRICTS, UPGRADES, WORLD_ZONES, breakdownById,
   type Skin, type Theme, type UpgradeId,
 } from './game/content'
 import { loadSave, persistSave, defaultSave, type SaveData, dailyKey, weekKey } from './game/save'
@@ -60,6 +60,8 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([])
   const [bustedFlash, setBustedFlash] = useState(false)
   const [wreckFlash, setWreckFlash] = useState(false)
+  // World Circuit (v2): cinematic city-entrance banner (auto-hides)
+  const [zoneBanner, setZoneBanner] = useState<{ id: string; name: string; landmark: string; unlockLevel: number; locked: boolean } | null>(null)
   // Crash feedback: timestamp of the last damage spike (drives a short red
   // edge flash). lastDamageRef tracks the previous frame's body damage.
   const [dmgFlash, setDmgFlash] = useState(0)
@@ -403,6 +405,12 @@ export default function App() {
       onWrecked: () => {
         setWreckFlash(true)
         window.setTimeout(() => setWreckFlash(false), 2200)
+      },
+      onZoneEntered: (zoneId) => {
+        const z = WORLD_ZONES.find((wz) => wz.id === zoneId)
+        if (!z) return
+        setZoneBanner({ id: z.id, name: z.name, landmark: z.landmark, unlockLevel: z.unlockLevel, locked: saveRef.current.level < z.unlockLevel })
+        window.setTimeout(() => setZoneBanner((b) => (b && b.id === zoneId ? null : b)), 4200)
       },
       onLevelUp: (level) => pushToast(`LEVEL UP — you reached level ${level}!`, 'good'),
       onMilestone: (id) => reportMilestone(id),
@@ -1248,6 +1256,35 @@ export default function App() {
               mission tracker, the FIRST NIGHT guide, mission-complete and toasts
               all stack here at the edge — nothing ever floats in front of the car. */}
           <div className={`absolute z-20 flex flex-col items-end gap-2 ${isTouch ? `nc-col${save.controls === 'buttons' ? ' nc-pads' : ''}` : 'top-[196px] right-4'}`}>
+            {/* World Circuit (v2): current city zone + odometer — the endless-run
+                pill. Always on, so the next destination is always in view. */}
+            {hud.zone && (
+              <div className="nc-zone hud-panel px-2.5 py-1.5 pointer-events-none flex flex-col items-end gap-0.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] tracking-[0.22em] font-black text-cyan-300">🌍 {hud.zone.name.toUpperCase()}</span>
+                  {hud.level < hud.zone.unlockLevel ? (
+                    <span className="text-[9px] font-bold text-slate-400 border border-slate-500/70 rounded px-1 py-px">🔒 LV{hud.zone.unlockLevel}</span>
+                  ) : (
+                    <span className="text-[9px] font-bold text-emerald-300 border border-emerald-500/50 rounded px-1 py-px">OPEN</span>
+                  )}
+                </div>
+                <div className="text-[9px] text-slate-400 leading-tight">
+                  {hud.zone.kmToNext.toFixed(1)} km → {WORLD_ZONES[(hud.zone.index + 1) % WORLD_ZONES.length].name.toUpperCase()}
+                  {hud.worldKm >= 1 && <span className="text-slate-500"> · {hud.worldKm.toFixed(1)} km total</span>}
+                </div>
+              </div>
+            )}
+            {/* broken part warning (v2): the penalty is live until the garage
+                fixes it — the run continues either way */}
+            {hud.breakdown && (() => {
+              const b = breakdownById(hud.breakdown)
+              return b ? (
+                <div className="nc-bd hud-panel px-2.5 py-1.5 pointer-events-none border-red-400/40">
+                  <div className="text-[10px] font-black text-red-300 tracking-widest">{b.icon} {b.name.toUpperCase()} — BROKEN</div>
+                  <div className="text-[9px] text-slate-400">{b.effect}</div>
+                </div>
+              ) : null
+            })()}
             {/* utility row — Map / Horn (+ contextual E / Reset) docked at the
                 top of the notification column, right under the minimap */}
             {isTouch && (!overlay || overlay === 'map') && (
@@ -1630,6 +1667,27 @@ export default function App() {
               is the small RESET touch button (mobile) / R key (desktop) — no
               center-screen banner interrupting the drive. */}
 
+          {/* World Circuit (v2): cinematic city-entrance banner — the horizon
+              changes, the game announces WHERE you are now */}
+          {zoneBanner && !overlay && (
+            <div key={zoneBanner.id} className="nh-zone-in absolute top-[18%] left-0 right-0 z-40 flex flex-col items-center pointer-events-none px-4">
+              <div className="nh-zone-card text-center">
+                <div className="text-[10px] tracking-[0.5em] text-cyan-300/90 font-black mb-1">WORLD CIRCUIT</div>
+                <div className="text-4xl sm:text-5xl font-black tracking-[0.14em] text-white drop-shadow-[0_0_28px_rgba(34,211,238,0.55)]">{zoneBanner.name.toUpperCase()}</div>
+                <div className="mt-1 text-cyan-200/90 text-sm font-bold tracking-widest">🏛 {zoneBanner.landmark}</div>
+                {zoneBanner.locked ? (
+                  <div className="mt-2 inline-block px-3 py-1 rounded-md border border-slate-500/70 bg-black/40 text-slate-300 text-xs font-bold tracking-widest">
+                    🔒 LOCKED — claim this city at Level {zoneBanner.unlockLevel}
+                  </div>
+                ) : (
+                  <div className="mt-2 inline-block px-3 py-1 rounded-md border border-emerald-400/60 bg-black/40 text-emerald-300 text-xs font-bold tracking-widest">
+                    ✓ CITY OPEN
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* build badge — version + git hash, ALWAYS visible (tiny, corner):
               this is how anyone testing on any device proves which build they
               are actually running. If the hash doesn't match the latest
@@ -1681,6 +1739,18 @@ export default function App() {
                     💥 The killing blow — {hud.lastHitCause}{hud.lastHitKmh > 0 ? ` at ~${hud.lastHitKmh} km/h` : ''}.
                   </div>
                 )}
+                {/* World Circuit (v2): every WRECK breaks something — the card
+                    names the part so the garage trip has a purpose */}
+                {hud.breakdown && (() => {
+                  const b = breakdownById(hud.breakdown)
+                  return b ? (
+                    <div className="mt-3 mx-auto max-w-xs rounded-xl border border-red-400/50 bg-red-950/60 px-4 py-2.5 text-left">
+                      <div className="text-red-300 font-black tracking-widest text-xs">🔧 WHAT BROKE — {b.icon} {b.name.toUpperCase()}</div>
+                      <div className="text-slate-300 text-xs mt-0.5 leading-relaxed">{b.desc}</div>
+                      <div className="text-orange-300/90 text-[11px] font-bold mt-1">{b.effect} — fix it at the garage, then keep driving this same run.</div>
+                    </div>
+                  ) : null
+                })()}
                 <button
                   onClick={() => {
                     engineRef.current?.towToGarage()
@@ -2286,16 +2356,49 @@ export default function App() {
               <button onClick={() => setOverlay(null)} className="text-slate-400 hover:text-white text-xl">✕</button>
             </div>
 
-            {/* Body repair — visible the moment the car has any damage */}
-            {hud && hud.damage > 0 && (
+            {/* World Circuit (v2): broken-part repair — the named part, its live
+                penalty, and a bill that grows the further from home you are.
+                Driven by `save` (not `hud`) so the block disappears the instant
+                the fix lands — hud freezes while the shop overlay pauses the loop. */}
+            {save.breakdown && (() => {
+              const b = breakdownById(save.breakdown)
+              if (!b) return null
+              const bdCost = engineRef.current?.breakdownCost() ?? 0
+              const first = save.stats.repairs === 0
+              return (
+                <div className="shop-bd w-full mb-3 p-4 rounded-xl border border-red-400/50 bg-red-950/40">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="repair-title text-red-300 font-black tracking-widest">{b.icon} {b.name.toUpperCase()} — BROKEN</div>
+                      <div className="repair-desc text-slate-400 text-xs mt-1 leading-relaxed">{b.desc}<br /><span className="text-orange-300/90 font-bold">{b.effect}</span></div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        engineRef.current?.repair()
+                        setSave({ ...saveRef.current })
+                      }}
+                      disabled={save.cash < (engineRef.current?.totalRepairCost() ?? Infinity)}
+                      className="px-4 py-2 text-sm font-black border border-red-400 text-red-200 rounded-lg hover:bg-red-400/20 whitespace-nowrap disabled:opacity-40"
+                    >
+                      {first ? 'FIX — FREE' : `FIX — $${bdCost.toLocaleString()}`}
+                    </button>
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-1.5">Your run is NOT reset — repair the part and keep driving the same city.</div>
+                </div>
+              )
+            })()}
+
+            {/* Body repair — visible the moment the car has any damage (save-driven,
+                same reason as above: it must clear instantly on repair) */}
+            {save.damage > 0 && (
               <div className="shop-repair w-full mb-5 p-4 rounded-xl border border-cyan-400/40 bg-cyan-500/10">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="repair-title text-cyan-300 font-black tracking-widest">🔧 BODY REPAIR</div>
                     <div className="repair-bar mt-2 w-56 max-w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full ${hud.damage > 80 ? 'bg-red-500' : hud.damage > 50 ? 'bg-amber-400' : 'bg-cyan-400'}`} style={{ width: `${hud.damage}%` }} />
+                      <div className={`h-full rounded-full ${save.damage > 80 ? 'bg-red-500' : save.damage > 50 ? 'bg-amber-400' : 'bg-cyan-400'}`} style={{ width: `${save.damage}%` }} />
                     </div>
-                    <div className="repair-desc text-slate-400 text-xs mt-1">Damage {hud.damage}% — a clean body turns heads again</div>
+                    <div className="repair-desc text-slate-400 text-xs mt-1">Damage {save.damage}% — a clean body turns heads again</div>
                   </div>
                   <button
                     onClick={() => {

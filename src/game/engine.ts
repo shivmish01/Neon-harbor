@@ -9,7 +9,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { getSkin, getTheme, ACHIEVEMENTS, DISTRICTS, districtAt, ENGINE_MUL, NITRO_REGEN_MUL, NITRO_DRAIN_MUL, TIRES_MUL, ARMOR_MUL, LAUNCH_MUL, HORN_RANGE } from './content'
+import { getSkin, getTheme, ACHIEVEMENTS, DISTRICTS, districtAt, ENGINE_MUL, NITRO_REGEN_MUL, NITRO_DRAIN_MUL, TIRES_MUL, ARMOR_MUL, LAUNCH_MUL, HORN_RANGE, WORLD_ZONES, zoneAt, breakdownById, rollBreakdown, breakdownCost, breakdownMuls, type WorldZone } from './content'
 import { CREW_STEPS, HOME_TURF_BONUS, crewFor, crewRep, districtOwned, districtsOwned } from './crews'
 import { grantXp, xpForLevel, type SaveData, type ShiftGoal, dailyKey, weekKey } from './save'
 import { Synth } from './audio'
@@ -66,6 +66,11 @@ export interface HudState {
   lastHitCause: string
   /** car is wedged (gas held but no movement) — HUD offers the reset recovery */
   stuck: boolean
+  /** World Circuit (v2): current city zone + odometer progress */
+  zone: { id: string; name: string; landmark: string; unlockLevel: number; index: number; lap: number; kmInto: number; kmToNext: number }
+  worldKm: number
+  /** broken part id (see BREAKDOWNS) — null when nothing is broken */
+  breakdown: string | null
 }
 
 export interface EngineHooks {
@@ -84,6 +89,8 @@ export interface EngineHooks {
   onMilestone?(id: string): void
   /** A leaderboard score for vplay.gg: daily = payout (higher wins), weekly = seconds (lower wins). */
   onScore?(board: 'daily' | 'weekly', key: string, value: number): void
+  /** World Circuit (v2): the world transformed into a new city zone. */
+  onZoneEntered?(zoneId: string): void
 }
 
 // ---------- World layout constants ----------
@@ -445,6 +452,10 @@ export class GameEngine {
     dog?: THREE.Group
   }[] = []
   private crates: { mesh: THREE.Mesh; active: boolean; respawn: number }[] = []
+  // Street pickups (v2): drive-through nitro cans, field-repair kits and lucky
+  // coins. Same law as the crates — the car NEVER stops; you grab these at
+  // speed and they respawn somewhere else after a short cooldown.
+  private pickups: { kind: 'nitro' | 'repair' | 'cash'; mesh: THREE.Group; active: boolean; respawn: number }[] = []
   private landmarks: { name: string; pos: THREE.Vector3; found: boolean; mesh: THREE.Group }[] = []
   private cruisers: { mesh: THREE.Group; barL: THREE.Mesh; barR: THREE.Mesh; pos: THREE.Vector3; vel: THREE.Vector3; wp: THREE.Vector3; heading: number; bob: number }[] = []
   private smoke: { sprite: THREE.Sprite; life: number; max: number }[] = []
@@ -599,6 +610,7 @@ export class GameEngine {
     this.spawnTraffic()
     this.spawnPedestrians()
     this.spawnCrates()
+    this.spawnPickups()
     // Phase 1 step 3: three contract beacons live on the map from the first frame
     this.spawnContractMarker()
     this.spawnContractMarker()
@@ -606,6 +618,7 @@ export class GameEngine {
     // Phase 1 step 4: post the Night Shift goal set (rolls one for old saves)
     this.ensureShift()
     this.buildLandmarks()
+    this.initWorldCircuit()
     this.prunePropColliders()
     this.spawnCruisers()
     this.initSmoke()
@@ -1025,6 +1038,7 @@ export class GameEngine {
       inst.instanceMatrix.needsUpdate = true
       if (inst.instanceColor) inst.instanceColor.needsUpdate = true
       this.scene.add(inst)
+      this.cityInsts.push({ inst, list })
     }
 
     // Parapet caps on every roofline (finished architecture silhouette)
@@ -1089,6 +1103,11 @@ export class GameEngine {
     if (winInst.instanceColor) winInst.instanceColor.needsUpdate = true
     this.scene.userData.winMat = winMat
     this.scene.add(winInst)
+    this.winInst = winInst
+    this.winTransforms = winTransforms
+    // Zone hook keeps the warm/cool window tint (London burns warmer than NYC)
+    this.winWarm.copy(new THREE.Color(0xffd9a0))
+    this.winCool.copy(new THREE.Color(0xbfe0ff))
 
     // Neon corner trims — market district towers get glowing vertical edges
     const trimGeom = new THREE.BoxGeometry(1, 1, 1)
@@ -2092,6 +2111,396 @@ export class GameEngine {
     this.scene.add(beaconMesh)
   }
 
+  // =============== WORLD CIRCUIT (v2) ===============
+  /** Build the per-zone hero landmarks (distant silhouettes on the skyline
+      ring). One group is visible at a time; the rest stay hidden. */
+  private initWorldCircuit(): void {
+    this.buildZoneLandmarks()
+    const st = zoneAt(this.hooks.getSave().worldKm ?? 0)
+    this.worldKm = this.hooks.getSave().worldKm ?? 0
+    this.lastZoneId = st.zone.id
+    // Seed the current zone's look silently (no banner on boot)
+    this.applyZoneMood(st.zone, false)
+  }
+
+  private box(w: number, h: number, d: number, x: number, y: number, z: number, color: number, emissive = 0, ei = 0): THREE.Mesh {
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(w, h, d),
+      new THREE.MeshStandardMaterial({ color, roughness: 0.85, emissive, emissiveIntensity: ei })
+    )
+    m.position.set(x, y, z)
+    return m
+  }
+
+  /** Build one landmark group per zone — placed just outside the city square
+      (R = 236) ON the waterfront so it stands IN the view while you drive the
+      outer ring, not a pixel lost in the far fog. Materials are fog:false so
+      the hero silhouette punches through the night like the moon; a point
+      light, glow ring and city signboard complete the "arrival" shot. */
+  private buildZoneLandmarks(): void {
+    const angFor = (i: number) => i * ((Math.PI * 2) / WORLD_ZONES.length) + 0.35
+    const R = 236
+    const place = (g: THREE.Group, i: number) => {
+      const a = angFor(i)
+      g.position.set(Math.cos(a) * R, 0, Math.sin(a) * R)
+      g.rotation.y = -a + Math.PI
+    }
+    const mk = (id: string, build: (g: THREE.Group) => void): void => {
+      const g = new THREE.Group()
+      build(g)
+      // Skyline heroes ignore fog — the moon and stars already do, so the
+      // landmark stays crisp at every distance instead of dissolving. They
+      // also self-glow: night hero icons read as silhouettes only if they
+      // carry their own light, so every non-glowing part gets a faint
+      // emissive of its own colour (explicit glow parts keep their glow).
+      g.traverse((o) => {
+        const m = o as THREE.Mesh
+        if (m.isMesh && m.material) {
+          const mat = Array.isArray(m.material) ? m.material : [m.material]
+          for (const mm of mat) {
+            ;(mm as THREE.MeshStandardMaterial).fog = false
+            const std = mm as THREE.MeshStandardMaterial
+            if (std.emissive && std.emissive.getHex() === 0) {
+              std.emissive.copy(std.color).multiplyScalar(0.26)
+              std.emissiveIntensity = 1
+            }
+            std.roughness = 0.55
+          }
+        }
+      })
+      this.scene.add(g)
+      g.visible = false
+      this.zoneLandmarks.set(id, g)
+    }
+    const sig = (g: THREE.Group, w: number, h: number, d: number, x: number, y: number, z: number, c: number): void => {
+      g.add(this.box(w, h, d, x, y, z, c))
+    }
+
+    // ---- Harbor — the Lighthouse (white tower, red bands, sweeping beam) ----
+    mk('harbor', (g) => {
+      sig(g, 2.4, 9, 2.4, 0, 0.2, 0, 0x3a4450) // base plinth
+      g.add(this.box(8, 76, 8, 0, 38, 0, 0xdfe6ee))
+      g.add(this.box(8.6, 3.6, 8.6, 0, 10, 0, 0xd94f3d))
+      g.add(this.box(8.6, 3.6, 8.6, 0, 27, 0, 0xd94f3d))
+      g.add(this.box(8.6, 3.6, 8.6, 0, 46, 0, 0xd94f3d))
+      const lamp = this.box(6, 3.6, 6, 0, 82, 0, 0xffe9a8, 0xffd23d, 1.6)
+      g.add(lamp)
+      g.add(new THREE.Mesh(new THREE.ConeGeometry(6, 10, 4), new THREE.MeshStandardMaterial({ color: 0x23303c })))
+      // guard shack + cones by the door
+      sig(g, 3.4, 2.6, 3.4, 7, 1.3, -3, 0x1e2a36)
+      sig(g, 0.7, 1.4, 0.7, 11, 0.7, -4.6, 0xff7a24)
+      sig(g, 0.7, 1.4, 0.7, 12.6, 0.7, -3.2, 0xff7a24)
+      const beam = this.box(1.6, 1.6, 26, 0, 90, 6, 0xfff6cc, 0xffe9a8, 1.5)
+      beam.rotation.x = Math.PI / 2
+      g.add(beam)
+    })
+
+    // ---- London — Big Ben + the Houses of Parliament + Tower Bridge ----
+    // A full Westminster waterfront so the city reads instantly: the clock
+    // tower, the long Gothic palace block with its rooftop turrets and the
+    // Victoria Tower, then a Tower Bridge silhouetted along the Thames.
+    mk('london', (g) => {
+      sig(g, 3.4, 9, 3.4, 0, 0.2, 0, 0x3a4450)
+      // Big Ben — clock tower + spire
+      g.add(this.box(8, 66, 8, 0, 33, 0, 0xb9a27a))
+      g.add(this.box(9.2, 14, 9.2, 0, 9, 0, 0x8a7450))
+      g.add(this.box(6.6, 10, 6.6, 0, 73, 0, 0xc9b48a))
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(7, 11, 4), new THREE.MeshStandardMaterial({ color: 0x2f3540 }))
+      roof.position.set(0, 68, 0)
+      g.add(roof)
+      const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 1.1, 16, 6), new THREE.MeshStandardMaterial({ color: 0xcfd6e0 }))
+      spire.position.set(0, 82, 0)
+      g.add(spire)
+      // four glowing clock faces, twice as big
+      for (const s of [-1, 1] as const) {
+        g.add(this.box(0.3, 7, 7, 4.2, 62, s * 1.9, 0xffd9a0, 0xffd9a0, 1.5))
+        g.add(this.box(7, 7, 0.3, s * 1.9, 62, 4.2, 0xffd9a0, 0xffd9a0, 1.5))
+      }
+
+      // Houses of Parliament — long Gothic block + Victoria Tower + turrets
+      const stone = 0xc9b88d
+      const winC = 0x202838
+      g.add(this.box(34, 22, 9, 0, 11, -58, stone)) // main palace block
+      g.add(this.box(36, 2.2, 9.4, 0, 23.2, -58, 0x3a3f4a)) // battlements band
+      // Victoria Tower — tall square tower with a gilded crown at one end
+      g.add(this.box(7.4, 36, 7.4, 0, 18, -44, 0xbfae7f))
+      const victoriaCrown = new THREE.Mesh(new THREE.ConeGeometry(5, 9, 4), new THREE.MeshStandardMaterial({ color: 0xd8c891, emissive: 0x8a6a1e, emissiveIntensity: 0.5 }))
+      victoriaCrown.position.set(0, 38, -44)
+      g.add(victoriaCrown)
+      // rooftop turrets + spires along the palace
+      for (const [tx, tz] of [[-13, -58], [13, -58], [26, -58], [-26, -58]] as const) {
+        const turret = new THREE.Mesh(new THREE.ConeGeometry(1.8, 6, 4), new THREE.MeshStandardMaterial({ color: 0x2f3540 }))
+        turret.position.set(tx, 25.5, tz)
+        g.add(turret)
+        g.add(this.box(0.5, 3.4, 0.5, tx, 30, tz, 0xcfd6e0))
+      }
+      // gothic windows — two lit rows on the riverside face
+      for (const [wx, wy] of [[-24, 8], [-17, 8], [-10, 8], [-3, 8], [4, 8], [11, 8], [18, 8], [25, 8], [-24, 16], [-17, 16], [-10, 16], [-3, 16], [4, 16], [11, 16], [18, 16], [25, 16]] as const) {
+        g.add(this.box(1.6, 3.4, 0.3, wx, wy, -53.6, winC, 0x9a8a52, 0.55))
+      }
+      // riverside lanterns along the palace
+      for (const lx of [-18, -8, 2, 12, 22] as const) {
+        g.add(this.box(0.4, 4, 0.4, lx, 3, -52, 0x23262e))
+        g.add(this.box(1, 1, 1, lx, 5.6, -52, 0xffe9b0, 0xffd9a0, 1.3))
+      }
+
+      // Tower Bridge — twin towers, deck, upper walkway, cables
+      const towerAt = (tz: number) => {
+        g.add(this.box(7.4, 28, 7.4, 0, 14, tz, 0xc9b88d))
+        const towerRoof = new THREE.Mesh(new THREE.ConeGeometry(5.4, 9, 4), new THREE.MeshStandardMaterial({ color: 0xb03a3a, emissive: 0x5e1d1d, emissiveIntensity: 0.35 }))
+        towerRoof.position.set(0, 31, tz)
+        g.add(towerRoof)
+        const towerSpire = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 3.6, 6), new THREE.MeshStandardMaterial({ color: 0xcfd6e0 }))
+        towerSpire.position.set(0, 36.5, tz)
+        g.add(towerSpire)
+        g.add(this.box(1.8, 2, 1.8, 0, 19, tz, 0xffe9b0, 0xffd9a0, 1.2)) // lamp
+      }
+      towerAt(66)
+      towerAt(106)
+      g.add(this.box(42, 2.4, 8, 0, 8, 86, 0x3a3f4a)) // deck
+      g.add(this.box(42, 2.2, 5, 0, 21, 86, 0x3a6ea8, 0x2f6bb0, 0.8)) // upper walkway
+      // suspension cables — from each tower top sloping to the bank
+      for (const tz of [66, 106] as const) {
+        for (const side of [-1, 1] as const) {
+          const cable = this.box(0.8, 0.8, 26, 0, 21 + side * 0.4, tz + side * 13, 0xd8d2c4, 0x9a8a52, 0.35)
+          cable.rotation.x = side * -0.55
+          g.add(cable)
+        }
+      }
+      // riverside lamps on the bridge deck
+      for (const lz of [74, 86, 98] as const) {
+        g.add(this.box(0.4, 2.6, 0.4, -8, 10.4, lz, 0x23262e))
+        g.add(this.box(0.9, 0.9, 0.9, -8, 12, lz, 0xffe9b0, 0xffd9a0, 1.2))
+        g.add(this.box(0.4, 2.6, 0.4, 8, 10.4, lz, 0x23262e))
+        g.add(this.box(0.9, 0.9, 0.9, 8, 12, lz, 0xffe9b0, 0xffd9a0, 1.2))
+      }
+
+      // black cab + red double-decker parked by the riverside
+      sig(g, 2.4, 1.6, 4.6, -11, 0.8, 7, 0x14161c)
+      sig(g, 2.2, 1.1, 4.2, -11, 1.7, 7, 0x2c3038)
+      sig(g, 2.8, 2.6, 8.2, 12, 1.3, 6, 0xc0392b)
+      sig(g, 2.7, 1.2, 7.6, 12, 2.9, 6, 0xe3f2fb)
+      sig(g, 0.24, 1.2, 7.8, 12, 2.6, 6, 0x0e1116)
+    })
+
+    // ---- Paris — Eiffel Tower (tapered stack, beacon tip, café lights) ----
+    mk('paris', (g) => {
+      sig(g, 3.4, 9, 3.4, 0, 0.2, 0, 0x3a4450)
+      const tier = (w: number, h: number, y: number, c: number) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 }))
+        m.position.set(0, y, 0)
+        g.add(m)
+      }
+      tier(22, 38, 19, 0x6b5544)
+      tier(15, 30, 53, 0x5e4a3c)
+      tier(9, 20, 78, 0x514037)
+      const deck = this.box(22.4, 2.4, 22.4, 0, 38, 0, 0x4a3c30)
+      g.add(deck)
+      const deck2 = this.box(15.4, 1.8, 15.4, 0, 68, 0, 0x45382d)
+      g.add(deck2)
+      const tip = this.box(1.6, 9, 1.6, 0, 92, 0, 0xffcf70, 0xffcf70, 1.6)
+      g.add(tip)
+      // café awning + glowing bistro lights at the base
+      sig(g, 1.2, 0.9, 11, -12, 3.2, 3, 0xd9b98a)
+      for (const bx of [-9, -3, 3, 9]) g.add(this.box(0.5, 0.5, 0.5, bx, 3.8, 8, 0xffe9b0, 0xffd9a0, 1.4))
+    })
+
+    // ---- Beijing — Golden Pagoda (five tiers, upturned gold roofs) ----
+    mk('beijing', (g) => {
+      sig(g, 3.4, 9, 3.4, 0, 0.2, 0, 0x3a4450)
+      const tiers: [number, number, number][] = [[21, 11, 7], [18, 11, 22], [16, 11, 37], [13, 11, 52], [10, 11, 66]]
+      for (const [w, h, y] of tiers) {
+        const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), new THREE.MeshStandardMaterial({ color: 0x9a2e24 }))
+        body.position.set(0, y, 0)
+        g.add(body)
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(w * 0.8, 5, 8), new THREE.MeshStandardMaterial({ color: 0xcfb457, emissive: 0x8a6a1e, emissiveIntensity: 0.35 }))
+        roof.position.set(0, y + h / 2 + 2.5, 0)
+        g.add(roof)
+      }
+      const finial = this.box(2, 9, 2, 0, 80, 0, 0xffd23d, 0xffd23d, 1.5)
+      g.add(finial)
+      // lantern posts flanking the gate
+      for (const s of [-1, 1] as const) {
+        g.add(this.box(0.5, 6, 0.5, s * 9, 3, -2, 0x2b2f3a))
+        g.add(this.box(1.6, 1.6, 1.6, s * 9, 6.6, -2, 0xff6a3d, 0xff4d2e, 1.6))
+        g.add(this.box(1.6, 1.6, 1.6, s * 9, 6.6, 2, 0xff6a3d, 0xff4d2e, 1.6))
+      }
+    })
+
+    // ---- Mumbai — Gateway of India (arch on the waterfront) + tuk-tuks ----
+    mk('mumbai', (g) => {
+      sig(g, 3.4, 9, 3.4, 0, 0.2, 0, 0x3a4450)
+      g.add(this.box(5, 28, 5, -9, 14, 0, 0xb98e5f))
+      g.add(this.box(5, 28, 5, 9, 14, 0, 0xb98e5f))
+      g.add(this.box(32, 6, 8, 0, 30, 0, 0xc49a68))
+      g.add(this.box(16, 3.4, 5.4, 0, 36, 0, 0x8a6a44))
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(4.4, 8, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xc49a68 }))
+      dome.position.set(0, 38, 0)
+      g.add(dome)
+      g.add(this.box(24, 0.6, 6.6, 0, 28, 0, 0xffd9a0, 0xffd9a0, 0.9))
+      // tuk-tuks — saffron, green and blue auto-rickshaws
+      for (const [tx, tz, tc] of [[-13, 6, 0xf08c3a], [13, 7, 0x3aa855], [0, 10, 0x2f8fd8]] as const) {
+        sig(g, 2, 1.5, 2.8, tx, 0.75, tz, tc)
+        sig(g, 1.8, 0.6, 2.6, tx, 1.9, tz, 0xf5f7fa)
+      }
+    })
+
+    // ---- Tokyo — Tokyo Tower (red tapered tower, white orb, antenna) ----
+    mk('tokyo', (g) => {
+      sig(g, 3.4, 9, 3.4, 0, 0.2, 0, 0x3a4450)
+      const lower = new THREE.Mesh(new THREE.BoxGeometry(18, 52, 18), new THREE.MeshStandardMaterial({ color: 0xd84a4a }))
+      lower.position.set(0, 26, 0)
+      g.add(lower)
+      const upper = new THREE.Mesh(new THREE.BoxGeometry(10, 36, 10), new THREE.MeshStandardMaterial({ color: 0xe05a5a }))
+      upper.position.set(0, 70, 0)
+      g.add(upper)
+      const orb = new THREE.Mesh(new THREE.SphereGeometry(5, 10, 10), new THREE.MeshStandardMaterial({ color: 0xf0f4fa, emissive: 0xfff3d6, emissiveIntensity: 1.2 }))
+      orb.position.set(0, 95, 0)
+      g.add(orb)
+      const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 1.4, 18, 6), new THREE.MeshStandardMaterial({ color: 0xe05a5a }))
+      ant.position.set(0, 111, 0)
+      g.add(ant)
+      const beac = this.box(1.8, 3.4, 1.8, 0, 122, 0, 0xff6aa7, 0xff6aa7, 2)
+      g.add(beac)
+      // torii gate + white taxi at the base
+      sig(g, 14, 1.6, 1.6, 0, 5.2, 8, 0xd84a4a)
+      sig(g, 1.4, 8, 1.4, -6, 4, 8, 0xd84a4a)
+      sig(g, 1.4, 8, 1.4, 6, 4, 8, 0xd84a4a)
+      sig(g, 2.6, 1.8, 5, -12, 0.9, -6, 0xeef2f6)
+      sig(g, 2.4, 1.2, 4.6, -12, 2.1, -6, 0x9fb2c4)
+    })
+
+    // ---- New York — Empire State (stepped tower + spire) and the Lady ----
+    mk('newyork', (g) => {
+      sig(g, 3.4, 9, 3.4, 0, 0.2, 0, 0x3a4450)
+      g.add(this.box(22, 40, 22, 0, 20, 0, 0x3c4354))
+      g.add(this.box(16, 28, 16, 0, 54, 0, 0x464e60))
+      g.add(this.box(11, 22, 11, 0, 79, 0, 0x525b70))
+      const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 1.5, 20, 6), new THREE.MeshStandardMaterial({ color: 0xcfd6e0 }))
+      spire.position.set(0, 100, 0)
+      g.add(spire)
+      g.add(this.box(12, 1.2, 12, 0, 68, 0, 0x6ea8ff, 0x6ea8ff, 1.2))
+      g.add(this.box(12, 1.2, 12, 0, 90, 0, 0xffd23d, 0xffd23d, 1.2))
+      // Statue of Liberty silhouette — pedestal, robe, torch beam
+      g.add(this.box(12, 8, 12, 34, 5, -8, 0x47505e))
+      g.add(this.box(6, 17, 6, 34, 17, -8, 0x5a6475))
+      g.add(this.box(3.4, 9, 3.4, 35.6, 29, -8, 0x6b7688))
+      g.add(this.box(1.4, 8, 1.4, 37.4, 36, -8, 0x8b96a8))
+      const torch = this.box(2, 2, 2, 38.8, 41, -8, 0xffd23d, 0xffd23d, 2.2)
+      g.add(torch)
+      const beam2 = this.box(1.6, 1.6, 18, 38.8, 42, -16, 0xfff2cc, 0xffd9a0, 1.6)
+      beam2.rotation.x = Math.PI / 2
+      g.add(beam2)
+      // yellow cab at the curb
+      sig(g, 2.6, 1.7, 5, -13, 0.85, 8, 0xf5a623)
+      sig(g, 2.4, 1.1, 4.6, -13, 2.1, 8, 0xd8e6f2)
+    })
+
+    // city-name signboard — separate scene child so it always faces the city
+    WORLD_ZONES.forEach((z, i) => {
+      const a = angFor(i)
+      const x = Math.cos(a) * R
+      const zz = Math.sin(a) * R
+      const tex = makeSignTexture(`${z.name.toUpperCase()} · ${z.landmark.toUpperCase()}`, `#${z.trim.toString(16).padStart(6, '0')}`)
+      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, fog: false, depthWrite: false, side: THREE.DoubleSide })
+      const board = new THREE.Mesh(new THREE.PlaneGeometry(30, 15), mat)
+      board.position.set(x, 58, zz)
+      board.lookAt(0, 58, 0)
+      board.visible = false
+      this.scene.add(board)
+      this.zoneSigns.set(z.id, board)
+      // glow light — city-coloured wash around the landmark (the game's light
+      // convention: intensity ~60-90 for a scene beacon)
+      const light = new THREE.PointLight(z.trim, 90, 260, 1.6)
+      light.position.set(x, 40, zz)
+      light.visible = false
+      this.scene.add(light)
+      this.zoneLandmarkLights.set(z.id, light)
+    })
+
+    for (const [id, g] of this.zoneLandmarks) place(g, WORLD_ZONES.findIndex((z) => z.id === id))
+  }
+
+  /** Every frame: roll the odometer forward. Every ZONE_LENGTH_KM the world
+      becomes the next city — banner, skyline, architecture mood, window glow. */
+  private updateWorldCircuit(dt: number): void {
+    if (this.wrecked || this.attract || this.busted) return
+    const save = this.hooks.getSave()
+    const kmh = this.vel.length() * 3.6
+    if (kmh > 0.5) this.worldKm += (kmh * dt) / 3600
+    const st = zoneAt(this.worldKm)
+    if (st.zone.id !== this.lastZoneId) {
+      this.lastZoneId = st.zone.id
+      this.applyZoneMood(st.zone, true)
+      this.zoneCamT = 2.3 // arrival reveal — camera lifts toward the landmark
+      save.worldKm = this.worldKm
+      save.laps = st.lap
+      if (!save.zonesSeen.includes(st.zone.id)) {
+        save.zonesSeen.push(st.zone.id)
+        const unlocked = save.level >= st.zone.unlockLevel
+        if (unlocked) {
+          save.cash += 150
+          this.hooks.onToast(`🌍 ${st.zone.name.toUpperCase()} — ${st.zone.tag} (+$150 arrival bonus)`, 'good')
+        } else {
+          this.hooks.onToast(`🔒 ${st.zone.name.toUpperCase()} — claim it at Level ${st.zone.unlockLevel}. Driving through is free.`, 'info')
+        }
+      }
+      this.hooks.commit()
+      this.hooks.onZoneEntered?.(st.zone.id)
+    } else if (this.worldKm - save.worldKm >= 0.25) {
+      save.worldKm = this.worldKm
+      save.laps = st.lap
+      this.hooks.commit()
+    }
+  }
+
+  /** Re-tint the whole city to the zone's identity: building mood, window
+      warmth, skyline facade and the hero landmark silhouette. */
+  private applyZoneMood(zone: WorldZone, banner: boolean): void {
+    // 1) City blocks — one zone-wide architecture mood
+    const col = new THREE.Color()
+    for (const { inst, list } of this.cityInsts) {
+      list.forEach((p, idx) => {
+        const t = p.tint
+        col.setRGB(zone.mood[0] * t, zone.mood[1] * t, zone.mood[2] * t)
+        inst.setColorAt(idx, col)
+      })
+      if (inst.instanceColor) inst.instanceColor.needsUpdate = true
+    }
+    // 2) Window glow — warm vs cool balance per city
+    if (this.winInst && this.winTransforms.length) {
+      this.winWarm.set(zone.win[0])
+      this.winCool.set(zone.win[1])
+      const winRand = seededRand(3141) // identical sequence = identical lit pattern
+      const winDark = new THREE.Color(0x141a26)
+      this.winTransforms.forEach((_w, idx) => {
+        if (winRand() < 0.18) return
+        const lit = winRand() < 0.42
+        if (lit) col.copy(winRand() < zone.litWarm ? this.winWarm : this.winCool).multiplyScalar(0.75 + winRand() * 0.5)
+        else col.copy(winDark)
+        this.winInst!.setColorAt(idx, col)
+      })
+      if (this.winInst.instanceColor) this.winInst.instanceColor.needsUpdate = true
+    }
+    // 3) Distant skyline facade — zone horizon tint
+    const skyMat = this.scene.userData.skylineMat as THREE.MeshStandardMaterial | undefined
+    if (skyMat) {
+      skyMat.color.set(zone.facade)
+      skyMat.emissive.set(zone.facade)
+      skyMat.emissiveIntensity = 0.62
+    }
+    // 4) Hero landmark — one city at a time, with its glow light + signboard
+    for (const [id, g] of this.zoneLandmarks) {
+      g.visible = id === zone.id
+      this.zoneLandmarkLights.get(id)!.visible = id === zone.id
+      this.zoneSigns.get(id)!.visible = id === zone.id
+      if (id === zone.id) this.zoneLandmarkPos = g.position.clone()
+    }
+    // 5) Asphalt character — each city's tarmac tint (theme still owns the base)
+    if (this.groundMat) this.groundMat.color.set(zone.road)
+    void banner
+  }
+
   private genSky(): void {
     // Moon + halo
     const moonDisc = new THREE.Mesh(new THREE.CircleGeometry(34, 32), new THREE.MeshBasicMaterial({ color: 0xe8f1ff, fog: false }))
@@ -2207,6 +2616,28 @@ export class GameEngine {
   /** the most recent damaging hit — attributed on the WRECKED card */
   private lastHitKmh = 0
   private lastHitCause = ''
+
+  // ---- World Circuit (v2) --------------------------------------------------
+  // The odometer never resets: total km driven across ALL runs drives the
+  // endless cycle of real city zones. Every ZONE_LENGTH_KM the world
+  // transforms (skyline silhouette, landmark, architecture mood, window glow).
+  private worldKm = 0
+  private lastZoneId = ''
+  /** InstancedMesh refs + placements, so a zone change can re-tint the whole city */
+  private cityInsts: { inst: THREE.InstancedMesh; list: { x: number; z: number; w: number; h: number; d: number; tint: number; dist: string }[] }[] = []
+  private winInst: THREE.InstancedMesh | null = null
+  private winTransforms: { x: number; y: number; z: number; ry: number }[] = []
+  private winWarm = new THREE.Color(0xffd9a0)
+  private winCool = new THREE.Color(0xbfe0ff)
+  /** per-zone hero landmark silhouettes on the skyline ring; one visible at a time */
+  private zoneLandmarks = new Map<string, THREE.Group>()
+  /** per-zone glow lights + city-name billboards + world anchors for the reveal cam */
+  private zoneLandmarkLights = new Map<string, THREE.PointLight>()
+  private zoneSigns = new Map<string, THREE.Mesh>()
+  private zoneLandmarkPos: THREE.Vector3 | null = null
+  /** seconds left of the cinematic "arrival reveal" — camera drifts up to the landmark */
+  private zoneCamT = 0
+
   /** real-time seconds of kill-cam slow motion left after the explosion */
   private slowmoT = 0
   /** beach hint: edge-trigger + 45s cooldown so the toast never nags */
@@ -3842,8 +4273,10 @@ export class GameEngine {
     this.updateIdlers(dt)
     this.updateBeachLife()
     this.updateCrates(dt)
+    this.updatePickups(dt)
     this.updateLandmarks(dt)
     this.updateDistricts(dt)
+    this.updateWorldCircuit(dt)
     this.updateDronesAndHeat(dt)
     // Horn & scream cooldowns
     this.hornCd = Math.max(0, this.hornCd - dt)
@@ -4050,6 +4483,10 @@ export class GameEngine {
     const upg = this.hooks.getSave().upgrades ?? { engine: 0, nitro: 0, tires: 0, armor: 0, suspension: 0, horn: 0 }
     const engineMul = ENGINE_MUL(upg.engine)
     const tiresMul = TIRES_MUL(upg.tires)
+    // World Circuit (v2): a broken part carries a real driving penalty until
+    // the garage fixes it — a busted engine is slower, a busted tire won't
+    // grip, a busted brake line won't stop you.
+    const bd = breakdownMuls(save.breakdown)
 
     this.boosting = false
     if (this.bustedCooldown > 0) {
@@ -4064,9 +4501,9 @@ export class GameEngine {
 
     if (!frozen && wantBoost && this.boost > 0 && s > 4) {
       this.boosting = true
-      this.boost = Math.max(0, this.boost - 32 * NITRO_DRAIN_MUL(upg.nitro) * dt)
+      this.boost = Math.max(0, this.boost - 32 * NITRO_DRAIN_MUL(upg.nitro) * bd.nitroDrain * dt)
     } else {
-      this.boost = Math.min(100, this.boost + 11 * NITRO_REGEN_MUL(upg.nitro) * dt)
+      this.boost = Math.min(100, this.boost + 11 * NITRO_REGEN_MUL(upg.nitro) * bd.nitroRegen * dt)
     }
 
     if (!frozen) {
@@ -4085,9 +4522,9 @@ export class GameEngine {
       const gasPower = aGas ? THREE.MathUtils.clamp((aThr - 0.12) / 0.43, 0, 1) : 0
       const gas = up || aGas
       const braking = down || (aThr !== null && aThr < -0.12)
-      if (gas) s += ACCEL * engineMul * dmgMul * (aGas && !up ? gasPower : 1) * mult * dt
-      if (braking) s -= (s > 1 ? BRAKE : ACCEL * engineMul * 0.6) * dt
-      const maxS = MAX_SPEED * engineMul * dmgMul * mult
+      if (gas) s += ACCEL * engineMul * dmgMul * bd.accel * (aGas && !up ? gasPower : 1) * mult * dt
+      if (braking) s -= (s > 1 ? BRAKE : ACCEL * engineMul * 0.6) * bd.brake * dt
+      const maxS = MAX_SPEED * engineMul * dmgMul * mult * bd.top
       s = THREE.MathUtils.clamp(s, -10, maxS)
       // The car's honest top speed (upgrades included, damage excluded) — the
       // Patrol's speeding check is 85% of THIS, so tuning MAX_SPEED can never
@@ -4106,7 +4543,7 @@ export class GameEngine {
       const joySteer = this.analogSteer !== null ? this.analogSteer * 0.8 : null
       const aSt = this.padSteer ?? this.swipeSteer ?? joySteer
       const steer = aSt !== null ? -aSt : (left ? 1 : 0) - (right ? 1 : 0)
-      const grip = handbrake ? 1.4 : 7.5 * tiresMul
+      const grip = handbrake ? 1.4 : 7.5 * tiresMul * bd.grip
       // Steering authority normally scales with speed — but a throttle-held
       // crawl must STILL turn (GTA-style). Without this floor, a car rolling
       // at 2 km/h on sand ignores the swipe entirely and feels broken.
@@ -4114,7 +4551,7 @@ export class GameEngine {
         THREE.MathUtils.clamp(Math.abs(s) / 10, 0, 1),
         gas || braking ? 0.35 : 0
       )
-      const turnRate = steer * 2.1 * tiresMul * speedF * (handbrake ? 1.5 : 1)
+      const turnRate = steer * 2.1 * tiresMul * bd.steer * speedF * (handbrake ? 1.5 : 1)
       this.heading += turnRate * dt * Math.sign(s >= 0 ? 1 : -1)
       const newDir = new THREE.Vector3(Math.sin(this.heading), 0, Math.cos(this.heading))
       const lat = this.vel.clone().sub(newDir.clone().multiplyScalar(this.vel.dot(newDir)))
@@ -4204,7 +4641,7 @@ export class GameEngine {
         const dz = this.pos.z - r.z
         const sp = this.vel.length()
         if (dx * dx + dz * dz < 9 && sp > 13) {
-          this.vy = sp * 0.6 * LAUNCH_MUL(upg.suspension ?? 0)
+          this.vy = sp * 0.6 * LAUNCH_MUL(upg.suspension ?? 0) * bd.launch
           this.grounded = false
           this.airTime = 0
           this.synth.jump()
@@ -4390,6 +4827,8 @@ export class GameEngine {
     if (amount <= 0 || this.wrecked) return
     // Roll Cage upgrade soaks a chunk of every impact
     amount *= ARMOR_MUL(this.hooks.getSave().upgrades?.armor ?? 0)
+    // World Circuit (v2): a split radiator runs hot — impacts sting harder
+    amount *= breakdownMuls(this.hooks.getSave().breakdown).dmg
     // First Night is the driving lesson, not the bill: while the tutorial is
     // running, damage caps at 60% — dents and smoke, never a WRECKED screen.
     const cap = this.hooks.getSave().tutorialDone ? 100 : 60
@@ -4458,6 +4897,10 @@ export class GameEngine {
     // The wreck keeps the damage; save it
     const save = this.hooks.getSave()
     save.damage = 100
+    // World Circuit (v2): every WRECK breaks something real. The part stays
+    // broken with a driving penalty until the garage repairs it — and the
+    // run itself (odometer + city zone) is never reset.
+    save.breakdown = rollBreakdown(save.breakdown ?? null)
     this.hooks.commit()
     this.hooks.onWrecked()
   }
@@ -4483,7 +4926,12 @@ export class GameEngine {
     this.vel.set(0, 0, 0)
     this.heat = 0
     this.debugTeleport(this.garagePos.x + 4, this.garagePos.z, Math.PI / 2)
-    this.hooks.onToast(firstTow ? "First tow's on the house — get her repaired" : `Towed to the garage (-$${fee}) — get her repaired`, 'info')
+    const bd = breakdownById(save.breakdown)
+    if (firstTow) {
+      this.hooks.onToast(bd ? `First tow's on the house — ${bd.icon} ${bd.name} broke. Fix it at the garage` : "First tow's on the house — get her repaired", 'info')
+    } else {
+      this.hooks.onToast(bd ? `Towed to the garage (-$${fee}) — ${bd.icon} ${bd.name} broke. Fix it at the garage` : `Towed to the garage (-$${fee}) — get her repaired`, 'info')
+    }
   }
 
   /** Repair quote at the garage: $3 per damage point, capped at $200 (design
@@ -4494,12 +4942,29 @@ export class GameEngine {
     return Math.min(200, Math.ceil(this.damage * 3))
   }
 
-  /** Full repair at the garage. Returns true if paid and fixed. */
+  /** World Circuit (v2): the broken part's repair bill — base cost × distance
+      multiplier (1 + 0.5 × city zone index). Zero when nothing is broken. */
+  breakdownCost(): number {
+    const save = this.hooks.getSave()
+    const bd = breakdownById(save.breakdown)
+    if (!bd) return 0
+    if (save.stats.repairs === 0 && (this.damage >= 1 || save.breakdown)) return 0 // first repair is free
+    return breakdownCost(bd, zoneAt(save.worldKm ?? 0).index)
+  }
+
+  /** Total repair bill at the garage (body + any broken part). */
+  totalRepairCost(): number {
+    return this.repairCost() + this.breakdownCost()
+  }
+
+  /** Full repair at the garage — body damage AND any broken part. Returns
+      true if paid and fixed. The run itself (odometer + city zone) is never
+      touched: you fix what broke and continue the same map. */
   repair(): boolean {
     const save = this.hooks.getSave()
     const firstRepair = save.stats.repairs === 0
-    const cost = this.repairCost()
-    if (this.damage < 1 || save.cash < cost) return false
+    const cost = this.totalRepairCost()
+    if ((this.damage < 1 && !save.breakdown) || save.cash < cost) return false
     save.cash -= cost
     save.stats.repairs += 1
     this.damage = 0
@@ -4507,10 +4972,18 @@ export class GameEngine {
     this.damageWarned50 = false
     this.damageWarned80 = false
     save.damage = 0
+    const bd = breakdownById(save.breakdown)
+    save.breakdown = null
     this.hooks.commit()
     this.applyDamageLook()
     this.synth.missionDone()
-    this.hooks.onToast(firstRepair ? "First repair's on the house — good as new" : `Good as new — repairs done (-$${cost})`, 'good')
+    if (firstRepair) {
+      this.hooks.onToast("First repair's on the house — good as new", 'good')
+    } else if (bd) {
+      this.hooks.onToast(`${bd.icon} ${bd.name} fixed — good as new (-$${cost})`, 'good')
+    } else {
+      this.hooks.onToast(`Good as new — repairs done (-$${cost})`, 'good')
+    }
     return true
   }
 
@@ -5906,6 +6379,18 @@ export class GameEngine {
       look.y += (Math.random() - 0.5) * s
       this.camera.position.y += (Math.random() - 0.5) * s * 0.5
     }
+    // Cinematic "arrival reveal": on entering a new city the camera drifts up
+    // toward the hero landmark for ~2.3s, then eases back — fades out with speed
+    // so it never fights the player mid-chase.
+    if (this.zoneCamT > 0 && this.zoneLandmarkPos) {
+      const w = Math.min(this.zoneCamT / 2.3, 1) * (1 - Math.min(sp / 50, 0.8))
+      if (w > 0.01) {
+        const lm = this.zoneLandmarkPos.clone().add(new THREE.Vector3(0, 55, 0))
+        look.lerp(lm, w * 0.85)
+        this.camera.position.y += w * 5.5
+      }
+      this.zoneCamT = Math.max(0, this.zoneCamT - dt)
+    }
     this.camera.lookAt(look)
     const targetFov = 64 + Math.min(sp * 0.55, 26) + (this.boosting ? 10 : 0)
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(dt * 4, 1)
@@ -6094,6 +6579,12 @@ export class GameEngine {
       lastHitKmh: this.lastHitKmh,
       lastHitCause: this.lastHitCause,
       stuck: (this.stuckTime > 2 || this.stuckLatch > 0) && !this.busted,
+      zone: (() => {
+        const z = zoneAt(this.worldKm)
+        return { id: z.zone.id, name: z.zone.name, landmark: z.zone.landmark, unlockLevel: z.zone.unlockLevel, index: z.index, lap: z.lap, kmInto: z.kmInto, kmToNext: z.kmToNext }
+      })(),
+      worldKm: Math.round(this.worldKm * 10) / 10,
+      breakdown: save.breakdown ?? null,
     })
   }
 
@@ -6477,6 +6968,8 @@ export class GameEngine {
     }
     for (const s of this.shards) if (!s.taken) dot(s.mesh.position.x, s.mesh.position.z, Math.max(S * 0.003, 1.2), '#0891b2')
     for (const c of this.crates) if (c.active) dot(c.mesh.position.x, c.mesh.position.z, Math.max(S * 0.004, 1.6), '#16a34a')
+    // Street pickups (v2): nitro cyan-blue, repair pale green, cash amber
+    for (const p of this.pickups) if (p.active) dot(p.mesh.position.x, p.mesh.position.z, Math.max(S * 0.004, 1.6), p.kind === 'nitro' ? '#38bdf8' : p.kind === 'repair' ? '#86efac' : '#fbbf24')
     for (const lm of this.landmarks) {
       ctx.fillStyle = lm.found ? '#9aa3b2' : '#9333ea'
       const px = toPx(lm.pos.x), pz = toPx(lm.pos.z), r = S * 0.007
@@ -7296,6 +7789,112 @@ export class GameEngine {
         c.respawn = 45
         c.mesh.visible = false
         this.addChain(60, 'Supply crate')
+        this.synth.pickup()
+        this.hooks.commit()
+      }
+    }
+  }
+
+  // =============== STREET PICKUPS (v2) ===============
+  // Three drive-through boosts scattered on the road grid: nitro cans (cyan),
+  // field-repair kits (green cross) and lucky coins (gold). Emissive-only glow
+  // plus a flat halo ring — no extra THREE lights, so phones pay almost
+  // nothing. They float and spin like the crates and read instantly at speed.
+  private spawnPickups(): void {
+    const halo = (color: number): THREE.Mesh => {
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(0.85, 0.05, 8, 24),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false })
+      )
+      ring.rotation.x = -Math.PI / 2
+      ring.position.y = -0.75
+      return ring
+    }
+    const builders: Record<'nitro' | 'repair' | 'cash', () => THREE.Group> = {
+      // Nitro can — tall cyan canister with a bright cap
+      nitro: () => {
+        const g = new THREE.Group()
+        const body = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.26, 0.26, 0.85, 10),
+          new THREE.MeshStandardMaterial({ color: 0x0e7490, emissive: 0x22d3ee, emissiveIntensity: 1.6, roughness: 0.35 })
+        )
+        const cap = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.13, 0.13, 0.2, 8),
+          new THREE.MeshStandardMaterial({ color: 0xecfeff, emissive: 0xa5f3fc, emissiveIntensity: 2.2, roughness: 0.3 })
+        )
+        cap.position.y = 0.52
+        g.add(body, cap, halo(0x22d3ee))
+        return g
+      },
+      // Field-repair kit — white box with a glowing green cross
+      repair: () => {
+        const g = new THREE.Group()
+        const box = new THREE.Mesh(
+          new THREE.BoxGeometry(0.7, 0.55, 0.7),
+          new THREE.MeshStandardMaterial({ color: 0xf1f5f9, emissive: 0x94a3b8, emissiveIntensity: 0.25, roughness: 0.5 })
+        )
+        const crossMat = new THREE.MeshStandardMaterial({ color: 0x16a34a, emissive: 0x4ade80, emissiveIntensity: 1.8, roughness: 0.4 })
+        const barV = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.42, 0.06), crossMat)
+        barV.position.set(0, 0, 0.36)
+        const barH = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.14, 0.06), crossMat)
+        barH.position.set(0, 0, 0.36)
+        g.add(box, barV, barH, halo(0x4ade80))
+        return g
+      },
+      // Lucky coin — fat gold disc on edge, spins like a classic coin pickup
+      cash: () => {
+        const g = new THREE.Group()
+        const coin = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.42, 0.42, 0.09, 20),
+          new THREE.MeshStandardMaterial({ color: 0xb45309, emissive: 0xfbbf24, emissiveIntensity: 1.4, roughness: 0.25, metalness: 0.7 })
+        )
+        coin.rotation.x = Math.PI / 2
+        g.add(coin, halo(0xfbbf24))
+        return g
+      },
+    }
+    const put = (kind: 'nitro' | 'repair' | 'cash', count: number): void => {
+      for (let i = 0; i < count; i++) {
+        const mesh = builders[kind]()
+        const p = roadPoint(Math.random)
+        mesh.position.set(p.x, 1.1, p.z)
+        this.scene.add(mesh)
+        this.pickups.push({ kind, mesh, active: true, respawn: 0 })
+      }
+    }
+    put('nitro', 3)
+    put('repair', 2)
+    put('cash', 3)
+  }
+
+  private updatePickups(dt: number): void {
+    for (const p of this.pickups) {
+      if (!p.active) {
+        p.respawn -= dt
+        if (p.respawn <= 0) {
+          const pt = roadPoint(Math.random, this.pos, 40)
+          p.mesh.position.set(pt.x, 1.1, pt.z)
+          p.mesh.visible = true
+          p.active = true
+        }
+        continue
+      }
+      p.mesh.rotation.y += dt * 2.1
+      p.mesh.position.y = 1.1 + Math.sin(this.time * 3 + p.mesh.position.z) * 0.18
+      if (p.mesh.position.distanceToSquared(this.pos) < 10) {
+        p.active = false
+        p.respawn = 40 + Math.random() * 15
+        p.mesh.visible = false
+        if (p.kind === 'nitro') {
+          this.boost = Math.min(100, this.boost + 35)
+          this.hooks.onToast('⚡ NITRO CAN — boost +35%', 'good')
+        } else if (p.kind === 'repair') {
+          const before = this.damage
+          this.damage = Math.max(0, this.damage - 20)
+          this.hooks.onToast(before > 0 ? '🔧 FIELD KIT — damage −20%' : '🔧 Field kit — already pristine', 'good')
+        } else {
+          this.addChain(35, 'Lucky coin')
+        }
         this.synth.pickup()
         this.hooks.commit()
       }
