@@ -612,6 +612,20 @@ export default function App() {
     }
   }, [assetsReady, enterGame, commit])
 
+  // Live QA hook: ?debug=1 exposes the engine as window.__nh on ANY build, so
+  // the test rig can probe state and place objects on the live site. (Saves
+  // are local-only, so this grants nothing a player couldn't already edit.)
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has('debug')) return
+    const t = window.setInterval(() => {
+      if (engineRef.current) {
+        ;(window as unknown as { __nh?: unknown }).__nh = engineRef.current
+        window.clearInterval(t)
+      }
+    }, 250)
+    return () => window.clearInterval(t)
+  }, [])
+
   // Engine handle for live debugging — development builds only
   useEffect(() => {
     if (import.meta.env.DEV && engineRef.current) {
