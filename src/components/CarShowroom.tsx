@@ -115,7 +115,7 @@ function glowCanvas(): HTMLCanvasElement {
   return c
 }
 
-export default function CarShowroom({ skin, height = 300 }: { skin: Skin; height?: number }) {
+export default function CarShowroom({ skin, height }: { skin: Skin; height?: number }) {
   const host = useRef<HTMLDivElement>(null)
   const state = useRef<{
     renderer: THREE.WebGLRenderer
@@ -218,7 +218,7 @@ export default function CarShowroom({ skin, height = 300 }: { skin: Skin; height
 
     const resize = () => {
       const w = el.clientWidth || 600
-      const h = el.clientHeight || height
+      const h = el.clientHeight || height || 300
       renderer.setSize(w, h, false)
       camera.aspect = w / h
       camera.updateProjectionMatrix()
@@ -276,7 +276,7 @@ export default function CarShowroom({ skin, height = 300 }: { skin: Skin; height
     <div
       ref={host}
       className="car-showroom"
-      style={{ height }}
+      style={height ? { height } : undefined}
       aria-label={`${skin.name} 3D preview`}
     />
   )

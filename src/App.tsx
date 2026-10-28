@@ -2954,7 +2954,7 @@ function ThemePreview({ theme }: { theme: Theme }) {
 function ShowroomPanel({ skin }: { skin: Skin }) {
   return (
     <div className="showroom-panel relative rounded-xl border border-cyan-400/25 bg-slate-900/70 overflow-hidden mb-4">
-      <CarShowroom skin={skin} height={300} />
+      <CarShowroom skin={skin} />
       <div className="absolute left-4 bottom-3 pointer-events-none">
         <div className="text-white font-black tracking-[0.25em] text-lg drop-shadow-[0_0_12px_rgba(34,211,238,0.5)]">{skin.name.toUpperCase()}</div>
         <div className="text-cyan-300/80 text-[11px] tracking-wider mt-0.5">{skin.desc}</div>

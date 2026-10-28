@@ -283,19 +283,24 @@ export function nightPaint(m: THREE.Material, tintColor: THREE.Color | null): TH
   if (tintColor && (BODY_PAINT_RE.test(name) || PANEL_PAINT_RE.test(name))) {
     const src = m as THREE.MeshStandardMaterial
     const shade = PANEL_PAINT_RE.test(name) ? 0.55 : 1
+    // Light paints (alpine white, pearl) blow out under env reflections +
+    // emissive lift and render as unpainted clay — dial their self-light and
+    // sheen down and drop the albedo a touch so the body keeps its shading.
+    const lum = 0.2126 * tintColor.r + 0.7152 * tintColor.g + 0.0722 * tintColor.b
+    const light = lum > 0.72
     return new THREE.MeshPhysicalMaterial({
       name,
       normalMap: src.normalMap ?? null,
       roughnessMap: src.roughnessMap ?? null,
       metalnessMap: src.metalnessMap ?? null,
-      color: tintColor.clone().multiplyScalar(shade),
-      metalness: 1.0,
-      roughness: 0.5,
+      color: tintColor.clone().multiplyScalar(shade * (light ? 0.58 : 1)),
+      metalness: light ? 0.85 : 1.0,
+      roughness: light ? 0.55 : 0.5,
       clearcoat: 1.0,
-      clearcoatRoughness: 0.08,
+      clearcoatRoughness: light ? 0.18 : 0.08,
       emissive: tintColor.clone().multiplyScalar(shade),
-      emissiveIntensity: 0.3,
-      envMapIntensity: 1.4,
+      emissiveIntensity: light ? 0.1 : 0.3,
+      envMapIntensity: light ? 0.7 : 1.4,
     })
   }
   if (CHROME_RE.test(name)) {

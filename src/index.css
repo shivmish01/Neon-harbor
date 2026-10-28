@@ -1423,7 +1423,13 @@
 /* ---------- Garage showroom turntable ---------- */
 .car-showroom {
   width: 100%;
+  height: 300px;
   background: radial-gradient(ellipse at 50% 80%, #0b1226 0%, #04060d 70%);
+}
+/* Short screens (phones sideways, or upright phones in the rotated game box):
+   the turntable shrinks so the car cards stay on screen. */
+@media (max-height: 560px), (orientation: portrait) and (pointer: coarse) and (max-width: 560px) {
+  .car-showroom { height: 168px; }
 }
 .car-showroom canvas {
   width: 100% !important;
