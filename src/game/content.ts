@@ -212,6 +212,19 @@ export const SKINS: Skin[] = [
   { id: 'solar',    name: 'Solar Flare',   desc: 'Molten gold, zero subtlety.',             price: 0,   premium: true,  minLevel: 1, body: 0xd97706, glow: 0xfbbf24, model: 'race', vcId: 'skin.solar' },
   { id: 'oni',      name: 'Cyber Oni',     desc: 'Matte black, demon neon.',                price: 0,   premium: true,  minLevel: 1, body: 0x111114, glow: 0xff2d95, model: 'race', vcId: 'skin.oni' },
   { id: 'aurora',   name: 'Aurora Prime',  desc: 'Prestige chasing-light paint. ' + AURORA_REQUIREMENT + '.', price: 0, premium: true, earned: true, minLevel: 1, body: 0x0ea5e9, glow: 0xa5f3fc, model: 'race' },
+
+  // ---------- THE SHOWROOM FLEET (real PBR models, clearcoat paint) ----------
+  // Cash-only cars — VCoin catalog entries are owned by the vplay.gg side.
+  { id: 'lowrider',    name: 'Bay Lowrider',    desc: 'Candy paint, chrome for days, harbor cruise.',      price: 1300, premium: false, minLevel: 1, body: 0x7e22ce, glow: 0xc084fc, model: 'lowrider' },
+  { id: 'autobahn',    name: 'Autobahn GT',     desc: 'Executive grand tourer. A boardroom on wheels.',    price: 1400, premium: false, minLevel: 2, body: 0x8694a6, glow: 0x67e8f9, model: 'autobahn' },
+  { id: 'muscle',      name: 'Dockside Muscle', desc: 'V8 thunder all the way down the pier.',             price: 1500, premium: false, minLevel: 2, body: 0x9f1d1d, glow: 0xf97316, model: 'muscle' },
+  { id: 'trailmark',   name: 'Trailmark 4×4',   desc: 'Boxy off-roader. Curbs are merely suggestions.',    price: 1600, premium: false, minLevel: 2, body: 0x5a6b3a, glow: 0xffb020, model: 'trailmark' },
+  { id: 'rally',       name: 'Apex Rally',      desc: 'Mud-flap energy. Podium optional.',                 price: 1500, premium: false, minLevel: 3, body: 0xf1f5f9, glow: 0xfde047, model: 'rally' },
+  { id: 'voltdragon',  name: 'Volt Dragon',     desc: 'Silent electric hatch. Gone before the light turns.', price: 1800, premium: false, minLevel: 3, body: 0xe8ecef, glow: 0x22d3ee, model: 'voltdragon' },
+  { id: 'bavaria',     name: 'Bavaria M',       desc: 'Alpine sport coupe. Apex predator.',                price: 2200, premium: false, minLevel: 4, body: 0xdfe6ee, glow: 0x3b82f6, model: 'bavaria' },
+  { id: 'hauler',      name: 'Harbor Hauler',   desc: 'Armored heavy. Traffic makes way.',                 price: 2600, premium: false, minLevel: 5, body: 0xb45309, glow: 0xff8a3c, model: 'hauler' },
+  { id: 'limo',        name: 'Harbor Limo',     desc: 'Stretch it. You earned the back seat.',             price: 3000, premium: false, minLevel: 5, body: 0x14161c, glow: 0xfde68a, model: 'limo' },
+  { id: 'futureliner', name: 'Futureliner',     desc: 'Concept hover-car. The future called shotgun.',     price: 3200, premium: false, minLevel: 6, body: 0x4c1d95, glow: 0xe879f9, model: 'futureliner' },
 ]
 
 // ---------- ENVIRONMENT THEMES ----------

@@ -41,6 +41,9 @@ const CITY_MODELS = [...SKYSCRAPERS, ...MIDRISE, ...LOWRISE, ...DETAILS]
 const CAR_MODELS = [
   'sedan', 'sedan-sports', 'hatchback-sports', 'taxi', 'police', 'suv', 'suv-luxury',
   'van', 'race', 'delivery', 'ambulance', 'firetruck',
+  // The showroom fleet (CC0, Grab3D Cozy kits): real PBR paint + separate wheels.
+  'autobahn', 'trailmark', 'muscle', 'lowrider', 'rally', 'voltdragon',
+  'bavaria', 'hauler', 'limo', 'futureliner',
 ]
 
 const CHAR_BASE = import.meta.env.BASE_URL + 'models/chars/'
@@ -262,6 +265,77 @@ function grayscaleMap(src: THREE.Texture): THREE.Texture {
   return tex
 }
 
+/** Showroom-fleet materials (Grab3D kits) are named `<slug>_<part>_x` —
+    the paint job is `body_pbr`, secondary painted panels are `paint_x`,
+    brightwork is `chrome_x`. These get real clearcoat paint instead of a
+    multiply-tinted texture, which is what makes them read as metal. */
+const BODY_PAINT_RE = /_body_pbr(\.\d+)?$/
+const PANEL_PAINT_RE = /_paint_x(\.\d+)?$/
+const CHROME_RE = /_chrome_x(\.\d+)?$/
+
+/** One material through the night-paint booth. Exported so the garage
+    showroom renders cars EXACTLY the way the game paints them. */
+export function nightPaint(m: THREE.Material, tintColor: THREE.Color | null): THREE.Material {
+  const name = m.name || ''
+  // Clearcoat paint: keep the sculpted normal/metal-rough detail maps, drop the
+  // colored albedo (it would fight the tint) and lay the skin hue under a
+  // glossy clearcoat — the Asphalt-style paint stack.
+  if (tintColor && (BODY_PAINT_RE.test(name) || PANEL_PAINT_RE.test(name))) {
+    const src = m as THREE.MeshStandardMaterial
+    const shade = PANEL_PAINT_RE.test(name) ? 0.55 : 1
+    return new THREE.MeshPhysicalMaterial({
+      name,
+      normalMap: src.normalMap ?? null,
+      roughnessMap: src.roughnessMap ?? null,
+      metalnessMap: src.metalnessMap ?? null,
+      color: tintColor.clone().multiplyScalar(shade),
+      metalness: 1.0,
+      roughness: 0.5,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.08,
+      emissive: tintColor.clone().multiplyScalar(shade),
+      emissiveIntensity: 0.3,
+      envMapIntensity: 1.4,
+    })
+  }
+  if (CHROME_RE.test(name)) {
+    const c = (m as THREE.MeshStandardMaterial).clone()
+    c.metalness = 1.0
+    c.roughness = 0.14
+    c.envMapIntensity = 1.8
+    return c
+  }
+  const c = (m as THREE.MeshStandardMaterial).clone()
+  if (tintColor) {
+    c.color.multiply(tintColor)
+    // Palette-textured paint (Kenney kit): multiply-tint goes muddy after dark,
+    // so re-light the car with a LUMINANCE copy of its texture as the emissive
+    // map — the night glow carries the pure skin hue (shading from texel
+    // brightness), instead of hue × texture color (= brown sludge).
+    if (c.map) {
+      c.emissiveMap = grayscaleMap(c.map)
+      c.emissive.copy(tintColor)
+      c.emissiveIntensity = 0.7
+    } else {
+      // pure skin hue as self-light — never the multiplied (muddy) color
+      c.emissive.copy(tintColor)
+      c.emissiveIntensity = 0.5
+    }
+    c.roughness = Math.min(c.roughness, 0.38)
+    c.metalness = Math.max(c.metalness, 0.45)
+  } else {
+    // baked palettes (taxi/police): gentle self-lift so they don't vanish
+    const lum = 0.2126 * c.color.r + 0.7152 * c.color.g + 0.0722 * c.color.b
+    if (lum > 0.06) {
+      c.emissive.copy(c.color)
+      c.emissiveIntensity = 0.16
+      c.roughness = Math.min(c.roughness, 0.38)
+      c.metalness = Math.max(c.metalness, 0.45)
+    }
+  }
+  return c
+}
+
 /** Clone a car template and optionally tint its paint (color multiplies the palette).
     Every car gets the "night paint" treatment: glossy clearcoat + a soft emissive
     self-tint so body color still reads under the night sky instead of going muddy. */
@@ -272,38 +346,9 @@ export function cloneCar(assets: GameAssets, model: string, tint?: number): THRE
   inst.traverse((o) => {
     const mesh = o as THREE.Mesh
     if (!mesh.isMesh) return
-    const nightMat = (m: THREE.Material): THREE.Material => {
-      const c = (m as THREE.MeshStandardMaterial).clone()
-      if (tintColor) {
-        c.color.multiply(tintColor)
-        // Palette-textured paint (Kenney kit): multiply-tint goes muddy after dark,
-        // so re-light the car with a LUMINANCE copy of its texture as the emissive
-        // map — the night glow carries the pure skin hue (shading from texel
-        // brightness), instead of hue × texture color (= brown sludge).
-        if (c.map) {
-          c.emissiveMap = grayscaleMap(c.map)
-          c.emissive.copy(tintColor)
-          c.emissiveIntensity = 0.7
-        } else {
-          // pure skin hue as self-light — never the multiplied (muddy) color
-          c.emissive.copy(tintColor)
-          c.emissiveIntensity = 0.5
-        }
-        c.roughness = Math.min(c.roughness, 0.38)
-        c.metalness = Math.max(c.metalness, 0.45)
-      } else {
-        // baked palettes (taxi/police): gentle self-lift so they don't vanish
-        const lum = 0.2126 * c.color.r + 0.7152 * c.color.g + 0.0722 * c.color.b
-        if (lum > 0.06) {
-          c.emissive.copy(c.color)
-          c.emissiveIntensity = 0.16
-          c.roughness = Math.min(c.roughness, 0.38)
-          c.metalness = Math.max(c.metalness, 0.45)
-        }
-      }
-      return c
-    }
-    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(nightMat) : nightMat(mesh.material)
+    mesh.material = Array.isArray(mesh.material)
+      ? mesh.material.map((m) => nightPaint(m, tintColor))
+      : nightPaint(mesh.material, tintColor)
   })
   const g = new THREE.Group()
   g.add(inst)

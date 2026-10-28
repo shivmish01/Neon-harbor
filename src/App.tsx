@@ -17,6 +17,8 @@ import { CREWS, CREW_STEPS, HOME_TURF_BONUS, crewFor, crewRep, districtOwned, di
 import { VPlay, type VPlayInit, type PurchaseResult } from './vplay/sdk'
 import { BUILD_HASH, BUILD_TIME } from './gen-build'
 import HowToPlay from './components/HowToPlay'
+import CarShowroom from './components/CarShowroom'
+import { getSkin } from './game/content'
 
 type Screen = 'boot' | 'menu' | 'game'
 type Overlay = null | 'shop' | 'jobs' | 'pause' | 'help' | 'progress' | 'map'
@@ -42,6 +44,9 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('boot')
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [shopTab, setShopTab] = useState<'skins' | 'themes' | 'upgrades'>('skins')
+  // The car on the showroom turntable — follows the equipped skin until the
+  // player taps another card.
+  const [showSkinId, setShowSkinId] = useState<string | null>(null)
   const [progressTab, setProgressTab] = useState<'trophies' | 'districts'>('trophies')
   // Every district is open: a returning player picks where tonight starts.
   const [startDistrict, setStartDistrict] = useState('downtown')
@@ -2480,6 +2485,10 @@ export default function App() {
               <button onClick={() => setShopTab('upgrades')} className={`shop-tab ${shopTab === 'upgrades' ? 'shop-tab-on' : ''}`}>UPGRADES</button>
             </div>
 
+            {shopTab === 'skins' && (
+              <ShowroomPanel skin={getSkin(showSkinId ?? save.skin)} />
+            )}
+
             {shopTab === 'upgrades' && (
               <div className="grid md:grid-cols-3 gap-3 mb-1">
                 {UPGRADES.map((u) => {
@@ -2530,6 +2539,7 @@ export default function App() {
                   onBuy={() => buyItem(item.id, item.price, item.premium, item.minLevel)}
                   onBuyVc={item.vcId ? () => buyVc(item.id, item.vcId!) : undefined}
                   onEquip={() => equipItem(item.id)}
+                  onSelect={() => setShowSkinId(item.id)}
                 />
               ))}
               {shopTab === 'themes' && THEMES.map((item: Theme) => (
@@ -2940,6 +2950,20 @@ function ThemePreview({ theme }: { theme: Theme }) {
 }
 
 // ---------- Shop item card ----------
+// ---------- Garage showroom: the selected car on a live turntable ----------
+function ShowroomPanel({ skin }: { skin: Skin }) {
+  return (
+    <div className="showroom-panel relative rounded-xl border border-cyan-400/25 bg-slate-900/70 overflow-hidden mb-4">
+      <CarShowroom skin={skin} height={300} />
+      <div className="absolute left-4 bottom-3 pointer-events-none">
+        <div className="text-white font-black tracking-[0.25em] text-lg drop-shadow-[0_0_12px_rgba(34,211,238,0.5)]">{skin.name.toUpperCase()}</div>
+        <div className="text-cyan-300/80 text-[11px] tracking-wider mt-0.5">{skin.desc}</div>
+      </div>
+      <div className="absolute right-4 top-3 text-[10px] tracking-[0.2em] text-slate-400/80 pointer-events-none">TAP A CARD TO PREVIEW</div>
+    </div>
+  )
+}
+
 function ShopCard(props: {
   name: string
   desc: string
@@ -2958,6 +2982,7 @@ function ShopCard(props: {
   onBuy: () => void
   onBuyVc?: () => void
   onEquip: () => void
+  onSelect?: () => void // tap the card to put this car on the showroom turntable
 }) {
   const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`
   const levelBlocked = props.level < props.minLevel
@@ -2971,7 +2996,10 @@ function ShopCard(props: {
     </button>
   )
   return (
-    <div className={`shop-item relative rounded-xl border p-3 bg-slate-800/60 transition-all ${props.isEquipped ? 'border-cyan-400 shadow-[0_0_16px_rgba(34,211,238,0.35)]' : 'border-slate-700 hover:border-slate-500'}`}>
+    <div
+      onClick={props.onSelect}
+      className={`shop-item relative rounded-xl border p-3 bg-slate-800/60 transition-all ${props.isEquipped ? 'border-cyan-400 shadow-[0_0_16px_rgba(34,211,238,0.35)]' : 'border-slate-700 hover:border-slate-500'} ${props.onSelect ? 'cursor-pointer' : ''}`}
+    >
       {props.earned && (
         <div className="absolute -top-2 -right-2 bg-cyan-400 text-black text-[10px] font-black px-2 py-0.5 rounded-full">🏆 EARNED</div>
       )}

@@ -1419,3 +1419,14 @@
 .shop-bd { box-shadow: 0 0 16px rgba(248, 113, 113, 0.12); }
 .shop-bd .repair-title { font-size: 12px; }
 .shop-bd .repair-desc { max-width: 17rem; }
+
+/* ---------- Garage showroom turntable ---------- */
+.car-showroom {
+  width: 100%;
+  background: radial-gradient(ellipse at 50% 80%, #0b1226 0%, #04060d 70%);
+}
+.car-showroom canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
