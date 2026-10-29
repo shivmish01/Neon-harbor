@@ -399,6 +399,10 @@ export class GameEngine {
   private ride = { violations: 0, clean: true, tipBonus: 0, speedT: 0, toastCd: 0, lastDamage: 0, wasDrifting: false, lightCd: [0, 0, 0, 0] }
   /** Camera mode: 0 = near chase, 1 = far chase, 2 = cockpit (in-car). */
   private camMode: 0 | 1 | 2 = 0
+  /** Flyover state: active deck surface + hurdle meshes (one flyover per city). */
+  private flySurf = { on: false, y: 0, deckY: 0, lat: 0 }
+  private zoneHurdles: Map<string, { mesh: THREE.Mesh; r: number; hitCd: number }[]> = new Map()
+  private fallStartY = 0
   private rain: THREE.Points | null = null
   private rainVel: Float32Array | null = null
   private waterTex: THREE.Texture | null = null
@@ -3218,6 +3222,100 @@ export class GameEngine {
         }
       }
     }
+    // 1.10) Driveable flyover — an elevated deck on one lane of this city.
+    //      Drive up the ramp, cross over the traffic below, and if this
+    //      city has no edge rails (London, Mumbai, Harbor) drifting off the
+    //      deck is a real fall. Hurdles on the deck are per-city.
+    const fo = zone.arch?.flyover
+    if (fo) {
+      const fc = laneC(fo.lane)
+      const W = 9
+      const ramp = 45
+      const deckY = fo.h
+      const deckMat = new THREE.MeshStandardMaterial({ color: 0x3a4148, roughness: 0.85 })
+      const railMat = new THREE.MeshStandardMaterial({ color: 0x8a2020, roughness: 0.6, metalness: 0.4 })
+      const colMat = new THREE.MeshStandardMaterial({ color: 0x2c3238, roughness: 0.9 })
+      // deck (deck along z-axis if |a0| orientation; flyovers here run along z)
+      const deck = new THREE.Mesh(new THREE.BoxGeometry(W, 0.7, fo.a1 - fo.a0), deckMat)
+      deck.position.set(fc, deckY, (fo.a0 + fo.a1) / 2)
+      parent.add(deck)
+      // approach ramps (rise from 0 to deckY over 45m on each side)
+      for (const end of [fo.a0, fo.a1]) {
+        const dirZ = end === fo.a0 ? 1 : -1
+        const rampMesh = new THREE.Mesh(new THREE.BoxGeometry(W, 0.7, ramp + 2), deckMat)
+        rampMesh.rotation.x = dirZ * Math.atan2(deckY, ramp + 2)
+        rampMesh.position.set(fc, deckY / 2, end - dirZ * ((ramp + 2) / 2))
+        parent.add(rampMesh)
+        // columns
+        for (let c = 0; c < Math.floor(ramp / 22); c++) {
+          const col = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.75, deckY, 8), colMat)
+          col.position.set(fc + (W / 2 - 2) * (c % 2 === 0 ? 1 : -1), deckY / 2, end - dirZ * (c * 22 + 10))
+          parent.add(col)
+        }
+      }
+      // columns under the deck every 44m
+      for (let z = fo.a0 + 22; z < fo.a1 - 10; z += 44) {
+        for (const side of [-1, 1]) {
+          const col = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.75, deckY, 8), colMat)
+          col.position.set(fc + (W / 2 - 2) * side, deckY / 2, z)
+          parent.add(col)
+        }
+      }
+      // edge rails (only rail cities) — without them the edge is a drop
+      if (fo.rail) {
+        for (const side of [-1, 1]) {
+          const rail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.1, fo.a1 - fo.a0 + 90), railMat)
+          rail.position.set(fc + (W / 2 - 0.3) * side, deckY + 0.75, (fo.a0 + fo.a1) / 2)
+          parent.add(rail)
+          for (const end of [fo.a0, fo.a1]) {
+            const pr = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.1, 48), railMat)
+            pr.rotation.x = Math.atan2(deckY, ramp + 2)
+            pr.position.set(fc + (W / 2 - 0.3) * side, deckY / 2, end - (end === fo.a0 ? 1 : -1) * 24)
+            parent.add(pr)
+          }
+        }
+      }
+      // per-city deck hurdles — damage on contact
+      const hurdleCfg: Record<string, { mat: number; kind: 'cone' | 'box' | 'cart' | 'barrier' | 'container'; n: number }> = {
+        london: { mat: 0x8a3428, kind: 'box', n: 5 },
+        paris: { mat: 0xe8e4da, kind: 'barrier', n: 6 },
+        beijing: { mat: 0xd04a3a, kind: 'cone', n: 7 },
+        mumbai: { mat: 0x8a6a3a, kind: 'cart', n: 6 },
+        tokyo: { mat: 0x4a7fd0, kind: 'cone', n: 7 },
+        newyork: { mat: 0x5a6eb0, kind: 'barrier', n: 6 },
+        harbor: { mat: 0x2a9d8f, kind: 'container', n: 5 },
+      }
+      const hc = hurdleCfg[zid] ?? hurdleCfg.tokyo
+      const hGeo = hc.kind === 'cone'
+        ? new THREE.ConeGeometry(0.5, 1.4, 8)
+        : hc.kind === 'container'
+          ? new THREE.BoxGeometry(2.6, 2.2, 2.4)
+          : hc.kind === 'cart'
+            ? new THREE.BoxGeometry(1.7, 1.4, 2.2)
+            : new THREE.BoxGeometry(2.2, 1.0, 0.4)
+      const hMat = new THREE.MeshStandardMaterial({ color: hc.mat, roughness: 0.7 })
+      const hRand = seededRand(9100 + (zone.arch?.winOffset ?? 0))
+      const hurdles: { mesh: THREE.Mesh; r: number; hitCd: number }[] = []
+      for (let i = 0; i < hc.n; i++) {
+        const along = fo.a0 + 20 + hRand() * (fo.a1 - fo.a0 - 40)
+        const lat = (hRand() - 0.5) * (W - 3.2)
+        const hm = new THREE.Mesh(hGeo, hMat)
+        hm.position.set(fc + lat, deckY + 0.35, along)
+        hm.rotation.y = hRand() * Math.PI
+        parent.add(hm)
+        hurdles.push({ mesh: hm, r: hc.kind === 'cone' ? 1.6 : hc.kind === 'container' ? 2.6 : 2.2, hitCd: 0 })
+      }
+      // ground hurdle pair near each ramp approach
+      for (const end of [fo.a0, fo.a1]) {
+        const ghm = new THREE.Mesh(hGeo, hMat)
+        ghm.position.set(fc - 2.6, 0.35, end - (end === fo.a0 ? -14 : 14))
+        ghm.rotation.y = hRand() * Math.PI
+        parent.add(ghm)
+        hurdles.push({ mesh: ghm, r: hc.kind === 'cone' ? 1.6 : 2.2, hitCd: 0 })
+      }
+      this.zoneHurdles.set(zid, hurdles)
+      this.flySurf.deckY = deckY
+    }
   }
 
   /** Build one landmark group per zone — placed just outside the city square
@@ -6006,23 +6104,106 @@ export class GameEngine {
         }
       }
     }
+    // Flyover surface: the city's elevated deck + ramps define a ground
+    // height. Ride it when grounded on it; drift off an un-railed edge and
+    // you fall for real (landing damage at the bottom).
+    const curSt = zoneAt(this.worldKm)
+    const curZone = curSt.zone
+    const curFo = curZone.arch?.flyover
+    const fo = curFo
+      ? { lane: curFo.lane, a0: curFo.a0, a1: curFo.a1, h: curFo.h, rail: curFo.rail, W: 9 }
+      : null
+    let surfY = 0
+    let surfOn = false
+    if (fo && this.grounded) {
+      const fc = -HALF + ROAD / 2 + fo.lane * CELL
+      const lat = this.pos.x - fc
+      const along = this.pos.z
+      const ramp = 45
+      if (Math.abs(lat) < fo.W / 2 && along > fo.a0 - ramp - 1 && along < fo.a1 + ramp + 1) {
+        if (along < fo.a0) {
+          surfY = fo.h * ((along - (fo.a0 - ramp)) / ramp)
+          surfOn = true
+        } else if (along > fo.a1) {
+          surfY = fo.h * (1 - (along - fo.a1) / ramp)
+          surfOn = true
+        } else if (this.pos.y > fo.h - 1.6) {
+          // on the deck (or dropped onto it from above)
+          surfY = fo.h
+          surfOn = true
+        }
+      }
+      // leaving the deck edge while riding it = a real fall
+      if (surfOn && Math.abs(lat) > fo.W / 2 - 0.4) {
+        surfOn = false
+        this.grounded = false
+        this.vy = 0
+        this.fallStartY = Math.max(this.pos.y, surfY)
+      }
+      if (surfOn) {
+        this.pos.y = surfY
+        this.grounded = true
+        this.vy = 0
+        this.airTime = 0
+      } else if (this.pos.y > 0.6) {
+        // grounded but the deck/ramp is gone under the wheels — real fall
+        this.grounded = false
+        this.vy = 0
+        this.fallStartY = Math.max(this.pos.y, 0)
+      }
+    }
     if (!this.grounded) {
       this.vy -= 26 * dt
       this.pos.y += this.vy * dt
       this.airTime += dt
-      if (this.pos.y <= 0) {
-        this.pos.y = 0
+      if (this.pos.y <= surfY) {
+        const drop = this.fallStartY - surfY
+        this.pos.y = surfY
         this.grounded = true
         if (this.airTime > 0.55) {
           this.addChain(this.airTime * 90, 'Airtime')
         }
         this.landJumpCred()
         this.vy = 0
+        if (drop > 3) {
+          this.lastHitKmh = Math.round(drop * 2)
+          this.lastHitCause = 'fell off the flyover'
+          this.addDamage(drop * 2.2)
+          this.hooks.onToast(`Fell off the flyover — ${Math.round(drop)}m drop!`, 'warn')
+          this.synth.checkpoint()
+        }
+        this.fallStartY = 0
       }
     }
+    this.flySurf.on = surfOn
+    this.flySurf.y = surfY
+    if (surfOn) this.flySurf.lat = this.pos.x - (-HALF + ROAD / 2 + fo!.lane * CELL)
 
     this.pos.addScaledVector(this.vel, dt)
     this.collide()
+    // Road hurdles (per-city): cones, barriers, carts, containers — hit one
+    // and it costs damage + a knock. Only active in the current city.
+    const curHurdles = this.zoneHurdles.get(curZone.id) ?? []
+    if (curHurdles.length) {
+      for (const h of curHurdles) {
+        h.hitCd = Math.max(0, h.hitCd - dt)
+        if (h.hitCd > 0) continue
+        const dx = this.pos.x - h.mesh.position.x
+        const dz = this.pos.z - h.mesh.position.z
+        if (dx * dx + dz * dz < h.r * h.r) {
+          const sp = this.vel.length()
+          if (sp > 5) {
+            this.lastHitKmh = Math.round(sp * 3.6)
+            this.lastHitCause = 'a road hurdle'
+            this.addDamage(7 + Math.min(10, sp))
+            const away = new THREE.Vector3(dx, 0, dz).normalize().multiplyScalar(4)
+            this.vel.add(away)
+            h.hitCd = 1.2
+            this.synth.checkpoint()
+          }
+        }
+      }
+    }
 
     // Drift scoring + tire smoke
     const spNow = this.vel.length()
