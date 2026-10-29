@@ -3073,6 +3073,37 @@ export class GameEngine {
     const zid = zone.id
     const r = seededRand(7700 + (zone.arch?.winOffset ?? 0))
     const laneC = (l: number) => -HALF + ROAD / 2 + l * CELL
+    // Per-city tarmac: the surface itself is different — texture AND width.
+    // London lays wet black, Paris cobbles, Beijing light concrete, Mumbai
+    // dusty worn, Tokyo clean asphalt, NY grey + manholes, Harbor slabs.
+    const tarmac: Record<string, { kind: string; w: number }> = {
+      harbor: { kind: 'industrial', w: 18 },
+      london: { kind: 'wet', w: 12 },
+      paris: { kind: 'cobble', w: 13 },
+      beijing: { kind: 'concrete', w: 17 },
+      mumbai: { kind: 'dusty', w: 13 },
+      tokyo: { kind: 'clean', w: 14 },
+      newyork: { kind: 'grey', w: 15 },
+    }
+    const tm = tarmac[zid] ?? tarmac.harbor
+    const asphaltTex = makeAsphaltTexture(tm.kind)
+    const asphaltMat = new THREE.MeshStandardMaterial({ map: asphaltTex, roughness: 0.92, metalness: 0 })
+    const asGeomH = new THREE.PlaneGeometry(SIZE + 6, tm.w)
+    const asGeomV = new THREE.PlaneGeometry(tm.w, SIZE + 6)
+    for (const l of [3, 4, 5, 6]) {
+      const c = laneC(l)
+      const ah = new THREE.Mesh(asGeomH, asphaltMat)
+      ah.rotation.x = -Math.PI / 2
+      ah.position.set(0, 0.015, c)
+      parent.add(ah)
+      const av = new THREE.Mesh(asGeomV, asphaltMat)
+      av.rotation.x = -Math.PI / 2
+      av.rotation.z = Math.PI / 2
+      av.position.set(c, 0.015, 0)
+      parent.add(av)
+      // keep texture scale readable: ~9m per tile along the road
+      if (asphaltMat.map) asphaltMat.map.repeat.set((SIZE + 6) / 9, tm.w / 9)
+    }
     const strip = (mat: THREE.Material, off: number, wid: number, w = 340, y = 0.04) => {
       const hGeom = new THREE.BoxGeometry(w, 0.07, wid)
       const vGeom = new THREE.BoxGeometry(wid, 0.07, w)
@@ -9547,6 +9578,121 @@ function roadPoint(rand: () => number, from?: THREE.Vector3, minDist = 0): THREE
     ochre (Mumbai), pale panels (Tokyo), dark brick (New York). Pattern +
     grime + accent trim make walls read as a real material, not flat paint.
     Tiles 5×5 per face so the texture is visible at street level. */
+function makeAsphaltTexture(kind: string): THREE.Texture {
+  // Per-city tarmac: the ground a driver actually stares at. Each city lays
+  // its own pavement — London's wet black, Paris cobbles, Beijing light
+  // concrete, Mumbai's dusty worn surface, Tokyo's clean asphalt, New York's
+  // grey with manholes, Harbor's industrial slabs.
+  const cv = document.createElement('canvas')
+  cv.width = 256
+  cv.height = 256
+  const ctx = cv.getContext('2d')
+  if (!ctx) return new THREE.CanvasTexture(cv)
+  let seed = 23
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+  const W = 256
+  const h = (c: string, a = 1) => {
+    const [r, g, b] = c.split(',').map(Number)
+    return `rgba(${r},${g},${b},${a})`
+  }
+  if (kind === 'cobble') {
+    // Paris: blue-grey rounded cobbles with mortar grooves
+    ctx.fillStyle = '#8b8d96'
+    ctx.fillRect(0, 0, W, W)
+    for (let row = 0; row < 16; row++) {
+      for (let col = 0; col < 16; col++) {
+        const shade = 0.82 + rnd() * 0.36
+        ctx.fillStyle = h(`${Math.round(120 * shade)},${Math.round(124 * shade)},${Math.round(135 * shade)}`)
+        ctx.beginPath()
+        ctx.arc(col * 16 + 8, row * 16 + 8, 6.4, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+  } else if (kind === 'wet') {
+    // London: near-black wet tarmac, oily sheen patches
+    ctx.fillStyle = '#17181d'
+    ctx.fillRect(0, 0, W, W)
+    for (let i = 0; i < 46; i++) {
+      const x = rnd() * W, y = rnd() * W, r = 4 + rnd() * 14
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r)
+      g.addColorStop(0, 'rgba(70,78,95,0.18)')
+      g.addColorStop(1, 'rgba(70,78,95,0)')
+      ctx.fillStyle = g
+      ctx.fillRect(x - r, y - r, r * 2, r * 2)
+    }
+    for (let i = 0; i < 30; i++) {
+      ctx.fillStyle = 'rgba(255,255,255,0.05)'
+      ctx.fillRect(rnd() * W, rnd() * W, 1, 40)
+    }
+  } else if (kind === 'concrete') {
+    // Beijing: light grey concrete with form seams + hairline cracks
+    ctx.fillStyle = '#a9abb3'
+    ctx.fillRect(0, 0, W, W)
+    for (let x = 32; x < W; x += 64) { ctx.fillStyle = 'rgba(60,64,74,0.5)'; ctx.fillRect(x, 0, 3, W) }
+    for (let y = 32; y < W; y += 64) { ctx.fillStyle = 'rgba(60,64,74,0.35)'; ctx.fillRect(0, y, W, 2) }
+    for (let i = 0; i < 8; i++) {
+      ctx.fillStyle = 'rgba(70,74,84,0.4)'
+      ctx.fillRect(rnd() * W, rnd() * W, 2, 20 + rnd() * 40)
+    }
+  } else if (kind === 'dusty') {
+    // Mumbai: worn dusty tarmac, brown dust, cracks, faded patches
+    ctx.fillStyle = '#4a4238'
+    ctx.fillRect(0, 0, W, W)
+    for (let i = 0; i < 40; i++) {
+      const x = rnd() * W, y = rnd() * W, r = 6 + rnd() * 22
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r)
+      g.addColorStop(0, 'rgba(150,120,72,0.30)')
+      g.addColorStop(1, 'rgba(150,120,72,0)')
+      ctx.fillStyle = g
+      ctx.fillRect(x - r, y - r, r * 2, r * 2)
+    }
+    for (let i = 0; i < 20; i++) { ctx.fillStyle = 'rgba(10,10,10,0.5)'; ctx.fillRect(rnd() * W, rnd() * W, 2, 12 + rnd() * 50) }
+  } else if (kind === 'clean') {
+    // Tokyo: fine dark asphalt, even, faint blue cast
+    ctx.fillStyle = '#22242c'
+    ctx.fillRect(0, 0, W, W)
+    for (let i = 0; i < 500; i++) {
+      const v = 30 + rnd() * 24
+      ctx.fillStyle = `rgba(${v},${Math.round(v * 1.06)},${Math.round(v * 1.22)},0.6)`
+      ctx.fillRect(rnd() * W, rnd() * W, 1.4, 1.4)
+    }
+  } else if (kind === 'grey') {
+    // New York: grey asphalt, manhole rings, utility seams
+    ctx.fillStyle = '#565a62'
+    ctx.fillRect(0, 0, W, W)
+    for (let i = 0; i < 380; i++) {
+      const v = 78 + rnd() * 34
+      ctx.fillStyle = `rgba(${v},${Math.round(v * 1.02)},${Math.round(v * 1.06)},0.55)`
+      ctx.fillRect(rnd() * W, rnd() * W, 1.6, 1.6)
+    }
+    for (let i = 0; i < 3; i++) {
+      const x = 40 + rnd() * 176, y = 40 + rnd() * 176
+      ctx.strokeStyle = 'rgba(28,30,36,0.8)'
+      ctx.lineWidth = 3
+      ctx.beginPath(); ctx.arc(x, y, 14, 0, Math.PI * 2); ctx.stroke()
+      ctx.fillStyle = 'rgba(28,30,36,0.5)'; ctx.fillRect(x - 10, y - 1.2, 20, 2.4)
+    }
+  } else {
+    // Harbor: industrial concrete slabs with expansion gaps + oil stains
+    ctx.fillStyle = '#3a3f4a'
+    ctx.fillRect(0, 0, W, W)
+    for (let x = 0; x < W; x += 85) { ctx.fillStyle = 'rgba(15,18,24,0.85)'; ctx.fillRect(x, 0, 3, W) }
+    for (let y = 0; y < W; y += 85) { ctx.fillStyle = 'rgba(15,18,24,0.65)'; ctx.fillRect(0, y, W, 2) }
+    for (let i = 0; i < 26; i++) {
+      const x = rnd() * W, y = rnd() * W, r = 5 + rnd() * 16
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r)
+      g.addColorStop(0, 'rgba(10,12,16,0.55)')
+      g.addColorStop(1, 'rgba(10,12,16,0)')
+      ctx.fillStyle = g
+      ctx.fillRect(x - r, y - r, r * 2, r * 2)
+    }
+  }
+  const tex = new THREE.CanvasTexture(cv)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
 function makeFacadeTexture(kind: string, base: number, accent: number): THREE.Texture {
   const cv = document.createElement('canvas')
   cv.width = 256
