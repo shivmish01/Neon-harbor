@@ -29,6 +29,33 @@ export class Synth {
   private nextNoteTime = 0
   private step = 0
   musicOn = false
+  /** Per-city music identity — each World Circuit zone gets its own key,
+      tempo and groove so London feels like a rainy brass walk, Beijing a
+      golden-roof pentatonic stroll, Mumbai a tabla pulse, Tokyo a neon
+      city-pop arp. */
+  private static readonly ZONE_MUSIC: Record<string, { bpm: number; chords: number[][]; basses: number[]; arpType?: OscillatorType; arpJump?: number; hatAll?: boolean }> = {
+    harbor: { bpm: 104, chords: [[220, 261.63, 329.63], [174.61, 220, 261.63], [261.63, 329.63, 392], [196, 246.94, 392]], basses: [55, 43.65, 65.41, 49] },
+    london: { bpm: 92, chords: [[220, 261.63, 329.63], [196, 246.94, 392], [174.61, 220, 261.63], [164.81, 220, 246.94]], basses: [55, 49, 43.65, 41.2], arpType: 'triangle' },
+    paris: { bpm: 100, chords: [[261.63, 329.63, 392], [220, 261.63, 329.63], [174.61, 220, 261.63], [196, 246.94, 392]], basses: [65.41, 55, 43.65, 49], arpType: 'triangle' },
+    beijing: { bpm: 96, chords: [[261.63, 329.63, 392], [293.66, 369.99, 440], [329.63, 392, 493.88], [261.63, 329.63, 440]], basses: [130.81, 146.83, 164.81, 110], arpType: 'sine' },
+    mumbai: { bpm: 110, chords: [[146.83, 174.61, 220], [116.54, 146.83, 174.61], [130.81, 196, 261.63], [110, 164.81, 220]], basses: [73.42, 58.27, 65.41, 55], arpType: 'square', arpJump: 1 },
+    tokyo: { bpm: 118, chords: [[220, 261.63, 329.63], [174.61, 220, 261.63], [261.63, 329.63, 392], [196, 246.94, 392]], basses: [55, 43.65, 65.41, 49], arpType: 'square', arpJump: 2 },
+    newyork: { bpm: 100, chords: [[261.63, 329.63, 392], [174.61, 220, 261.63], [196, 246.94, 392], [261.63, 329.63, 392]], basses: [65.41, 43.65, 49, 65.41], arpType: 'square', hatAll: true },
+  }
+  private zoneMusic: { bpm: number; chords: number[][]; basses: number[]; arpType: OscillatorType; arpJump: number; hatAll: boolean } = {
+    bpm: 104,
+    chords: [[220, 261.63, 329.63], [174.61, 220, 261.63], [261.63, 329.63, 392], [196, 246.94, 392]],
+    basses: [55, 43.65, 65.41, 49],
+    arpType: 'square',
+    arpJump: 1,
+    hatAll: false,
+  }
+  /** Switch the music rig to a city's identity (bpm/chords/instruments). */
+  setZoneMusic(id: string): void {
+    const cfg = Synth.ZONE_MUSIC[id]
+    if (!cfg) return
+    this.zoneMusic = { arpType: cfg.arpType ?? 'square', arpJump: cfg.arpJump ?? 1, hatAll: cfg.hatAll ?? false, bpm: cfg.bpm, chords: cfg.chords, basses: cfg.basses }
+  }
   // Adaptive intensity 0..1 (police heat / boost): brightens the filter and
   // doubles the drum density so chases FEEL faster without changing the song
   private intensity = 0
@@ -183,7 +210,7 @@ export class Synth {
     if (this.musicFilter) {
       this.musicFilter.frequency.setTargetAtTime(900 + this.intensity * 6800, this.ctx.currentTime, 0.25)
     }
-    const eighth = 60 / 104 / 2
+    const eighth = 60 / this.zoneMusic.bpm / 2
     while (this.nextNoteTime < this.ctx.currentTime + 0.15) {
       this.playStep(this.step, this.nextNoteTime)
       this.nextNoteTime += eighth
@@ -254,30 +281,27 @@ export class Synth {
 
   private playStep(step: number, t: number): void {
     const bar = Math.floor(step / 8) // 0..3
-    const chords = [
-      [220.0, 261.63, 329.63], // Am
-      [174.61, 220.0, 261.63], // F
-      [261.63, 329.63, 392.0], // C
-      [196.0, 246.94, 392.0],  // G
-    ]
-    const basses = [55.0, 43.65, 65.41, 49.0]
+    const chords = this.zoneMusic.chords
+    const basses = this.zoneMusic.basses
     const chord = chords[bar]
     const inBar = step % 8
 
-    // Drums — density doubles when the heat is on
+    // Drums — density doubles when the heat is on; some cities keep a
+    // constant hat pulse (NYC backbeat, Mumbai tabla chatter)
     const chase = this.intensity > 0.5
     if (step % 4 === 0 || (chase && inBar === 6)) this.mDrum('kick', t)
     if (inBar === 4 || (chase && inBar === 7)) this.mDrum('snare', t)
-    if (chase || step % 2 === 0) this.mDrum('hat', t)
+    if (chase || this.zoneMusic.hatAll || step % 2 === 0) this.mDrum('hat', t)
     // Pad at bar start
-    if (inBar === 0) this.mPad(chord, t, 60 / 104 * 4)
+    if (inBar === 0) this.mPad(chord, t, 60 / this.zoneMusic.bpm * 4)
     // Bass groove
     const bassPat = [0, 0, 12, 0, 0, 7, 0, 12]
     const semi = bassPat[inBar]
     this.mNote(basses[bar] * Math.pow(2, semi / 12), t, 0.22, 'sawtooth', 0.16 + this.intensity * 0.04)
-    // Arp (echoed) — octave-jumps in a chase
-    const arpNote = chord[step % 3] * 2 * (chase && inBar % 2 === 1 ? 2 : 1)
-    this.mNote(arpNote, t, 0.14, 'square', 0.045 + this.intensity * 0.02, true)
+    // Arp (echoed) — octave-jumps in a chase; city arp timbre per zone
+    const arpJump = this.zoneMusic.arpJump
+    const arpNote = chord[step % 3] * 2 * (chase && inBar % 2 === 1 ? arpJump : 1)
+    this.mNote(arpNote, t, 0.14, this.zoneMusic.arpType, 0.045 + this.intensity * 0.02, true)
   }
 
   // ---------------- SFX ----------------

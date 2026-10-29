@@ -197,12 +197,14 @@ interface TrafficCar {
   nmCooldown: number
   /** horn yield: drift toward the road edge for this many seconds */
   yieldT: number
+  /** world-circuit city this car belongs to — only the active city's cars drive */
+  zone: string
 }
 
 type Mission =
   | { kind: 'delivery'; stage: 'pickup' | 'deliver'; a: THREE.Vector3; b: THREE.Vector3; timer: number; name: string; mods: ModId[]; damageHits: number }
   | { kind: 'race'; cps: THREE.Vector3[]; idx: number; timer: number; total: number; name: string; mods: ModId[]; damageHits: number }
-  | { kind: 'taxi'; stage: 'pickup' | 'ride'; a: THREE.Vector3; b: THREE.Vector3; timer: number; name: string; passenger: THREE.Group | null; dist: number; mods: ModId[]; damageHits: number }
+  | { kind: 'taxi'; stage: 'pickup' | 'ride'; a: THREE.Vector3; b: THREE.Vector3; timer: number; name: string; passenger: THREE.Group | null; dist: number; mods: ModId[]; damageHits: number; late: boolean }
   | { kind: 'getaway'; heat0: number; name: string; mods: ModId[]; damageHits: number }
 
 // Contract modifiers (Phase 1, step 3): change HOW you drive, not just the pay
@@ -391,6 +393,12 @@ export class GameEngine {
   private blinkMat = new THREE.MeshBasicMaterial({ color: 0xff2233 })
   private garagePos = new THREE.Vector3()
   private markerBeacon: THREE.Mesh
+  /** Harbor Rides: pooled on-road route chevrons (flat additive arrows). */
+  private chevrons: THREE.Mesh[] = []
+  /** Harbor Rides: live ride state for the taxi fare — violations, tip drift. */
+  private ride = { violations: 0, clean: true, tipBonus: 0, speedT: 0, toastCd: 0, lastDamage: 0, wasDrifting: false, lightCd: [0, 0, 0, 0] }
+  /** Camera mode: 0 = near chase, 1 = far chase, 2 = cockpit (in-car). */
+  private camMode: 0 | 1 | 2 = 0
   private rain: THREE.Points | null = null
   private rainVel: Float32Array | null = null
   private waterTex: THREE.Texture | null = null
@@ -450,6 +458,9 @@ export class GameEngine {
     /** horn panic: dive directly away from the car for this many seconds */
     panicT: number
     dog?: THREE.Group
+    /** v2.1 zone wardrobe — shirt material refs + base colour for per-city re-tint */
+    shirtMats?: THREE.MeshStandardMaterial[]
+    baseShirt?: THREE.Color
   }[] = []
   private crates: { mesh: THREE.Mesh; active: boolean; respawn: number }[] = []
   // Street pickups (v2): drive-through nitro cans, field-repair kits and lucky
@@ -602,6 +613,28 @@ export class GameEngine {
     )
     this.markerBeacon.visible = false
     this.scene.add(this.markerBeacon)
+
+    // Harbor Rides: on-road navigation chevrons (NFS-style route arrows).
+    // A small pool of flat additive arrows laid along the L-route ahead of the
+    // car — visible in both chase and cockpit cameras. Basic material, no lights.
+    const chevShape = new THREE.Shape()
+    chevShape.moveTo(0, 1.6)
+    chevShape.lineTo(1.15, -0.7)
+    chevShape.lineTo(0.42, -0.25)
+    chevShape.lineTo(0, -1.1)
+    chevShape.lineTo(-0.42, -0.25)
+    chevShape.lineTo(-1.15, -0.7)
+    chevShape.closePath()
+    const chevGeom = new THREE.ShapeGeometry(chevShape)
+    chevGeom.rotateX(-Math.PI / 2) // lie flat on the road, tip = +Z travel dir
+    for (let i = 0; i < 5; i++) {
+      const mat = new THREE.MeshBasicMaterial({ color: 0x35f0ff, transparent: true, opacity: 0.0, blending: THREE.AdditiveBlending, depthWrite: false })
+      const m = new THREE.Mesh(chevGeom, mat)
+      m.visible = false
+      m.renderOrder = 3
+      this.scene.add(m)
+      this.chevrons.push(m)
+    }
 
     this.buildCity()
     this.buildCar()
@@ -999,222 +1032,8 @@ export class GameEngine {
         }
       }
     }
-    // One InstancedMesh per building model; district mood via instance tint
-    const byModel = new Map<string, Placement[]>()
-    for (const p of placements) {
-      const list = byModel.get(p.model) ?? []
-      list.push(p)
-      byModel.set(p.model, list)
-    }
-    const col = new THREE.Color()
-    const pos = new THREE.Vector3()
-    const scl = new THREE.Vector3()
-    const quat = new THREE.Quaternion()
-    const yAxis = new THREE.Vector3(0, 1, 0)
-    for (const [model, list] of byModel) {
-      const cm = this.assets.city[model]
-      if (!cm) continue
-      const inst = new THREE.InstancedMesh(cm.geometry, this.assets.cityMaterial, list.length)
-      inst.castShadow = true
-      inst.receiveShadow = true
-      list.forEach((p, idx) => {
-        const rot90 = p.rot % 2 === 1
-        const bw = rot90 ? cm.size.z : cm.size.x
-        const bd = rot90 ? cm.size.x : cm.size.z
-        scl.set(w_safe(p.w, bw), p.h / cm.size.y, w_safe(p.d, bd))
-        quat.setFromAxisAngle(yAxis, p.rot * Math.PI * 0.5)
-        pos.set(p.x, -cm.minY * scl.y, p.z)
-        m4.compose(pos, quat, scl)
-        inst.setMatrixAt(idx, m4)
-        // District tint (Vibrant Night City pass): slate blue-grey base toward
-        // #202B40 — district moods stay (cool downtown, gold Beijing, brick
-        // London) but pulled down from flat beige to desaturated night-city.
-        if (p.dist === 'downtown') col.setRGB(0.52 * p.tint, 0.62 * p.tint, 0.84 * p.tint)
-        else if (p.dist === 'beijing') col.setRGB(0.82 * p.tint, 0.62 * p.tint, 0.44 * p.tint)
-        else if (p.dist === 'london') col.setRGB(0.76 * p.tint, 0.48 * p.tint, 0.4 * p.tint)
-        else col.setRGB(0.6 * p.tint, 0.62 * p.tint, 0.6 * p.tint)
-        inst.setColorAt(idx, col)
-      })
-      inst.instanceMatrix.needsUpdate = true
-      if (inst.instanceColor) inst.instanceColor.needsUpdate = true
-      this.scene.add(inst)
-      this.cityInsts.push({ inst, list })
-    }
-
-    // Parapet caps on every roofline (finished architecture silhouette)
-    const capGeom = new THREE.BoxGeometry(1, 1, 1)
-    const capMat = new THREE.MeshStandardMaterial({ color: 0x11141f, roughness: 0.9 })
-    const caps = new THREE.InstancedMesh(capGeom, capMat, Math.max(placements.length, 1))
-    placements.forEach((p, idx) => {
-      m4.makeScale(p.w + 0.5, 0.55, p.d + 0.5)
-      m4.setPosition(p.x, p.h + 0.1, p.z)
-      caps.setMatrixAt(idx, m4)
-    })
-    caps.instanceMatrix.needsUpdate = true
-    this.scene.add(caps)
-
-    // Lit window grids on facades — the night city glows floor by floor instead of
-    // reading as flat silhouettes. ONE instanced draw call for every pane in the
-    // city; per-instance color picks lit (warm/cool) vs dark glass, and the shared
-    // material is dimmed to glass-blue by day via the theme hook.
-    const winRand = seededRand(3141)
-    const winTransforms: { x: number; y: number; z: number; ry: number }[] = []
-    for (const p of placements) {
-      if (p.h < 9) continue
-      const rows = Math.min(14, Math.floor((p.h - 3) / 2.6))
-      if (rows < 2) continue
-      const rot = p.rot * Math.PI * 0.5
-      const cosR = Math.cos(rot)
-      const sinR = Math.sin(rot)
-      const colsF = Math.max(2, Math.floor((p.w - 2) / 2.1))
-      for (const side of [-1, 1] as const) {
-        for (let r = 0; r < rows; r++) {
-          for (let cI = 0; cI < colsF; cI++) {
-            if (winRand() < 0.18) continue // unwindowed bays break up the grid
-            const lx = colsF > 1 ? -p.w / 2 + 1.2 + (cI * (p.w - 2.4)) / (colsF - 1) : 0
-            const ly = 2.2 + r * 2.6
-            const lz = side * (p.d / 2 + 0.06)
-            winTransforms.push({
-              x: p.x + lx * cosR + lz * sinR,
-              y: ly,
-              z: p.z - lx * sinR + lz * cosR,
-              ry: rot + (side < 0 ? Math.PI : 0),
-            })
-          }
-        }
-      }
-    }
-    const winGeom = new THREE.PlaneGeometry(1.05, 1.35)
-    const winMat = new THREE.MeshBasicMaterial({ color: 0xffffff })
-    const winInst = new THREE.InstancedMesh(winGeom, winMat, Math.max(winTransforms.length, 1))
-    const winWarm = new THREE.Color(0xffd9a0)
-    const winCool = new THREE.Color(0xbfe0ff)
-    const winDark = new THREE.Color(0x141a26)
-    winTransforms.forEach((wI, idx) => {
-      quat.setFromAxisAngle(yAxis, wI.ry)
-      m4.compose(new THREE.Vector3(wI.x, wI.y, wI.z), quat, scl.set(1, 1, 1))
-      winInst.setMatrixAt(idx, m4)
-      const lit = winRand() < 0.42
-      if (lit) col.copy(winRand() < 0.75 ? winWarm : winCool).multiplyScalar(0.75 + winRand() * 0.5)
-      else col.copy(winDark)
-      winInst.setColorAt(idx, col)
-    })
-    winInst.instanceMatrix.needsUpdate = true
-    if (winInst.instanceColor) winInst.instanceColor.needsUpdate = true
-    this.scene.userData.winMat = winMat
-    this.scene.add(winInst)
-    this.winInst = winInst
-    this.winTransforms = winTransforms
-    // Zone hook keeps the warm/cool window tint (London burns warmer than NYC)
-    this.winWarm.copy(new THREE.Color(0xffd9a0))
-    this.winCool.copy(new THREE.Color(0xbfe0ff))
-
-    // Neon corner trims — market district towers get glowing vertical edges
-    const trimGeom = new THREE.BoxGeometry(1, 1, 1)
-    const trimMat = new THREE.MeshBasicMaterial({ color: 0xffffff })
-    const trimPick = marketPlacements
-    const trims = new THREE.InstancedMesh(trimGeom, trimMat, Math.max(trimPick.length * 2, 1))
-    const trimRand = seededRand(606)
-    const trimPalette = [0xff2d95, 0x22d3ee, 0xc084fc]
-    let tri = 0
-    trimPick.forEach((p) => {
-      for (const sx of [-1, 1]) {
-        m4.makeScale(0.28, p.h * (0.55 + trimRand() * 0.4), 0.28)
-        m4.setPosition(p.x + sx * (p.w / 2 + 0.05), p.h * 0.5, p.z + (p.d / 2 + 0.05))
-        trims.setMatrixAt(tri, m4)
-        col.setHex(trimPalette[Math.floor(trimRand() * trimPalette.length)])
-        trims.setColorAt(tri, col)
-        tri++
-      }
-    })
-    trims.instanceMatrix.needsUpdate = true
-    if (trims.instanceColor) trims.instanceColor.needsUpdate = true
-    this.scene.add(trims)
-
-    // Rooftop aircraft-warning blinkers
-    const blinkGeom = new THREE.SphereGeometry(0.32, 6, 6)
-    const blinkPick = placements.filter((p) => p.h > 24).slice(0, 40)
-    const blinkInst = new THREE.InstancedMesh(blinkGeom, this.blinkMat, Math.max(blinkPick.length, 1))
-    blinkPick.forEach((p, idx) => {
-      m4.makeScale(1, 1, 1)
-      m4.setPosition(p.x, p.h + 0.5, p.z)
-      blinkInst.setMatrixAt(idx, m4)
-    })
-    blinkInst.instanceMatrix.needsUpdate = true
-    this.scene.add(blinkInst)
-
-    // Neon signs (instanced emissive boxes on facades)
-    const neonPalette = [0xff2d95, 0x22d3ee, 0xa3e635, 0xf97316, 0xc084fc, 0xfde047]
-    const neonGeom = new THREE.BoxGeometry(1, 1, 1)
-    const neonMat = new THREE.MeshBasicMaterial({ color: 0xffffff })
-    const neonRand = seededRand(777)
-    const neonCount = placements.reduce((s, p) => s + p.signs, 0)
-    const neon = new THREE.InstancedMesh(neonGeom, neonMat, Math.max(neonCount, 1))
-    let ni = 0
-    placements.forEach((p) => {
-      for (let k = 0; k < p.signs; k++) {
-        const w = 1.5 + neonRand() * 5
-        const h = 0.4 + neonRand() * 1.4
-        const y = 3 + neonRand() * Math.max(p.h - 4, 4)
-        const side = Math.floor(neonRand() * 4)
-        let x = p.x
-        let z = p.z
-        let sx = w
-        let sz = 0.35
-        if (side === 0) { z = p.z - p.d / 2 - 0.1 } else if (side === 1) { z = p.z + p.d / 2 + 0.1 } else if (side === 2) { x = p.x - p.w / 2 - 0.1; sx = 0.35; sz = w } else { x = p.x + p.w / 2 + 0.1; sx = 0.35; sz = w }
-        m4.makeScale(sx, h, sz)
-        m4.setPosition(x, y, z)
-        neon.setMatrixAt(ni, m4)
-        col.setHex(neonPalette[Math.floor(neonRand() * neonPalette.length)])
-        neon.setColorAt(ni, col)
-        ni++
-      }
-    })
-    neon.instanceMatrix.needsUpdate = true
-    if (neon.instanceColor) neon.instanceColor.needsUpdate = true
-    this.scene.add(neon)
-
-    // Storefront glow bands at street level + rooftop props
-    const shopGeom = new THREE.BoxGeometry(1, 1, 1)
-    const shopMat = new THREE.MeshBasicMaterial({ color: 0xffffff })
-    const shopPick = placements.filter((p) => p.h <= 32)
-    const shopInst = new THREE.InstancedMesh(shopGeom, shopMat, Math.max(shopPick.length, 1))
-    const shopPalette = [0xffd9a0, 0x9fd8ff, 0xffb3d9, 0xc8ffd9, 0xfff3b0]
-    shopPick.forEach((p, idx) => {
-      const side = idx % 2 === 0 ? -1 : 1
-      m4.makeScale(p.w * 0.82, 1.1, 0.25)
-      m4.setPosition(p.x, 1.0, p.z + side * (p.d / 2 + 0.12))
-      shopInst.setMatrixAt(idx, m4)
-      col.setHex(shopPalette[idx % shopPalette.length])
-      shopInst.setColorAt(idx, col)
-    })
-    shopInst.instanceMatrix.needsUpdate = true
-    if (shopInst.instanceColor) shopInst.instanceColor.needsUpdate = true
-    this.scene.add(shopInst)
-
-    const roofPick = placements.filter((p) => p.h > 18)
-    const tankGeom = new THREE.CylinderGeometry(1.1, 1.1, 2.4, 10)
-    const tankMat = new THREE.MeshStandardMaterial({ color: 0x4a5568, roughness: 0.8 })
-    const acGeom = new THREE.BoxGeometry(2, 1.1, 1.4)
-    const acMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.85 })
-    const tanks = new THREE.InstancedMesh(tankGeom, tankMat, Math.max(Math.ceil(roofPick.length / 2), 1))
-    const acs = new THREE.InstancedMesh(acGeom, acMat, Math.max(Math.ceil(roofPick.length / 2), 1))
-    let ti = 0
-    let ai = 0
-    roofPick.forEach((p, idx) => {
-      if (idx % 2 === 0) {
-        m4.makeScale(1, 1, 1)
-        m4.setPosition(p.x + p.w * 0.22, p.h + 1.2, p.z - p.d * 0.18)
-        tanks.setMatrixAt(ti++, m4)
-      } else {
-        m4.makeScale(1, 1, 1)
-        m4.setPosition(p.x - p.w * 0.2, p.h + 0.55, p.z + p.d * 0.2)
-        acs.setMatrixAt(ai++, m4)
-      }
-    })
-    tanks.instanceMatrix.needsUpdate = true
-    acs.instanceMatrix.needsUpdate = true
-    this.scene.add(tanks, acs)
+    // v2.1 — one architecture pack per city, all sharing these placements
+    for (const z of WORLD_ZONES) this.buildZoneCityVisuals(z, placements, marketPlacements)
 
     // Street lights — full pole + curved arm + head assemblies (instanced),
     // with warm light pools on the tarmac and a soft glow at each head.
@@ -2132,6 +1951,1244 @@ export class GameEngine {
     return m
   }
 
+  /** One architecture pack per city, built from the SAME physical placements
+      (collision untouched). Each zone gets its own roof silhouette, window
+      grid, neon mood, balconies and street lights, so London never reads as
+      Tokyo. All packs live in the scene; applyZoneMood shows only the active
+      one. */
+  private buildZoneCityVisuals(zone: WorldZone, placements: Placement[], marketPlacements: Placement[]): void {
+    const arch = zone.arch
+    if (!arch) return
+    // Skyline silhouette DNA — each city reshapes the same footprints:
+    // a seeded per-building height multiplier (London flattens, NY rises).
+    const hp = arch.heightProfile ?? { base: 1, spread: 0, towerChance: 0, towerScale: 1 }
+    const hRand = seededRand(5300 + arch.winOffset)
+    const hMap = new Map<Placement, number>()
+    for (const p of placements) {
+      let s = hp.base + (hRand() - 0.5) * 2 * hp.spread
+      if (hRand() < hp.towerChance) s *= hp.towerScale
+      hMap.set(p, Math.max(0.4, Math.min(s, 3.4)))
+    }
+    this.zoneHMaps.set(zone.id, hMap)
+    const hOf = (p: Placement): number => hMap.get(p) ?? 1
+    const city = new THREE.Group()
+    const m4 = new THREE.Matrix4()
+    const col = new THREE.Color()
+    const pos = new THREE.Vector3()
+    const scl = new THREE.Vector3()
+    const quat = new THREE.Quaternion()
+    const yAxis = new THREE.Vector3(0, 1, 0)
+
+    // 1) Building shells — zone mood tint (same geometry, own character)
+    //    Weathered facade texture: the same flat boxes get brick/plaster/
+    //    stone/concrete skins, so walls read as material, not paint.
+    const facadeMat = this.assets.cityMaterial.clone()
+    const ft = makeFacadeTexture(arch.facadeKind ?? 'concrete', arch.facadeBase ?? 0x8a8a8a, arch.facadeAccent ?? 0x3a3f4a)
+    facadeMat.map = ft
+    const byModel = new Map<string, Placement[]>()
+    for (const p of placements) {
+      const list = byModel.get(p.model) ?? []
+      list.push(p)
+      byModel.set(p.model, list)
+    }
+    for (const [model, list] of byModel) {
+      const cm = this.assets.city[model]
+      if (!cm) continue
+      const inst = new THREE.InstancedMesh(cm.geometry, facadeMat, list.length)
+      inst.castShadow = true
+      inst.receiveShadow = true
+      list.forEach((p, idx) => {
+        const rot90 = p.rot % 2 === 1
+        const bw = rot90 ? cm.size.z : cm.size.x
+        const bd = rot90 ? cm.size.x : cm.size.z
+        const hv = hOf(p)
+        const mass = arch.mass ?? 1
+        scl.set(w_safe(p.w, bw) * mass, (p.h * hv) / cm.size.y, w_safe(p.d, bd) * mass)
+        quat.setFromAxisAngle(yAxis, p.rot * Math.PI * 0.5)
+        pos.set(p.x, -cm.minY * scl.y, p.z)
+        m4.compose(pos, quat, scl)
+        inst.setMatrixAt(idx, m4)
+        // bright tint keeps the baked facade color vivid; the mood only
+        // shifts it slightly (cool at night, warm at dusk) instead of
+        // painting over the material
+        const t = 0.78 + 0.22 * p.tint
+        col.setRGB(t * (0.82 + 0.18 * zone.mood[0]), t * (0.82 + 0.18 * zone.mood[1]), t * (0.82 + 0.18 * zone.mood[2]))
+        inst.setColorAt(idx, col)
+      })
+      inst.instanceMatrix.needsUpdate = true
+      if (inst.instanceColor) inst.instanceColor.needsUpdate = true
+      city.add(inst)
+    }
+
+    // 1.8) Street-level architecture — the parts a driver actually SEES.
+    //      Every city gets its own facade objects: London bay windows, Paris
+    //      iron balconies, Beijing hutong walls, Mumbai verandah ledges,
+    //      Tokyo exterior staircases, New York fire escapes, Harbor warehouse
+    //      doors. Plus a lit shopfront band on the avenue side of every
+    //      building. This is form, not paint — the two streets can't be mixed
+    //      up even at 60km/h.
+    {
+      const laneC = (l: number) => -HALF + ROAD / 2 + l * CELL
+      const laneXs = [3, 4, 5, 6].map(laneC)
+      // storefront body + glowing sign strip (shared geometries, per-city color)
+      const sfGeom = new THREE.BoxGeometry(1, 2.7, 0.8)
+      const sfMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 })
+      const sgGeom = new THREE.BoxGeometry(0.95, 0.6, 0.7)
+      const sgMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false })
+      type SFP = { x: number; z: number; w: number; d: number; rot: number; h: number; y?: number }
+      const sfList: SFP[] = []
+      const sfRots: number[] = []
+      const sgList: SFP[] = []
+      const sgRots: number[] = []
+      // per-city feature builders: each adds to (featList, featRots, featMat, geom)
+      const featGeoms: { geo: THREE.BufferGeometry; mat: THREE.MeshStandardMaterial | THREE.MeshBasicMaterial; list: Placement[]; rots: number[] }[] = []
+      const addFeat = (geo: THREE.BufferGeometry, mat: THREE.MeshStandardMaterial | THREE.MeshBasicMaterial) => {
+        const slot = { geo, mat, list: [] as Placement[], rots: [] as number[] }
+        featGeoms.push(slot)
+        return slot
+      }
+      const fBase = arch.facadeBase ?? 0x8a8a8a
+      const fAcc = arch.facadeAccent ?? 0x3a3f4a
+      const sfBase = (zone.id === 'harbor') ? 0x1a2632 : (zone.id === 'london') ? 0x2a2a30 : (zone.id === 'paris') ? 0x2f2720 : (zone.id === 'beijing') ? 0x7b2d43 : (zone.id === 'mumbai') ? 0x1e1612 : (zone.id === 'tokyo') ? 0x14161c : 0x11151d
+      const sgColor = (zone.id === 'harbor') ? 0x22d3ee : (zone.id === 'london') ? 0xfde047 : (zone.id === 'paris') ? 0xffd9a0 : (zone.id === 'beijing') ? 0xefb63c : (zone.id === 'mumbai') ? 0xff7f6b : (zone.id === 'tokyo') ? 0xff6aa7 : 0xfde047
+      const bay = addFeat(new THREE.BoxGeometry(1.4, 3.4, 0.8), new THREE.MeshStandardMaterial({ color: 0xe8e8f0, roughness: 0.5 }))          // london
+      const balc = addFeat(new THREE.BoxGeometry(1, 0.42, 0.3), new THREE.MeshStandardMaterial({ color: 0x1a1e24, roughness: 0.7 }))        // paris
+      const huto = addFeat(new THREE.BoxGeometry(1, 1.7, 1), new THREE.MeshStandardMaterial({ color: 0x6a6a6a, roughness: 0.9 }))           // beijing
+      const vera = addFeat(new THREE.BoxGeometry(1, 0.34, 0.6), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 }))        // mumbai
+      const stair = addFeat(new THREE.BoxGeometry(1.3, 0.32, 3.6), new THREE.MeshStandardMaterial({ color: 0x8a93a6, roughness: 0.6 }))    // tokyo
+      const fire = addFeat(new THREE.BoxGeometry(1, 0.32, 1.0), new THREE.MeshStandardMaterial({ color: 0xd8dde2, roughness: 0.4, metalness: 0.3 })) // newyork
+      const whDoor = addFeat(new THREE.BoxGeometry(3.4, 4.4, 0.34), new THREE.MeshStandardMaterial({ color: 0x11141f, roughness: 0.8 }))   // harbor
+      for (const [model, list] of byModel) {
+        const cm = this.assets.city[model]
+        if (!cm) continue
+        for (const p of list) {
+          const rot90 = p.rot % 2 === 1
+          const bw = rot90 ? cm.size.z : cm.size.x
+          const bd = rot90 ? cm.size.x : cm.size.z
+          const hv = hOf(p)
+          const h = p.h * hv
+          if (h < 4.5) {
+            // low buildings: Beijing courtyard wall wrap
+            if (zone.id === 'beijing' && h > 1.6) {
+              huto.list.push(p); huto.rots.push(p.rot)
+            }
+            if (zone.id === 'harbor' && h > 3) {
+              whDoor.list.push(p); whDoor.rots.push(p.rot)
+            }
+            continue
+          }
+          // avenue-facing direction
+          const cx = p.x
+          const cz = p.z
+          let best = 1e9
+          let ddx = 0
+          let ddz = 0
+          for (const lc of laneXs) {
+            const dx = Math.abs(cx - lc)
+            const dz = Math.abs(cz - lc)
+            if (dz < best) { best = dz; ddx = 0; ddz = 1 }
+            if (dx < best) { best = dx; ddx = 1; ddz = 0 }
+          }
+          const signX = ddx !== 0 ? (cx < 0 ? -1 : 1) : 0
+          const signZ = ddz !== 0 ? (cz < 0 ? -1 : 1) : 0
+          const half = (ddx !== 0 ? bw : bd) / 2
+          const fx = cx + signX * (half + 0.35)
+          const fz = cz + signZ * (half + 0.35)
+          const ry = ddx !== 0 ? (signX < 0 ? Math.PI / 2 : -Math.PI / 2) : (signZ < 0 ? Math.PI : 0)
+          const sfr: SFP = { x: fx, z: fz, w: Math.min(bw, bd, 12), d: 0.8, rot: 0, h }
+          sfList.push(sfr)
+          sfRots.push(ry)
+          sgList.push({ ...sfr, y: 2.85 })
+          sgRots.push(ry)
+          // facade features per city
+          const fr = 1.9 + Math.sin(p.x * 3.1 + p.z * 7.7) * 0.6 // deterministic per building
+          if (zone.id === 'london' && h > 7 && fr > 2.1) { bay.list.push(p); bay.rots.push(p.rot) }
+          if (zone.id === 'paris' && h > 6) { balc.list.push(p); balc.rots.push(p.rot) }
+          if (zone.id === 'mumbai' && h > 6) { vera.list.push(p); vera.rots.push(p.rot) }
+          if (zone.id === 'tokyo' && h > 5) { stair.list.push(p); stair.rots.push(p.rot) }
+          if (zone.id === 'newyork' && h > 8) { fire.list.push(p); fire.rots.push(p.rot) }
+        }
+      }
+      const placeInst = (list: SFP[], rots: number[], geo: THREE.BufferGeometry, mat: THREE.MeshStandardMaterial | THREE.MeshBasicMaterial, yBase: number, wide: boolean) => {
+        if (list.length === 0) return
+        const inst = new THREE.InstancedMesh(geo, mat, list.length)
+        inst.castShadow = true
+        inst.receiveShadow = true
+        list.forEach((p, i) => {
+          const r = rots[i] ?? 0
+          const wfac = wide ? Math.max(0.4, Math.min(p.w, 12)) : 1
+          scl.set(wide ? wfac : 1, 1, wide ? 1 : 1)
+          pos.set(p.x, yBase + (p.y ?? 1.35), p.z)
+          quat.setFromAxisAngle(yAxis, r)
+          m4.compose(pos, quat, scl)
+          inst.setMatrixAt(i, m4)
+        })
+        inst.instanceMatrix.needsUpdate = true
+        city.add(inst)
+      }
+      sfMat.color.setHex(sfBase)
+      sgMat.color.setHex(sgColor)
+      placeInst(sfList, sfRots, sfGeom, sfMat, 1.35, true)
+      placeInst(sgList, sgRots, sgGeom, sgMat, 2.85, true)
+      // per-city features — geometry scaled to the building face
+      const featCfg = [
+        { slot: bay, y: 2.6, w: false, fw: 0.75, city: 'london' },
+        { slot: balc, y: 3.4, w: true, fw: 1, city: 'paris' },
+        { slot: huto, y: 0.85, w: true, fw: 1, city: 'beijing' },
+        { slot: vera, y: 2.7, w: true, fw: 1, city: 'mumbai' },
+        { slot: stair, y: 3.0, w: false, fw: 1, city: 'tokyo' },
+        { slot: fire, y: 3.6, w: true, fw: 1, city: 'newyork' },
+        { slot: whDoor, y: 2.2, w: false, fw: 1, city: 'harbor' },
+      ]
+      for (const cfg of featCfg) {
+        if (cfg.slot.list.length === 0 || zone.id !== cfg.city) continue
+        const inst = new THREE.InstancedMesh(cfg.slot.geo, cfg.slot.mat, cfg.slot.list.length)
+        cfg.slot.list.forEach((p, i) => {
+          const rot90 = p.rot % 2 === 1
+          const bw = (rot90 ? p.d : p.w) * (arch.mass ?? 1)
+          scl.set(cfg.w ? Math.max(0.5, bw * 0.8) : 1, 1, 1)
+          pos.set(p.x, cfg.y, p.z)
+          quat.setFromAxisAngle(yAxis, p.rot * Math.PI * 0.5)
+          m4.compose(pos, quat, scl)
+          inst.setMatrixAt(i, m4)
+        })
+        inst.instanceMatrix.needsUpdate = true
+        city.add(inst)
+      }
+      void fBase
+      void fAcc
+    }
+
+    // 1.9) Road markings — the asphalt belongs to the city too. New York's
+    //      yellow double centre line, London's red bus lane, Paris's green
+    //      bike lane, Beijing's red kerbs, Mumbai's faded yellow, Tokyo's
+    //      blue edge lines, Harbor's cyan port guide. A driver looks at the
+    //      road the whole run — so the road itself must read as the city.
+    {
+      const laneC = (l: number) => -HALF + ROAD / 2 + l * CELL
+      const markMat = (c: number) => new THREE.MeshBasicMaterial({ color: c, fog: false })
+      const addStrip = (mat: THREE.MeshBasicMaterial, w: number, off: number, y = 0.035) => {
+        const hGeom = new THREE.BoxGeometry(w, 0.06, 0.55)
+        const vGeom = new THREE.BoxGeometry(0.55, 0.06, w)
+        for (const l of [3, 4, 5, 6]) {
+          const c = laneC(l)
+          const hm = new THREE.Mesh(hGeom, mat); hm.position.set(0, y, c + off); city.add(hm)
+          const vm = new THREE.Mesh(vGeom, mat); vm.position.set(c + off, y, 0); city.add(vm)
+        }
+      }
+      const zid = zone.id
+      if (zid === 'newyork') {
+        const yellow = markMat(0xf5a623)
+        addStrip(yellow, 340, -0.55)
+        addStrip(yellow, 340, 0.55)
+      } else if (zid === 'london') {
+        addStrip(markMat(0xc0392b), 340, 2.4)   // red bus lane on the outside
+        addStrip(markMat(0xdfe4ea), 340, 0)      // crisp white centre
+      } else if (zid === 'paris') {
+        addStrip(markMat(0x3f7a6e), 300, -2.6)   // green bike lane
+        addStrip(markMat(0xdfe4ea), 340, 0.4)
+      } else if (zid === 'beijing') {
+        addStrip(markMat(0x8a2020), 340, ROAD / 2 - 0.8)   // red kerbs
+        addStrip(markMat(0x8a2020), 340, -(ROAD / 2 - 0.8))
+        addStrip(markMat(0xdfe4ea), 340, 0)
+      } else if (zid === 'mumbai') {
+        addStrip(markMat(0xd4a017), 340, 0)      // faded yellow centre
+        addStrip(markMat(0x9a8a5a), 300, ROAD / 2 - 0.9)  // dusted edges
+      } else if (zid === 'tokyo') {
+        addStrip(markMat(0x7fa8c9), 340, 0)      // blue-white lane guide
+        addStrip(markMat(0xdfe4ea), 340, 2.2)
+      } else if (zid === 'harbor') {
+        addStrip(markMat(0x22d3ee), 340, 0)      // cyan port guide line
+      }
+    }
+
+    // 1.5) Glass-curtain towers — thin lit vertical strips on the tallest
+    //      towers (Tokyo / New York / Beijing office canyons at night).
+    if (arch.glassStrips) {
+      const tallPick = placements
+        .map((p, i) => ({ p, i, h: hOf(p) }))
+        .sort((a, b) => b.h - a.h)
+        .slice(0, 26)
+      const stripGeom = new THREE.BoxGeometry(0.24, 1, 0.24)
+      const stripMat = new THREE.MeshBasicMaterial({ color: 0xbfe6ff })
+      const strips = new THREE.InstancedMesh(stripGeom, stripMat, tallPick.length * 2)
+      tallPick.forEach(({ p, h: hv }, idx) => {
+        const rot = p.rot * Math.PI * 0.5
+        const cosR = Math.cos(rot)
+        const sinR = Math.sin(rot)
+        for (const side of [-1, 1]) {
+          const lx = side * (p.w / 2 - 0.45)
+          const lz = side * (p.d / 2 - 0.45)
+          const x = p.x + lx * cosR + lz * sinR
+          const z = p.z - lx * sinR + lz * cosR
+          m4.makeScale(1, hv, 1)
+          m4.setPosition(x, hv / 2, z)
+          strips.setMatrixAt(idx * 2 + (side < 0 ? 0 : 1), m4)
+        }
+      })
+      strips.instanceMatrix.needsUpdate = true
+      city.add(strips)
+    }
+
+    // 1.7) Rooftop clutter — AC units on every city's roofs (the COD-look:
+    //      lived-in, littered skyline, not clean boxes)
+    {
+      const acGeom = new THREE.BoxGeometry(1.5, 0.9, 1.2)
+      const acMat = new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.85, metalness: 0.1 })
+      const fanGeom = new THREE.CylinderGeometry(0.3, 0.3, 0.16, 10)
+      const fanMat = new THREE.MeshStandardMaterial({ color: 0x353a44, roughness: 0.6, metalness: 0.4 })
+      const clutter = placements.filter((p) => hOf(p) > 0.8 && hOf(p) < 2.6)
+      const acRand = seededRand(9901 + arch.winOffset)
+      const aces = new THREE.InstancedMesh(acGeom, acMat, Math.max(clutter.length, 1))
+      const fans = new THREE.InstancedMesh(fanGeom, fanMat, Math.max(clutter.length, 1))
+      let ai = 0
+      clutter.forEach((p) => {
+        if (acRand() > 0.5) return
+        const h = p.h * hOf(p)
+        const qu2 = new THREE.Quaternion()
+        qu2.setFromAxisAngle(yAxis, p.rot * Math.PI * 0.5 + (acRand() - 0.5) * 0.6)
+        const ox = (acRand() - 0.5) * p.w * 0.5
+        const oz = (acRand() - 0.5) * p.d * 0.5
+        const y = h + 0.45
+        const r90 = p.rot % 2 === 1
+        const bw = r90 ? p.d : p.w
+        const bd = r90 ? p.w : p.d
+        const x = p.x + ox
+        const z = p.z + oz
+        scl.set(1, 1, 1)
+        pos.set(x, y, z)
+        m4.compose(pos, qu2, scl)
+        aces.setMatrixAt(ai, m4)
+        pos.set(x, y + 0.42, z)
+        m4.compose(pos, qu2, scl)
+        fans.setMatrixAt(ai, m4)
+        ai++
+        void bw
+        void bd
+      })
+      aces.count = ai
+      fans.count = ai
+      aces.instanceMatrix.needsUpdate = true
+      fans.instanceMatrix.needsUpdate = true
+      if (ai > 0) {
+        city.add(aces)
+        city.add(fans)
+      }
+    }
+
+    // 2) Roof silhouettes — the strongest per-city read. Every style uses the
+    //    same footprint so the city skyline CHANGES SHAPE between cities.
+    const capGeom = new THREE.BoxGeometry(1, 1, 1)
+    const capMat = new THREE.MeshStandardMaterial({ color: arch.cap, roughness: 0.85 })
+    const roofRand = seededRand(4242 + arch.winOffset)
+    if (arch.roof === 'pitched') {
+      // slate pyramid roofs + chimney stacks (London terrace houses)
+      const coneGeom = new THREE.ConeGeometry(1, 1, 4)
+      const pitchMat = new THREE.MeshStandardMaterial({ color: 0x2f3540, roughness: 0.9 })
+      const pitches = new THREE.InstancedMesh(coneGeom, pitchMat, Math.max(placements.length, 1))
+      const chimGeom = new THREE.BoxGeometry(0.7, 1.7, 0.7)
+      const chimMat = new THREE.MeshStandardMaterial({ color: 0x3a3f4a, roughness: 0.9 })
+      const chims = new THREE.InstancedMesh(chimGeom, chimMat, Math.max(placements.length, 1))
+      placements.forEach((p, idx) => {
+        m4.makeScale(p.w * 0.98, 2.2, p.d * 0.98)
+        m4.setPosition(p.x, hOf(p) + 1.1, p.z)
+        pitches.setMatrixAt(idx, m4)
+        if (roofRand() < 0.45) { m4.makeScale(1, 1, 1); m4.setPosition(p.x + p.w * 0.22, hOf(p) + 0.85, p.z - p.d * 0.18); chims.setMatrixAt(idx, m4) }
+      })
+      pitches.instanceMatrix.needsUpdate = true
+      chims.instanceMatrix.needsUpdate = true
+      city.add(pitches, chims)
+    } else if (arch.roof === 'mansard') {
+      // tall slate cap + small dormer crown (Paris Haussmann)
+      const caps = new THREE.InstancedMesh(capGeom, capMat, Math.max(placements.length, 1))
+      const dormGeom = new THREE.BoxGeometry(1, 1, 1)
+      const dormMat = new THREE.MeshStandardMaterial({ color: 0x23262e, roughness: 0.9 })
+      const dorms = new THREE.InstancedMesh(dormGeom, dormMat, Math.max(placements.length, 1))
+      placements.forEach((p, idx) => {
+        m4.makeScale(p.w + 0.5, 2.6, p.d + 0.5)
+        m4.setPosition(p.x, hOf(p) + 1.3, p.z)
+        caps.setMatrixAt(idx, m4)
+        m4.makeScale(p.w * 0.55, 1.0, p.d * 0.55)
+        m4.setPosition(p.x, hOf(p) + 3.15, p.z)
+        dorms.setMatrixAt(idx, m4)
+      })
+      caps.instanceMatrix.needsUpdate = true
+      dorms.instanceMatrix.needsUpdate = true
+      city.add(caps, dorms)
+    } else if (arch.roof === 'pagoda') {
+      // gold upturned pyramid + finial (Beijing)
+      const coneGeom = new THREE.ConeGeometry(1, 1, 4)
+      const pagodaMat = new THREE.MeshStandardMaterial({ color: 0xcfb457, emissive: 0x8a6a1e, emissiveIntensity: 0.45, roughness: 0.6 })
+      const pagodas = new THREE.InstancedMesh(coneGeom, pagodaMat, Math.max(placements.length, 1))
+      const finGeom = new THREE.SphereGeometry(0.55, 8, 8)
+      const finMat = new THREE.MeshStandardMaterial({ color: 0xffd23d, emissive: 0x8a6a1e, emissiveIntensity: 0.6 })
+      const fins = new THREE.InstancedMesh(finGeom, finMat, Math.max(placements.length, 1))
+      placements.forEach((p, idx) => {
+        m4.makeScale(p.w * 0.94, 2.4, p.d * 0.94)
+        m4.setPosition(p.x, hOf(p) + 1.2, p.z)
+        pagodas.setMatrixAt(idx, m4)
+        m4.makeScale(1, 1, 1)
+        m4.setPosition(p.x, hOf(p) + 2.8, p.z)
+        fins.setMatrixAt(idx, m4)
+      })
+      pagodas.instanceMatrix.needsUpdate = true
+      fins.instanceMatrix.needsUpdate = true
+      city.add(pagodas, fins)
+    } else {
+      // flat parapet band — Harbor / Mumbai / Tokyo / New York
+      const caps = new THREE.InstancedMesh(capGeom, capMat, Math.max(placements.length, 1))
+      placements.forEach((p, idx) => {
+        m4.makeScale(p.w + 0.5, 0.55, p.d + 0.5)
+        m4.setPosition(p.x, hOf(p) + 0.1, p.z)
+        caps.setMatrixAt(idx, m4)
+      })
+      caps.instanceMatrix.needsUpdate = true
+      city.add(caps)
+
+      if (arch.roof === 'parapet' && arch.capGlow !== 0) {
+        // neon roofline — Tokyo / New York read as glowing canyons at night
+        const glowGeom = new THREE.BoxGeometry(1, 1, 1)
+        const glowMat = new THREE.MeshBasicMaterial({ color: arch.capGlow })
+        const glows = new THREE.InstancedMesh(glowGeom, glowMat, Math.max(placements.length, 1))
+        placements.forEach((p, idx) => {
+          m4.makeScale(p.w + 0.8, 0.28, p.d + 0.8)
+          m4.setPosition(p.x, hOf(p) + 0.42, p.z)
+          glows.setMatrixAt(idx, m4)
+        })
+        glows.instanceMatrix.needsUpdate = true
+        city.add(glows)
+      }
+
+      if (arch.roof === 'tank' && (arch.tankChance ?? 0) > 0) {
+        const tankGeom = new THREE.CylinderGeometry(1.1, 1.1, 2.4, 10)
+        const tankMat = new THREE.MeshStandardMaterial({ color: 0x4a5568, roughness: 0.8 })
+        const acGeom = new THREE.BoxGeometry(2, 1.1, 1.4)
+        const acMat = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.85 })
+        const roofPick = placements.filter((p) => hOf(p) > 14)
+        const tankN = Math.max(Math.ceil(roofPick.length * arch.tankChance!), 1)
+        const acN = Math.max(roofPick.length - tankN, 1)
+        const tanks = new THREE.InstancedMesh(tankGeom, tankMat, tankN)
+        const acs = new THREE.InstancedMesh(acGeom, acMat, acN)
+        let ti = 0
+        let ai = 0
+        roofPick.forEach((p) => {
+          if (roofRand() < arch.tankChance! && ti < tankN) {
+            m4.makeScale(1, 1, 1)
+            m4.setPosition(p.x + p.w * 0.22, hOf(p) + 1.2, p.z - p.d * 0.18)
+            tanks.setMatrixAt(ti++, m4)
+          } else if (ai < acN) {
+            m4.makeScale(1, 1, 1)
+            m4.setPosition(p.x - p.w * 0.2, hOf(p) + 0.55, p.z + p.d * 0.2)
+            acs.setMatrixAt(ai++, m4)
+          }
+        })
+        tanks.instanceMatrix.needsUpdate = true
+        acs.instanceMatrix.needsUpdate = true
+        city.add(tanks, acs)
+      }
+    }
+
+    // 3) Window grids — per-city seed + density + warm/cool balance
+    const winRand = seededRand(3141 + arch.winOffset)
+    const skipBay = arch.roof === 'parapet' && zone.id === 'tokyo' ? 0.08 : zone.id === 'london' ? 0.3 : 0.18
+    const winTransforms: { x: number; y: number; z: number; ry: number }[] = []
+    const balTransforms: { x: number; y: number; z: number; ry: number }[] = []
+    for (const p of placements) {
+      if (hOf(p) < 9) continue
+      const rows = Math.min(14, Math.floor((hOf(p) - 3) / 2.6))
+      if (rows < 2) continue
+      const rot = p.rot * Math.PI * 0.5
+      const cosR = Math.cos(rot)
+      const sinR = Math.sin(rot)
+      const colsF = Math.max(2, Math.floor((p.w - 2) / 2.1))
+      for (const side of [-1, 1] as const) {
+        for (let r = 0; r < rows; r++) {
+          for (let cI = 0; cI < colsF; cI++) {
+            if (winRand() < skipBay) continue
+            const lx = colsF > 1 ? -p.w / 2 + 1.2 + (cI * (p.w - 2.4)) / (colsF - 1) : 0
+            const ly = 2.2 + r * 2.6
+            const lz = side * (p.d / 2 + 0.06)
+            winTransforms.push({
+              x: p.x + lx * cosR + lz * sinR,
+              y: ly,
+              z: p.z - lx * sinR + lz * cosR,
+              ry: rot + (side < 0 ? Math.PI : 0),
+            })
+            if (arch.balcony) balTransforms.push({
+              x: p.x + lx * cosR + lz * sinR,
+              y: ly - 0.75,
+              z: p.z - lx * sinR + lz * cosR,
+              ry: rot + (side < 0 ? Math.PI : 0),
+            })
+          }
+        }
+      }
+    }
+    const winGeom = new THREE.PlaneGeometry(1.05, 1.35)
+    const winMat = new THREE.MeshBasicMaterial({ color: 0xffffff })
+    const winInst = new THREE.InstancedMesh(winGeom, winMat, Math.max(winTransforms.length, 1))
+    const winWarm = new THREE.Color(zone.win[0])
+    const winCool = new THREE.Color(zone.win[1])
+    const winDark = new THREE.Color(0x141a26)
+    winTransforms.forEach((wI, idx) => {
+      quat.setFromAxisAngle(yAxis, wI.ry)
+      m4.compose(new THREE.Vector3(wI.x, wI.y, wI.z), quat, scl.set(1, 1, 1))
+      winInst.setMatrixAt(idx, m4)
+      const lit = winRand() < 0.42
+      if (lit) col.copy(winRand() < zone.litWarm ? winWarm : winCool).multiplyScalar(0.75 + winRand() * 0.5)
+      else col.copy(winDark)
+      winInst.setColorAt(idx, col)
+    })
+    winInst.instanceMatrix.needsUpdate = true
+    if (winInst.instanceColor) winInst.instanceColor.needsUpdate = true
+    city.add(winInst)
+    this.zoneWinMats.set(zone.id, winMat)
+
+    if (arch.balcony) {
+      const balGeom = new THREE.BoxGeometry(1.5, 0.12, 0.34)
+      const balMat = new THREE.MeshStandardMaterial({ color: 0x1a1e24, roughness: 0.7, metalness: 0.5 })
+      const bals = new THREE.InstancedMesh(balGeom, balMat, Math.max(balTransforms.length, 1))
+      balTransforms.forEach((bI, idx) => {
+        quat.setFromAxisAngle(yAxis, bI.ry)
+        m4.compose(new THREE.Vector3(bI.x, bI.y, bI.z), quat, scl.set(1, 1, 1))
+        bals.setMatrixAt(idx, m4)
+      })
+      bals.instanceMatrix.needsUpdate = true
+      city.add(bals)
+    }
+
+    if ((arch.stringLights ?? 0) > 0) {
+      // Mumbai — strings of warm fairy lights draped along facades
+      const festGeom = new THREE.BoxGeometry(0.22, 0.22, 0.22)
+      const festMat = new THREE.MeshBasicMaterial({ color: 0xffffff, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.95, depthWrite: false })
+      const festCols = [0xffe9b0, 0xffd9a0, 0xffb3d9, 0x9fd8ff, 0xc8ffd9, 0xfde047]
+      const festRand = seededRand(909 + arch.winOffset)
+      const festSpots: { x: number; y: number; z: number; ry: number; c: number }[] = []
+      for (const p of placements) {
+        if (hOf(p) > 30 || hOf(p) < 5) continue
+        if (festRand() > arch.stringLights!) continue
+        const rot = p.rot * Math.PI * 0.5
+        const cosR = Math.cos(rot)
+        const sinR = Math.sin(rot)
+        const side = festRand() > 0.5 ? 1 : -1
+        const n = Math.max(3, Math.floor(p.w / 2.4))
+        for (let cI = 0; cI < n; cI++) {
+          const lx = n > 1 ? -p.w / 2 + 1.4 + (cI * (p.w - 2.8)) / (n - 1) : 0
+          const ly = 3.1 + festRand() * Math.min(6, hOf(p) * 0.4)
+          const lz = side * (p.d / 2 + 0.12)
+          festSpots.push({
+            x: p.x + lx * cosR + lz * sinR,
+            y: ly,
+            z: p.z - lx * sinR + lz * cosR,
+            ry: rot + (side < 0 ? Math.PI : 0),
+            c: festCols[Math.floor(festRand() * festCols.length)],
+          })
+        }
+      }
+      const fests = new THREE.InstancedMesh(festGeom, festMat, Math.max(festSpots.length, 1))
+      festSpots.forEach((s, idx) => {
+        quat.setFromAxisAngle(yAxis, s.ry)
+        m4.compose(new THREE.Vector3(s.x, s.y, s.z), quat, scl.set(1, 1, 1))
+        fests.setMatrixAt(idx, m4)
+        col.setHex(s.c)
+        fests.setColorAt(idx, col)
+      })
+      fests.instanceMatrix.needsUpdate = true
+      if (fests.instanceColor) fests.instanceColor.needsUpdate = true
+      city.add(fests)
+    }
+
+    // 3.5) Silhouette dressing — the skyline's signature shapes. Each city
+    //      crowns its tallest buildings with its OWN geometry so the skyline
+    //      reads differently even at a glance: New York's stepped setback
+    //      skyscrapers, Tokyo's needle antennas, Beijing's tiered pagoda
+    //      eaves, Mumbai's rooftop tanks + satellite dishes.
+    if (arch.setbacks) {
+      const picks = placements.filter((p) => hOf(p) > 1.15).slice(0, 34)
+      const tierGeom = new THREE.BoxGeometry(1, 1, 1)
+      const tierMat = new THREE.MeshStandardMaterial({ color: 0x232e42, roughness: 0.62, metalness: 0.35 })
+      const tiers = new THREE.InstancedMesh(tierGeom, tierMat, picks.length * 2)
+      picks.forEach((p, idx) => {
+        const h = p.h * hOf(p)
+        const qu2 = new THREE.Quaternion()
+        qu2.setFromAxisAngle(yAxis, p.rot * Math.PI * 0.5)
+        const steps = [
+          { f: 0.62, y: h * 0.81, hh: h * 0.38 },
+          { f: 0.4, y: h * 0.985, hh: h * 0.33 },
+        ]
+        steps.forEach((st, si) => {
+          scl.set(p.w * st.f, st.hh, p.d * st.f)
+          pos.set(p.x, st.y, p.z)
+          m4.compose(pos, qu2, scl)
+          tiers.setMatrixAt(idx * 2 + si, m4)
+        })
+      })
+      tiers.instanceMatrix.needsUpdate = true
+      city.add(tiers)
+    }
+    if (arch.antennas) {
+      const picks = placements.filter((p) => hOf(p) > 1.3).slice(0, 30)
+      const poleGeom = new THREE.BoxGeometry(0.2, 2.6, 0.2)
+      const crossGeom = new THREE.BoxGeometry(1.3, 0.16, 0.16)
+      const poleMat = new THREE.MeshStandardMaterial({ color: 0x8a93a6, roughness: 0.5, metalness: 0.6 })
+      const poles = new THREE.InstancedMesh(poleGeom, poleMat, Math.max(picks.length, 1))
+      const crosses = new THREE.InstancedMesh(crossGeom, poleMat, Math.max(picks.length, 1))
+      picks.forEach((p, idx) => {
+        const h = p.h * hOf(p)
+        const qu2 = new THREE.Quaternion()
+        qu2.setFromAxisAngle(yAxis, p.rot * Math.PI * 0.5)
+        scl.set(1, 1, 1)
+        pos.set(p.x, h + 1.3, p.z)
+        m4.compose(pos, qu2, scl)
+        poles.setMatrixAt(idx, m4)
+        pos.set(p.x, h + 1.75, p.z)
+        m4.compose(pos, qu2, scl)
+        crosses.setMatrixAt(idx, m4)
+      })
+      poles.instanceMatrix.needsUpdate = true
+      crosses.instanceMatrix.needsUpdate = true
+      city.add(poles)
+      city.add(crosses)
+    }
+    if (arch.eaveTiers) {
+      const picks = placements
+      const eaveGeom = new THREE.BoxGeometry(1, 0.14, 1)
+      const eaveMat = new THREE.MeshStandardMaterial({ color: 0xcfb457, roughness: 0.6, metalness: 0.15 })
+      const eaves = new THREE.InstancedMesh(eaveGeom, eaveMat, Math.max(picks.length * 2, 1))
+      picks.forEach((p, idx) => {
+        const h = p.h * hOf(p)
+        const qu2 = new THREE.Quaternion()
+        qu2.setFromAxisAngle(yAxis, p.rot * Math.PI * 0.5)
+        const steps = [
+          { f: 1.08, y: h * 0.8 },
+          { f: 1.16, y: h * 0.94 },
+        ]
+        steps.forEach((st, si) => {
+          scl.set(p.w * st.f, 1, p.d * st.f)
+          pos.set(p.x, st.y, p.z)
+          m4.compose(pos, qu2, scl)
+          eaves.setMatrixAt(idx * 2 + si, m4)
+        })
+      })
+      eaves.instanceMatrix.needsUpdate = true
+      city.add(eaves)
+    }
+    if (arch.dishes) {
+      const picks = placements.filter((p) => hOf(p) > 0.8)
+      const dishGeom = new THREE.CylinderGeometry(0.55, 0.55, 0.1, 8)
+      const dishMat = new THREE.MeshStandardMaterial({ color: 0x9aa0ad, roughness: 0.5, metalness: 0.4 })
+      const dishes = new THREE.InstancedMesh(dishGeom, dishMat, Math.max(picks.length, 1))
+      const dRand = seededRand(7766 + arch.winOffset)
+      let di = 0
+      picks.forEach((p) => {
+        if (dRand() > (arch.dishes ?? 0.5)) return
+        const h = p.h * hOf(p)
+        const qu2 = new THREE.Quaternion()
+        qu2.setFromAxisAngle(yAxis, p.rot * Math.PI * 0.5)
+        scl.set(1, 1, 1)
+        pos.set(p.x + (dRand() - 0.5) * p.w * 0.4, h + 0.45, p.z + (dRand() - 0.5) * p.d * 0.4)
+        m4.compose(pos, qu2, scl)
+        dishes.setMatrixAt(di, m4)
+        di++
+      })
+      dishes.count = di
+      dishes.instanceMatrix.needsUpdate = true
+      city.add(dishes)
+    }
+
+    // 4) Neon corner trims (Beijing market blocks) + rooftop blinkers
+    if (zone.id === 'beijing') {
+      const trimGeom = new THREE.BoxGeometry(1, 1, 1)
+      const trimMat = new THREE.MeshBasicMaterial({ color: 0xffffff })
+      const trims = new THREE.InstancedMesh(trimGeom, trimMat, Math.max(marketPlacements.length * 2, 1))
+      const trimRand = seededRand(606)
+      const trimPalette = [0xefb63c, 0xff2d95, 0x22d3ee]
+      let tri = 0
+      marketPlacements.forEach((p) => {
+        for (const sx of [-1, 1]) {
+          m4.makeScale(0.28, hOf(p) * (0.55 + trimRand() * 0.4), 0.28)
+          m4.setPosition(p.x + sx * (p.w / 2 + 0.05), hOf(p) * 0.5, p.z + (p.d / 2 + 0.05))
+          trims.setMatrixAt(tri, m4)
+          col.setHex(trimPalette[Math.floor(trimRand() * trimPalette.length)])
+          trims.setColorAt(tri, col)
+          tri++
+        }
+      })
+      trims.instanceMatrix.needsUpdate = true
+      if (trims.instanceColor) trims.instanceColor.needsUpdate = true
+      city.add(trims)
+    }
+    const blinkGeom = new THREE.SphereGeometry(0.32, 6, 6)
+    const blinkPick = placements.filter((p) => hOf(p) > 24).slice(0, 40)
+    const blinkInst = new THREE.InstancedMesh(blinkGeom, this.blinkMat, Math.max(blinkPick.length, 1))
+    blinkPick.forEach((p, idx) => {
+      m4.makeScale(1, 1, 1)
+      m4.setPosition(p.x, hOf(p) + 0.5, p.z)
+      blinkInst.setMatrixAt(idx, m4)
+    })
+    blinkInst.instanceMatrix.needsUpdate = true
+    city.add(blinkInst)
+
+    // 5) Neon signs — per-city density + palette
+    const neonGeom = new THREE.BoxGeometry(1, 1, 1)
+    const neonMat = new THREE.MeshBasicMaterial({ color: 0xffffff })
+    const neonRand = seededRand(777 + arch.winOffset)
+    let neonCount = 0
+    for (const p of placements) neonCount += Math.max(1, Math.round(p.signs * arch.neonDensity))
+    const neon = new THREE.InstancedMesh(neonGeom, neonMat, Math.max(neonCount, 1))
+    let ni = 0
+    placements.forEach((p) => {
+      const signN = Math.max(1, Math.round(p.signs * arch.neonDensity))
+      for (let k = 0; k < signN; k++) {
+        const w = 1.5 + neonRand() * 5
+        const h = 0.4 + neonRand() * 1.4
+        const y = 3 + neonRand() * Math.max(hOf(p) - 4, 4)
+        const side = Math.floor(neonRand() * 4)
+        let x = p.x
+        let z = p.z
+        let sx = w
+        let sz = 0.35
+        if (side === 0) { z = p.z - p.d / 2 - 0.1 } else if (side === 1) { z = p.z + p.d / 2 + 0.1 } else if (side === 2) { x = p.x - p.w / 2 - 0.1; sx = 0.35; sz = w } else { x = p.x + p.w / 2 + 0.1; sx = 0.35; sz = w }
+        m4.makeScale(sx, h, sz)
+        m4.setPosition(x, y, z)
+        neon.setMatrixAt(ni, m4)
+        col.setHex(arch.neonPalette[Math.floor(neonRand() * arch.neonPalette.length)])
+        neon.setColorAt(ni, col)
+        ni++
+      }
+    })
+    neon.instanceMatrix.needsUpdate = true
+    if (neon.instanceColor) neon.instanceColor.needsUpdate = true
+    city.add(neon)
+
+    // 6) Storefront glow bands — per-city tint
+    const shopGeom = new THREE.BoxGeometry(1, 1, 1)
+    const shopMat = new THREE.MeshBasicMaterial({ color: 0xffffff })
+    const shopPick = placements.filter((p) => hOf(p) <= 32)
+    const shopInst = new THREE.InstancedMesh(shopGeom, shopMat, Math.max(shopPick.length, 1))
+    const shopPalette = [zone.trim, 0xffd9a0, 0x9fd8ff, 0xffb3d9, 0xc8ffd9]
+    shopPick.forEach((p, idx) => {
+      const side = idx % 2 === 0 ? -1 : 1
+      m4.makeScale(p.w * 0.82, 1.1, 0.25)
+      m4.setPosition(p.x, 1.0, p.z + side * (p.d / 2 + 0.12))
+      shopInst.setMatrixAt(idx, m4)
+      col.setHex(shopPalette[idx % shopPalette.length])
+      shopInst.setColorAt(idx, col)
+    })
+    shopInst.instanceMatrix.needsUpdate = true
+    if (shopInst.instanceColor) shopInst.instanceColor.needsUpdate = true
+    city.add(shopInst)
+
+    // 7) Zone sidewalk people — a small animated street cast per city (see
+    //    buildZonePeople for the outfits; grouped here so toggling is free).
+    this.buildZonePeople(zone, city)
+    // 8) Zone street furniture — the props that make a sidewalk READ as a
+    //    place: London phone boxes, Tokyo vending machines, Mumbai stalls.
+    this.buildZoneFurniture(zone, city)
+    this.buildZoneStreetlife(zone, city)
+    this.buildZoneRoadStyle(zone, city)
+
+    city.visible = false
+    this.scene.add(city)
+    this.zoneCities.set(zone.id, city)
+  }
+
+  /** Small animated street cast per city — a handful of sidewalk idlers in
+      zone-specific outfits (London dark coats, Mumbai saris, Tokyo business).
+      Parented to the zone pack so zone switching hides/shows them for free. */
+  private buildZonePeople(zone: WorldZone, parent: THREE.Group): void {
+    const arch = zone.arch
+    if (!arch) return
+    const charKeys = Object.keys(this.assets.chars)
+    if (charKeys.length === 0) return
+    const rand = seededRand(3033 + arch.winOffset)
+    const n = this.lowPower ? 6 : 9
+    const wraps: THREE.Group[] = []
+    for (let i = 0; i < n; i++) {
+      const key = charKeys[Math.floor(rand() * charKeys.length)]
+      const { obj, clips } = cloneCharacter(this.assets, key)
+      const bb = new THREE.Box3().setFromObject(obj)
+      const h = bb.max.y - bb.min.y
+      const s = h > 0.01 ? (1.55 + rand() * 0.3) / h : 1
+      obj.scale.setScalar(s)
+      const skin = new THREE.Color(0xf2c9a0)
+      const accent = new THREE.Color(arch.people[Math.floor(rand() * arch.people.length)])
+      const jitter = 0.85 + rand() * 0.3
+      obj.traverse((o) => {
+        const m = o as THREE.Mesh
+        if (!m.isMesh) return
+        const src = m.material as THREE.MeshStandardMaterial
+        const mat = src.clone()
+        const label = `${src.name} ${m.name}`.toLowerCase()
+        const base = /skin|head/.test(label) ? skin : accent
+        mat.color = base.clone().multiplyScalar(jitter)
+        mat.emissive = base.clone().multiplyScalar(0.14)
+        m.material = mat
+      })
+      obj.position.y = -bb.min.y * s
+      // local headgear — one accessory per city so the crowd reads as local:
+      // bowler hats (London), conical bamboo hats (Beijing), turbans (Mumbai),
+      // caps (Harbor/Tokyo), beanies (New York), berets (Paris)
+      const hg = arch.headgear ?? 'none'
+      const headTop = bb.max.y - 0.04
+      const accMat = (c: number, e = 0) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.85, emissive: new THREE.Color(c).multiplyScalar(e), emissiveIntensity: e > 0 ? 0.5 : 0 })
+      if (hg === 'bowler') {
+        const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.2, 0.24, 10), accMat(0x23262e))
+        hat.position.y = headTop + 0.1
+        obj.add(hat)
+        const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.04, 10), accMat(0x2c3038))
+        brim.position.y = headTop + 0.02
+        obj.add(brim)
+      } else if (hg === 'cone') {
+        const cone = new THREE.Mesh(new THREE.ConeGeometry(0.5, 0.55, 8), accMat(0xd9a05a))
+        cone.position.y = headTop + 0.28
+        obj.add(cone)
+        const band = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.1, 8), accMat(0x9a2e24))
+        band.position.y = headTop + 0.06
+        obj.add(band)
+      } else if (hg === 'turban') {
+        const wrap = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.3, 0.34, 10), accMat(new THREE.Color(arch.people[Math.floor(rand() * arch.people.length)]).getHex()))
+        wrap.position.y = headTop + 0.14
+        obj.add(wrap)
+        const knot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 6), accMat(0xf08c3a))
+        knot.position.y = headTop + 0.3
+        obj.add(knot)
+      } else if (hg === 'cap') {
+        const dome = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.16, 10), accMat(0x1f242e))
+        dome.position.y = headTop + 0.08
+        obj.add(dome)
+        const brim = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.05, 0.28), accMat(0x1f242e))
+        brim.position.set(0.12, headTop + 0.03, 0)
+        obj.add(brim)
+      } else if (hg === 'beanie') {
+        const beanie = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.26, 0.26, 10), accMat(0x2f3a4a))
+        beanie.position.y = headTop + 0.11
+        obj.add(beanie)
+        const pom = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), accMat(0xd84a4a))
+        pom.position.y = headTop + 0.26
+        obj.add(pom)
+      } else if (hg === 'beret') {
+        const beret = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.3, 0.1, 10), accMat(0x5a3a3a))
+        beret.position.y = headTop + 0.08
+        obj.add(beret)
+        const knob = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), accMat(0x3a2a2a))
+        knob.position.y = headTop + 0.14
+        obj.add(knob)
+      }
+      // local outfit — the body mesh beyond the head: overcoats (London),
+      // red scarves (Beijing), dupatta sashes (Mumbai), school backpacks
+      // (Tokyo), café aprons (Paris), hoodies (New York), crew jackets (Harbor)
+      const gar = arch.garment ?? 'none'
+      const gmat = (c: number) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.9 })
+      if (gar === 'overcoat') {
+        const coat = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.92, 0.52), gmat(0x2b2f38))
+        coat.position.y = 1.02
+        obj.add(coat)
+        const collar = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.16, 0.52), gmat(0x1f232b))
+        collar.position.y = 1.5
+        obj.add(collar)
+      } else if (gar === 'scarf') {
+        const scarf = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.2, 0.48), gmat(0xcf2f2f))
+        scarf.position.y = 1.52
+        obj.add(scarf)
+        const tail = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.5, 0.1), gmat(0xa82222))
+        tail.position.set(0.1, 1.15, 0.2)
+        obj.add(tail)
+      } else if (gar === 'dupatta') {
+        const kurta = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.9, 0.44), gmat(new THREE.Color(arch.people[Math.floor(rand() * arch.people.length)]).getHex()))
+        kurta.position.y = 1.02
+        obj.add(kurta)
+        const sash = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.22, 0.5), gmat(0xd4a017))
+        sash.position.y = 1.34
+        obj.add(sash)
+      } else if (gar === 'backpack') {
+        const pack = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.56, 0.2), gmat(0x2f3a4a))
+        pack.position.set(0, 1.08, -0.34)
+        obj.add(pack)
+        const collar = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.14, 0.5), gmat(0xf5f7fa))
+        collar.position.y = 1.58
+        obj.add(collar)
+      } else if (gar === 'apron') {
+        const apron = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.74, 0.14), gmat(0xf2efe8))
+        apron.position.set(0, 1.0, 0.4)
+        obj.add(apron)
+        const collar = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.14, 0.5), gmat(0x2a2f3a))
+        collar.position.y = 1.56
+        obj.add(collar)
+      } else if (gar === 'hoodie') {
+        const hood = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.84, 0.48), gmat(0x4a5568))
+        hood.position.y = 1.02
+        obj.add(hood)
+        const pouch = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.26, 0.14), gmat(0x3f4a5e))
+        pouch.position.set(0, 0.88, 0.26)
+        obj.add(pouch)
+      } else if (gar === 'jacket') {
+        const jacket = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.78, 0.46), gmat(0x22303e))
+        jacket.position.y = 1.0
+        obj.add(jacket)
+        const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.1, 0.48), gmat(0x22d3ee))
+        stripe.position.y = 1.32
+        obj.add(stripe)
+      }
+      const mixer = new THREE.AnimationMixer(obj)
+      const idleClip = clips.find((c) => /idle|stand/i.test(c.name)) ?? clips[0]
+      const action = mixer.clipAction(idleClip)
+      action.play()
+      action.timeScale = 0.85 + rand() * 0.3
+      const wrap = new THREE.Group()
+      wrap.add(obj)
+      // sidewalk spot — road edge, slightly outside the travel lane
+      const laneIdx = Math.floor(rand() * (N + 1))
+      const c = -HALF + ROAD / 2 + laneIdx * CELL
+      const off = (rand() > 0.5 ? 1 : -1) * (ROAD / 2 + 1.2)
+      const axis = rand() > 0.5 ? 'x' : 'z'
+      const along = (rand() * 2 - 1) * (HALF - 12)
+      wrap.position.set(axis === 'x' ? along : c + off, 0, axis === 'x' ? c + off : along)
+      wrap.rotation.y = rand() * Math.PI * 2
+      parent.add(wrap)
+      wraps.push(wrap)
+      this.idlers.push({ mesh: wrap, mixer, baseY: 0 })
+    }
+    this.zoneCityPeds.set(zone.id, wraps)
+  }
+
+  /** Per-city sidewalk furniture — the last 5% that makes a street feel like
+      a specific real city. Visual-only (no colliders), placed along the
+      central avenues so they're in view while you drive. */
+  private buildZoneFurniture(zone: WorldZone, parent: THREE.Group): void {
+    const kind = zone.arch?.furniture ?? 'none'
+    if (kind === 'none') return
+    const rand = seededRand(8800 + (zone.arch?.winOffset ?? 0))
+    // Geometry + materials per furniture type
+    let body: THREE.BufferGeometry | null = null
+    let bodyMat: THREE.MeshStandardMaterial
+    let extra: THREE.BufferGeometry | null = null
+    let extraMat: THREE.MeshStandardMaterial | null = null
+    let glowMat: THREE.MeshBasicMaterial | null = null
+    const bw = 0.9
+    let bh = 2.1
+    const bd = 0.9
+    if (kind === 'booth') {
+      bodyMat = new THREE.MeshStandardMaterial({ color: 0xd43636, roughness: 0.5, metalness: 0.3 })
+      body = new THREE.BoxGeometry(bw, bh, bd)
+      extraMat = new THREE.MeshStandardMaterial({ color: 0x2a1515, roughness: 0.6 })
+      extra = new THREE.BoxGeometry(bw + 0.12, 0.22, bd + 0.12)
+      glowMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0 })
+    } else if (kind === 'phonebox') {
+      // London's red telephone box — iconic, unmistakable on a British street
+      bodyMat = new THREE.MeshStandardMaterial({ color: 0xd43b2a, roughness: 0.45, metalness: 0.25 })
+      body = new THREE.BoxGeometry(1.0, 2.4, 1.0)
+      extraMat = new THREE.MeshStandardMaterial({ color: 0x3a1a10, roughness: 0.6 })
+      extra = new THREE.BoxGeometry(1.14, 0.34, 1.14)
+      glowMat = new THREE.MeshBasicMaterial({ color: 0xffe9b0 })
+    } else if (kind === 'vending') {
+      bodyMat = new THREE.MeshStandardMaterial({ color: 0x22303e, roughness: 0.6, metalness: 0.4 })
+      body = new THREE.BoxGeometry(1.05, 2.0, 0.75)
+      extraMat = null
+      extra = null
+      glowMat = new THREE.MeshBasicMaterial({ color: 0x8fd8ff })
+    } else if (kind === 'stall') {
+      bodyMat = new THREE.MeshStandardMaterial({ color: 0x8a5a2b, roughness: 0.8 })
+      body = new THREE.BoxGeometry(2.2, 0.55, 1.5)
+      extraMat = new THREE.MeshStandardMaterial({ color: 0x3f7a6e, roughness: 0.7 })
+      extra = new THREE.BoxGeometry(2.3, 0.14, 1.6)
+      glowMat = new THREE.MeshBasicMaterial({ color: 0xffe9b0 })
+    } else if (kind === 'awning') {
+      bodyMat = new THREE.MeshStandardMaterial({ color: 0x2b2b33, roughness: 0.7 })
+      body = new THREE.BoxGeometry(2.8, 0.5, 1.7)
+      extraMat = new THREE.MeshStandardMaterial({ color: 0xd9c9a0, roughness: 0.8 })
+      extra = new THREE.BoxGeometry(2.8, 0.3, 1.7)
+      glowMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0 })
+    } else if (kind === 'lantern') {
+      bodyMat = new THREE.MeshStandardMaterial({ color: 0x3a2a16, roughness: 0.8 })
+      body = new THREE.CylinderGeometry(0.07, 0.09, 2.5, 6)
+      glowMat = new THREE.MeshBasicMaterial({ color: 0xff5340 })
+      extraMat = null
+      extra = null
+    } else if (kind === 'steam') {
+      bodyMat = new THREE.MeshStandardMaterial({ color: 0x4a505a, roughness: 0.9 })
+      body = new THREE.CylinderGeometry(0.55, 0.65, 0.22, 10)
+      extraMat = null
+      extra = null
+      glowMat = new THREE.MeshBasicMaterial({ color: 0xdfe8f2, transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending, depthWrite: false })
+    } else {
+      return
+    }
+    // Walk the central avenues (lanes 3..6), one prop every ~13m on a side
+    for (let lane = 3; lane <= 6; lane++) {
+      const c = -HALF + ROAD / 2 + lane * CELL
+      const off = (lane % 2 === 0 ? 1 : -1) * (ROAD / 2 + 1.9)
+      for (let a = -HALF + 18; a < HALF - 14; a += 13 + rand() * 4) {
+        if (rand() < 0.18) continue // keep it natural, not a wall of props
+        const along = a + (rand() - 0.5) * 5
+        for (const axis of (['x', 'z'] as const)) {
+          const x = axis === 'x' ? along : c + off
+          const z = axis === 'x' ? c + off : along
+          const g = new THREE.Group()
+          if (body) {
+            const b = new THREE.Mesh(body, bodyMat)
+            if (kind === 'steam') b.position.y = 0.12
+            else b.position.y = bh / 2
+            g.add(b)
+          }
+          if (extra && extraMat) {
+            const e = new THREE.Mesh(extra, extraMat)
+            if (kind === 'stall') e.position.y = 0.75
+            else if (kind === 'awning') e.position.y = 0.42
+            else e.position.y = bh + 0.12
+            g.add(e)
+          }
+          if (glowMat) {
+            const lm = new THREE.Mesh(new THREE.SphereGeometry(0.24, 6, 6), glowMat)
+            if (kind === 'booth') lm.position.y = 1.95
+            else if (kind === 'vending') { lm.scale.set(0.12, 0.62, 0.08); lm.position.set(0, 1.0, 0.4) }
+            else if (kind === 'stall') lm.position.set(0, 1.4, 0)
+            else if (kind === 'awning') lm.position.set(0, 0.9, 0)
+            else if (kind === 'lantern') lm.position.y = 2.45
+            else if (kind === 'steam') { lm.scale.set(1.15, 1.4, 1.15); lm.position.y = 1.4 }
+            g.add(lm)
+          }
+          g.position.set(x, 0, z)
+          g.rotation.y = axis === 'x' ? Math.PI / 2 : 0
+          g.rotation.y += (rand() - 0.5) * 0.2
+          parent.add(g)
+        }
+      }
+    }
+  }
+
+  /** Street-level litter that makes a map feel lived-in (the COD look):
+      utility poles with sagging wires along every avenue + crates, barrels
+      and sandbags at the block corners. Runs for every city. */
+  private buildZoneStreetlife(zone: WorldZone, parent: THREE.Group): void {
+    const rand = seededRand(4400 + (zone.arch?.winOffset ?? 0))
+    // Each city hangs its own lamps: London's black cast-iron, Paris's green
+    // art-nouveau, Beijing's red lantern posts, Tokyo's slate, Mumbai's warm
+    // teak, New York's steel, Harbor's harbour teal.
+    const lampCfg: Record<string, { pole: number; arm: number; glow: number }> = {
+      harbor:  { pole: 0x22303a, arm: 0x2e4150, glow: 0x22d3ee },
+      london:  { pole: 0x1e1e24, arm: 0x2a2a30, glow: 0xffce8a },
+      paris:   { pole: 0x2f4a32, arm: 0x3f5a3f, glow: 0xbff0c8 },
+      beijing: { pole: 0x5a1717, arm: 0x8a2020, glow: 0xffd9a0 },
+      mumbai:  { pole: 0x5a4030, arm: 0x6b4a3a, glow: 0xffce8a },
+      tokyo:   { pole: 0x35353f, arm: 0x4a4a55, glow: 0xffc2e0 },
+      newyork: { pole: 0x4a4e56, arm: 0x55585e, glow: 0xf5f7fa },
+    }
+    const lamp = lampCfg[zone.id] ?? lampCfg.harbor
+    const poleGeom = new THREE.CylinderGeometry(0.1, 0.18, 6.4, 6)
+    const poleMat = new THREE.MeshStandardMaterial({ color: lamp.pole, roughness: 0.85, metalness: 0.15 })
+    const armGeom = new THREE.BoxGeometry(1.2, 0.14, 0.14)
+    const armMat = new THREE.MeshStandardMaterial({ color: lamp.arm, roughness: 0.8 })
+    const glowGeom = new THREE.SphereGeometry(0.24, 8, 6)
+    const glowMat = new THREE.MeshBasicMaterial({ color: lamp.glow, fog: false })
+    const wireMat = new THREE.LineBasicMaterial({ color: 0x1c2027, transparent: true, opacity: 0.85 })
+    const crateGeom = new THREE.BoxGeometry(1.2, 1.1, 1.2)
+    const crateMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.9 })
+    const barrelGeom = new THREE.CylinderGeometry(0.5, 0.55, 1.1, 10)
+    const barrelMat = new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.7, metalness: 0.25 })
+    const sandGeom = new THREE.BoxGeometry(0.9, 0.45, 0.5)
+    const sandMat = new THREE.MeshStandardMaterial({ color: 0x9a8a5a, roughness: 0.95 })
+    const wireGeomCache = new Map<string, THREE.BufferGeometry>()
+    for (let lane = 3; lane <= 6; lane++) {
+      const c = -HALF + ROAD / 2 + lane * CELL
+      const off = (lane % 2 === 0 ? 1 : -1) * (ROAD / 2 + 1.9)
+      // utility poles every ~44m along the lane, both side orientations
+      let prevX: THREE.Vector3 | null = null
+      let prevZ: THREE.Vector3 | null = null
+      for (let a = -HALF + 20; a < HALF - 16; a += 44) {
+        if (rand() < 0.12) continue
+        for (const axis of (['x', 'z'] as const)) {
+          const x = axis === 'x' ? a : c + off
+          const z = axis === 'x' ? c + off : a
+          const pole = new THREE.Mesh(poleGeom, poleMat)
+          pole.position.set(x, 3.2, z)
+          parent.add(pole)
+          const arm = new THREE.Mesh(armGeom, armMat)
+          if (axis === 'x') arm.position.set(x, 6.2, z + (off > 0 ? 0.55 : -0.55))
+          else arm.position.set(x + (off > 0 ? 0.55 : -0.55), 6.2, z)
+          parent.add(arm)
+          const lampGlow = new THREE.Mesh(glowGeom, glowMat)
+          if (axis === 'x') lampGlow.position.set(x, 6.25, z + (off > 0 ? 1.0 : -1.0))
+          else lampGlow.position.set(x + (off > 0 ? 1.0 : -1.0), 6.25, z)
+          parent.add(lampGlow)
+          const top = new THREE.Vector3(x, 6.5, z)
+          const prevKey = axis === 'x' ? prevX : prevZ
+          if (prevKey) {
+            const mid = prevKey.clone().add(top).multiplyScalar(0.5)
+            mid.y -= 0.7 // sag
+            const pts = [prevKey, mid, top]
+            const key = pts.map((v) => v.x.toFixed(1) + ',' + v.y.toFixed(1) + ',' + v.z.toFixed(1)).join('|')
+            let geo = wireGeomCache.get(key)
+            if (!geo) {
+              geo = new THREE.BufferGeometry().setFromPoints(pts)
+              wireGeomCache.set(key, geo)
+            }
+            const wire = new THREE.Line(geo, wireMat)
+            parent.add(wire)
+          }
+          if (axis === 'x') prevX = top
+          else prevZ = top
+        }
+      }
+      // corner props — crates, barrels, sandbags on the sidewalk
+      for (let a = -HALF + 8; a < HALF - 8; a += 26 + rand() * 10) {
+        if (rand() < 0.45) continue
+        const along = a + (rand() - 0.5) * 6
+        for (const axis of (['x', 'z'] as const)) {
+          if (rand() < 0.4) continue
+          const x = axis === 'x' ? along : c + off + (rand() - 0.5) * 2.2
+          const z = axis === 'x' ? c + off + (rand() - 0.5) * 2.2 : along
+          const kind = rand()
+          if (kind < 0.4) {
+            const cr = new THREE.Mesh(crateGeom, crateMat)
+            cr.position.set(x, 0.55, z)
+            cr.rotation.y = (rand() - 0.5) * 1.2
+            parent.add(cr)
+          } else if (kind < 0.7) {
+            const br = new THREE.Mesh(barrelGeom, barrelMat)
+            br.position.set(x, 0.55, z)
+            br.rotation.y = (rand() - 0.5) * 1.2
+            parent.add(br)
+          } else {
+            const st = new THREE.Group()
+            for (let s = 0; s < 3; s++) {
+              const sb = new THREE.Mesh(sandGeom, sandMat)
+              sb.position.set(x + (s - 1) * 0.3, 0.45 * s + 0.22, z)
+              sb.rotation.y = (rand() - 0.5) * 0.8
+              st.add(sb)
+            }
+            st.position.set(0, 0, 0)
+            parent.add(st)
+          }
+        }
+      }
+    }
+  }
+
+  /** Per-city road identity — the surface details a driver actually passes:
+      zebra crossings, tree medians, tram rails, speed bumps, hydrants,
+      double-yellow edges, hazard chevrons. Painted lines alone didn't read;
+      now the road carries its own furniture. */
+  private buildZoneRoadStyle(zone: WorldZone, parent: THREE.Group): void {
+    const zid = zone.id
+    const r = seededRand(7700 + (zone.arch?.winOffset ?? 0))
+    const laneC = (l: number) => -HALF + ROAD / 2 + l * CELL
+    const strip = (mat: THREE.Material, off: number, wid: number, w = 340, y = 0.04) => {
+      const hGeom = new THREE.BoxGeometry(w, 0.07, wid)
+      const vGeom = new THREE.BoxGeometry(wid, 0.07, w)
+      for (const l of [3, 4, 5, 6]) {
+        const c = laneC(l)
+        const h = new THREE.Mesh(hGeom, mat); h.position.set(0, y, c + off); parent.add(h)
+        const v = new THREE.Mesh(vGeom, mat); v.position.set(c + off, y, 0); parent.add(v)
+      }
+    }
+    const crosswalk = (col: number, every = 2) => {
+      const cm = new THREE.MeshBasicMaterial({ color: col, fog: false })
+      const bg = new THREE.BoxGeometry(2.6, 0.05, 0.85)
+      for (let li = 3; li <= 6; li++) for (let lj = 3; lj <= 6; lj++) {
+        if ((li + lj) % every !== 0) continue
+        const c1 = laneC(li), c2 = laneC(lj)
+        for (let b = -3; b <= 3; b++) {
+          const bx = new THREE.Mesh(bg, cm); bx.position.set(c2 + b * 3.1, 0.045, c1); parent.add(bx)
+          const bz = new THREE.Mesh(bg, cm); bz.position.set(c1, 0.045, c2 + b * 3.1); parent.add(bz)
+        }
+      }
+    }
+    if (zid === 'beijing') {
+      // Grand-boulevard tree medians down the middle of every avenue, red kerbs
+      const gm = new THREE.MeshBasicMaterial({ color: 0x2f6b3a, fog: false })
+      strip(gm, 0, 2.3, 340, 0.025)
+      const treeGeom = new THREE.ConeGeometry(1.6, 3.4, 7)
+      const treeMat = new THREE.MeshStandardMaterial({ color: 0x3d7a42, roughness: 0.9 })
+      for (const l of [3, 4, 5, 6]) {
+        const c = laneC(l)
+        for (let a = -HALF + 20; a < HALF - 16; a += 44) {
+          if (r() < 0.25) continue
+          for (const axis of (['x', 'z'] as const)) {
+            const t = new THREE.Mesh(treeGeom, treeMat)
+            if (axis === 'x') t.position.set(a, 1.7, c)
+            else t.position.set(c, 1.7, a)
+            parent.add(t)
+          }
+        }
+      }
+      // crisp white centre line on top of the median band
+      strip(new THREE.MeshBasicMaterial({ color: 0xdfe4ea, fog: false }), 0, 0.35, 340, 0.05)
+    } else if (zid === 'paris') {
+      // Tram rails — twin steel tracks down every avenue (Paris trams)
+      const railMat = new THREE.MeshBasicMaterial({ color: 0x6a7078, fog: false })
+      strip(railMat, -0.75, 0.16)
+      strip(railMat, 0.75, 0.16)
+      crosswalk(0xdfe4ea, 3)
+    } else if (zid === 'mumbai') {
+      // Faded zebra crossings + speed bumps + dust patches — chaotic traffic feel
+      crosswalk(0xcfd2d0, 2)
+      const bumpMat = new THREE.MeshBasicMaterial({ color: 0x3a3a3a, fog: false })
+      const dustMat = new THREE.MeshBasicMaterial({ color: 0x2a2418, fog: false })
+      for (const l of [3, 4, 5, 6]) {
+        const c = laneC(l)
+        for (let a = -HALF + 40; a < HALF - 24; a += 176) {
+          for (const axis of (['x', 'z'] as const)) {
+            if (axis === 'x') {
+              for (let b = 0; b < 3; b++) {
+                const bp = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.12, 0.8), bumpMat)
+                bp.position.set(a + b * 1.6 - 1.6, 0.06, c); parent.add(bp)
+              }
+            } else {
+              for (let b = 0; b < 3; b++) {
+                const bp = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.12, 4.2), bumpMat)
+                bp.position.set(c, 0.06, a + b * 1.6 - 1.6); parent.add(bp)
+              }
+            }
+            if (r() < 0.5) {
+              const d = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.5, 0.1, 8), dustMat)
+              if (axis === 'x') d.position.set(a + (r() - 0.5) * 8, 0.03, c + (r() - 0.5) * 6)
+              else d.position.set(c + (r() - 0.5) * 6, 0.03, a + (r() - 0.5) * 8)
+              parent.add(d)
+            }
+          }
+        }
+      }
+    } else if (zid === 'london') {
+      // Double-yellow edge lines + zebra crossings at the junctions
+      strip(new THREE.MeshBasicMaterial({ color: 0xf5d020, fog: false }), ROAD / 2 - 0.75, 0.3)
+      strip(new THREE.MeshBasicMaterial({ color: 0xf5d020, fog: false }), -(ROAD / 2 - 0.75), 0.3)
+      crosswalk(0xdfe4ea, 2)
+    } else if (zid === 'newyork') {
+      // Zebra crossings + red fire hydrants on the corners
+      crosswalk(0xe8ebee, 2)
+      const hydGeom = new THREE.CylinderGeometry(0.28, 0.34, 1.0, 8)
+      const hydMat = new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.6, metalness: 0.3 })
+      for (let li = 3; li <= 6; li++) for (let lj = 3; lj <= 6; lj++) {
+        if ((li + lj) % 2 !== 0 || r() < 0.5) continue
+        const c1 = laneC(li), c2 = laneC(lj)
+        const h = new THREE.Mesh(hydGeom, hydMat)
+        h.position.set(c2 + (ROAD / 2 + 2.2) * (r() < 0.5 ? 1 : -1), 0.5, c1 + (ROAD / 2 + 2.2) * (r() < 0.5 ? 1 : -1))
+        parent.add(h)
+      }
+    } else if (zid === 'tokyo') {
+      // Wide white crosswalks + blue edge guides (already) — dense crossings
+      crosswalk(0xf2f4f7, 1)
+    } else if (zid === 'harbor') {
+      // Hazard chevrons along the dock roads + cyan guide (already)
+      const hzMat = new THREE.MeshBasicMaterial({ color: 0xf5c542, fog: false })
+      const hzGeom = new THREE.BoxGeometry(7, 0.06, 0.9)
+      for (const l of [3, 4, 5, 6]) {
+        const c = laneC(l)
+        for (let a = -HALF + 30; a < HALF - 20; a += 132) {
+          const h1 = new THREE.Mesh(hzGeom, hzMat)
+          h1.position.set(a, 0.045, c + ROAD / 2 - 1.2); h1.rotation.y = 0.7; parent.add(h1)
+          const h2 = new THREE.Mesh(hzGeom, hzMat)
+          h2.position.set(a + 6, 0.045, c - (ROAD / 2 - 1.2)); h2.rotation.y = -0.7; parent.add(h2)
+          const v1 = new THREE.Mesh(hzGeom, hzMat)
+          v1.position.set(c + ROAD / 2 - 1.2, 0.045, a); v1.rotation.y = 0.7; parent.add(v1)
+          const v2 = new THREE.Mesh(hzGeom, hzMat)
+          v2.position.set(c - (ROAD / 2 - 1.2), 0.045, a + 6); v2.rotation.y = -0.7; parent.add(v2)
+        }
+      }
+    }
+  }
+
   /** Build one landmark group per zone — placed just outside the city square
       (R = 236) ON the waterfront so it stands IN the view while you drive the
       outer ring, not a pixel lost in the far fog. Materials are fog:false so
@@ -2281,6 +3338,30 @@ export class GameEngine {
       sig(g, 2.8, 2.6, 8.2, 12, 1.3, 6, 0xc0392b)
       sig(g, 2.7, 1.2, 7.6, 12, 2.9, 6, 0xe3f2fb)
       sig(g, 0.24, 1.2, 7.8, 12, 2.6, 6, 0x0e1116)
+
+      // Tower of London — the castle by the Thames: white keep, four turret
+      // towers with onion domes, crenellated walls, a flag and a raven perch
+      g.add(this.box(16, 24, 14, -78, 12, 20, 0xdfe2e8)) // white keep
+      for (const [tx, tz] of [[-70, 13], [-86, 13], [-70, 27], [-86, 27]] as const) {
+        const turret = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.6, 12, 8), new THREE.MeshStandardMaterial({ color: 0xd8dbe0 }))
+        turret.position.set(tx, 6, tz)
+        g.add(turret)
+        const dome = new THREE.Mesh(new THREE.SphereGeometry(2.6, 8, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x3f7a6e }))
+        dome.position.set(tx, 13.2, tz)
+        g.add(dome)
+        const spike = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.8, 6), new THREE.MeshStandardMaterial({ color: 0xd8c891 }))
+        spike.position.set(tx, 14.8, tz)
+        g.add(spike)
+      }
+      for (const [bx, bz] of [[-78, 12], [-78, 28], [-66, 20], [-90, 20]] as const) {
+        g.add(this.box(2.4, 1.4, 2.4, bx, 25.6, bz, 0x8a93a6)) // battlements
+      }
+      g.add(this.box(1.2, 9, 1.2, -66, 30, 20, 0x23262e)) // flag mast
+      g.add(this.box(2.2, 2.2, 0.4, -66, 36, 20, 0xd84a4a, 0xd84a4a, 0.8)) // flag
+      sig(g, 0.6, 0.8, 0.6, -88, 0.4, 16, 0x14161c) // ravens
+      sig(g, 0.6, 0.8, 0.6, -89, 0.4, 14, 0x14161c)
+      sig(g, 1.0, 2.4, 1.0, -92, 1.2, 20, 0xd43b2a) // red phone box by the gate
+      sig(g, 1.14, 0.34, 1.14, -92, 2.7, 20, 0x3a1a10)
     })
 
     // ---- Paris — Eiffel Tower (tapered stack, beacon tip, café lights) ----
@@ -2303,6 +3384,18 @@ export class GameEngine {
       // café awning + glowing bistro lights at the base
       sig(g, 1.2, 0.9, 11, -12, 3.2, 3, 0xd9b98a)
       for (const bx of [-9, -3, 3, 9]) g.add(this.box(0.5, 0.5, 0.5, bx, 3.8, 8, 0xffe9b0, 0xffd9a0, 1.4))
+
+      // Arc de Triomphe — the Champs-Élysées arch: two legs, one entablature,
+      // a warm eternal-flame glow under the span, off to the east
+      g.add(this.box(6, 14, 6, -13, 7, 14, 0x9a8a6a))
+      g.add(this.box(6, 14, 6, 13, 7, 14, 0x9a8a6a))
+      g.add(this.box(34, 4.2, 6, 0, 14.6, 14, 0xb8a888))
+      g.add(this.box(36, 1.6, 6.4, 0, 17.4, 14, 0x8a7a5a))
+      for (const [px, pz] of [[-13, 12.4], [13, 12.4]] as const) {
+        g.add(this.box(6.8, 3.4, 1.4, px, 6.8, pz, 0xc9b88d))
+        g.add(this.box(6.8, 3.4, 1.4, px, 6.8, 15.6, 0xc9b88d))
+      }
+      g.add(this.box(0.6, 2.4, 0.6, 0, 1.2, 14, 0xffe9b0, 0xffd9a0, 1.6)) // flame
     })
 
     // ---- Beijing — Golden Pagoda (five tiers, upturned gold roofs) ----
@@ -2325,6 +3418,47 @@ export class GameEngine {
         g.add(this.box(1.6, 1.6, 1.6, s * 9, 6.6, -2, 0xff6a3d, 0xff4d2e, 1.6))
         g.add(this.box(1.6, 1.6, 1.6, s * 9, 6.6, 2, 0xff6a3d, 0xff4d2e, 1.6))
       }
+
+      // Bird's Nest — the Olympic stadium: interlaced steel rings glowing
+      // over a red-lit bowl, unmistakably Beijing 2008
+      const nestSteel = new THREE.MeshStandardMaterial({ color: 0xb8c0cc, roughness: 0.4, metalness: 0.6 })
+      const nest = new THREE.Group()
+      const nestSegs = 14
+      for (let i = 0; i < nestSegs; i++) {
+        const a = (i / nestSegs) * Math.PI * 2
+        const cx = Math.cos(a) * 22
+        const cz = Math.sin(a) * 15
+        for (const k of [0, 1] as const) {
+          const b = new THREE.Mesh(new THREE.BoxGeometry(1.6, 7 + k * 6, 1.6), nestSteel)
+          b.position.set(cx, 4 + k * 4, cz)
+          b.rotation.y = a + Math.PI / 2
+          nest.add(b)
+        }
+      }
+      // bowl + rim glow + outer red wall
+      const bowl = new THREE.Mesh(new THREE.CylinderGeometry(14, 10, 5, 12), new THREE.MeshBasicMaterial({ color: 0xff4d2e, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }))
+      bowl.position.y = 1.6
+      nest.add(bowl)
+      nest.position.set(-52, 0, 34)
+      g.add(nest)
+      for (const [mx, mz] of [[-74, 34], [-30, 34], [-52, 12], [-52, 56]] as const) {
+        sig(g, 1.4, 3.2, 1.4, mx, 1.6, mz, 0xb8c0cc)
+        g.add(this.box(2.2, 2.2, 2.2, mx, 3.6, mz, 0xff5340, 0xff4d2e, 1.5))
+      }
+
+      // Guomao — the CBD's twin glass towers, dark glass with lit seam strips
+      for (const sx of [-36, -26] as const) {
+        g.add(this.box(9, 74, 9, sx, 37, -52, 0x232e42))
+        g.add(this.box(9.6, 2.6, 9.6, sx, 62, -52, 0x8fd8ff, 0x8fd8ff, 0.8))
+        g.add(this.box(7, 14, 7, sx, 91, -52, 0x232e42))
+        const gSpire = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.6, 10, 6), new THREE.MeshStandardMaterial({ color: 0xcfd6e0, emissive: 0x8fd8ff, emissiveIntensity: 0.6 }))
+        gSpire.position.set(sx, 102, -52)
+        g.add(gSpire)
+        for (const wy of [6, 16, 26, 36, 46, 56] as const) {
+          g.add(this.box(0.5, 0.7, 9.4, sx, wy, -52, 0x8fd8ff, 0x8fd8ff, 0.5))
+          g.add(this.box(0.5, 0.7, 9.4, sx + 4.4, wy, -52, 0x8fd8ff, 0x8fd8ff, 0.5))
+        }
+      }
     })
 
     // ---- Mumbai — Gateway of India (arch on the waterfront) + tuk-tuks ----
@@ -2343,6 +3477,41 @@ export class GameEngine {
         sig(g, 2, 1.5, 2.8, tx, 0.75, tz, tc)
         sig(g, 1.8, 0.6, 2.6, tx, 1.9, tz, 0xf5f7fa)
       }
+
+      // Chhatrapati Shivaji Terminus — the Victorian railway cathedral:
+      // central gothic clock tower, onion dome, flanking wings + turrets
+      g.add(this.box(20, 26, 12, -58, 13, 8, 0x9a8a6a)) // main station block
+      for (const [wx, wz] of [[-68, 2], [-48, 2], [-68, 14], [-48, 14]] as const) {
+        const turret = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.9, 14, 8), new THREE.MeshStandardMaterial({ color: 0xb8a888 }))
+        turret.position.set(wx, 7, wz)
+        g.add(turret)
+        const tdome = new THREE.Mesh(new THREE.SphereGeometry(1.8, 8, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x7b6a4a }))
+        tdome.position.set(wx, 15.6, wz)
+        g.add(tdome)
+      }
+      g.add(this.box(5.6, 30, 5.6, -58, 15, -2, 0xc9b88d)) // clock tower
+      g.add(this.box(3.6, 8, 3.6, -58, 34, -2, 0x8a7a5a))
+      const bigDome = new THREE.Mesh(new THREE.SphereGeometry(4, 8, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x8f7f5f }))
+      bigDome.position.set(-58, 40, -2)
+      g.add(bigDome)
+      const cSpike = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 3, 6), new THREE.MeshStandardMaterial({ color: 0xd8c891 }))
+      cSpike.position.set(-58, 43, -2)
+      g.add(cSpike)
+      // glowing clock face + gothic windows
+      g.add(this.box(0.4, 5, 5, -58, 30, 0.4, 0xffd9a0, 0xffd9a0, 1.3))
+      for (const [wx, wy] of [[-66, 10], [-62, 10], [-54, 10], [-50, 10], [-66, 18], [-54, 18]] as const) {
+        g.add(this.box(1.4, 2.8, 0.3, wx, wy, 2.4, 0x202838, 0x9a8a52, 0.55))
+      }
+      // BEST red double-decker at the station forecourt + a Bollywood board
+      sig(g, 2.8, 2.6, 8.2, -40, 1.3, 8, 0xc0392b)
+      sig(g, 2.7, 1.2, 7.6, -40, 2.9, 8, 0xe3f2fb)
+      sig(g, 0.24, 1.2, 7.8, -40, 2.6, 8, 0x0e1116)
+      const bTex = makeSignTexture('BOLLYWOOD', '#ff6aa7')
+      const bMat = new THREE.MeshBasicMaterial({ map: bTex, transparent: true, fog: false, depthWrite: false, side: THREE.DoubleSide })
+      const bBoard = new THREE.Mesh(new THREE.PlaneGeometry(14, 6), bMat)
+      bBoard.position.set(-70, 34, -6)
+      bBoard.lookAt(0, 30, 0)
+      g.add(bBoard)
     })
 
     // ---- Tokyo — Tokyo Tower (red tapered tower, white orb, antenna) ----
@@ -2362,10 +3531,25 @@ export class GameEngine {
       g.add(ant)
       const beac = this.box(1.8, 3.4, 1.8, 0, 122, 0, 0xff6aa7, 0xff6aa7, 2)
       g.add(beac)
-      // torii gate + white taxi at the base
-      sig(g, 14, 1.6, 1.6, 0, 5.2, 8, 0xd84a4a)
-      sig(g, 1.4, 8, 1.4, -6, 4, 8, 0xd84a4a)
-      sig(g, 1.4, 8, 1.4, 6, 4, 8, 0xd84a4a)
+      // torii gate + white taxi at the base — double lintel with a vermilion
+      // glow, the way the real Meiji-era gates read at night
+      sig(g, 1.6, 10.5, 1.6, -6, 5.25, 8, 0xd84a4a)
+      sig(g, 1.6, 10.5, 1.6, 6, 5.25, 8, 0xd84a4a)
+      g.add(this.box(14, 1.6, 1.6, 0, 9.4, 8, 0xd84a4a, 0x7a1f1f, 0.5))
+      g.add(this.box(16, 2.6, 2.6, 0, 11.6, 8, 0xe86a5a, 0xe86a5a, 0.55))
+      g.add(this.box(2.2, 2.2, 0.5, 0, 8.4, 8, 0xffd9a0, 0xffd9a0, 1.2)) // gate board glow
+      // Shibuya-style giant screen + zebra crossing on the plaza
+      const shTex = makeSignTexture('SHIBUYA', '#22d3ee')
+      const shMat = new THREE.MeshBasicMaterial({ map: shTex, transparent: true, fog: false, depthWrite: false, side: THREE.DoubleSide })
+      const shBoard = new THREE.Mesh(new THREE.PlaneGeometry(12, 6), shMat)
+      shBoard.position.set(-24, 8, -10)
+      shBoard.lookAt(0, 6, 0)
+      g.add(shBoard)
+      for (const zz of [11, 13.4, 15.8, 18.2]) {
+        for (const xx of [-5, -2, 1, 4]) {
+          g.add(this.box(1.8, 0.06, 1.1, xx, 0.03, zz, 0xe8e8f0))
+        }
+      }
       sig(g, 2.6, 1.8, 5, -12, 0.9, -6, 0xeef2f6)
       sig(g, 2.4, 1.2, 4.6, -12, 2.1, -6, 0x9fb2c4)
     })
@@ -2394,6 +3578,29 @@ export class GameEngine {
       // yellow cab at the curb
       sig(g, 2.6, 1.7, 5, -13, 0.85, 8, 0xf5a623)
       sig(g, 2.4, 1.1, 4.6, -13, 2.1, 8, 0xd8e6f2)
+      // Times Square — a billboard wall of glowing ad panels + neon strips,
+      // the one thing that says "New York" louder than any tower
+      const tsWall = new THREE.Group()
+      const panelColors = [0xff4d6d, 0x22d3ee, 0xfde047, 0xa78bfa, 0x4ade80, 0xffa94d]
+      for (let r = 0; r < 4; r++) {
+        for (let c = 0; c < 3; c++) {
+          const col = panelColors[(r * 3 + c) % panelColors.length]
+          const panel = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 3.2), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.92, fog: false, side: THREE.DoubleSide }))
+          panel.position.set(-12 + c * 4.6, 5 + r * 3.6, 0)
+          tsWall.add(panel)
+        }
+      }
+      for (const nx of [-14.6, -1, 12.6]) {
+        g.add(this.box(0.5, 17.5, 0.5, nx, 12, 18, 0xfff2cc, 0xffd9a0, 0.9)) // neon edge strips
+      }
+      const tsTex = makeSignTexture('TIMES SQ', '#ffe14d')
+      const tsMat = new THREE.MeshBasicMaterial({ map: tsTex, transparent: true, fog: false, depthWrite: false, side: THREE.DoubleSide })
+      const tsBoard = new THREE.Mesh(new THREE.PlaneGeometry(14, 5), tsMat)
+      tsBoard.position.set(-1, 18.5, 0.6)
+      tsWall.add(tsBoard)
+      tsWall.position.set(34, 0, 18)
+      tsWall.rotation.y = 0.5
+      g.add(tsWall)
     })
 
     // city-name signboard — separate scene child so it always faces the city
@@ -2432,6 +3639,7 @@ export class GameEngine {
     if (st.zone.id !== this.lastZoneId) {
       this.lastZoneId = st.zone.id
       this.applyZoneMood(st.zone, true)
+      this.synth.setZoneMusic(st.zone.id)
       this.zoneCamT = 2.3 // arrival reveal — camera lifts toward the landmark
       save.worldKm = this.worldKm
       save.laps = st.lap
@@ -2457,30 +3665,26 @@ export class GameEngine {
   /** Re-tint the whole city to the zone's identity: building mood, window
       warmth, skyline facade and the hero landmark silhouette. */
   private applyZoneMood(zone: WorldZone, banner: boolean): void {
-    // 1) City blocks — one zone-wide architecture mood
-    const col = new THREE.Color()
-    for (const { inst, list } of this.cityInsts) {
-      list.forEach((p, idx) => {
-        const t = p.tint
-        col.setRGB(zone.mood[0] * t, zone.mood[1] * t, zone.mood[2] * t)
-        inst.setColorAt(idx, col)
-      })
-      if (inst.instanceColor) inst.instanceColor.needsUpdate = true
+    // 1) Architecture pack — every city owns its own roofs/windows/neon/people
+    for (const [id, g] of this.zoneCities) {
+      g.visible = id === zone.id
+      if (id === zone.id) {
+        const wm = this.zoneWinMats.get(id)
+        if (wm) this.scene.userData.winMat = wm
+      }
     }
-    // 2) Window glow — warm vs cool balance per city
-    if (this.winInst && this.winTransforms.length) {
-      this.winWarm.set(zone.win[0])
-      this.winCool.set(zone.win[1])
-      const winRand = seededRand(3141) // identical sequence = identical lit pattern
-      const winDark = new THREE.Color(0x141a26)
-      this.winTransforms.forEach((_w, idx) => {
-        if (winRand() < 0.18) return
-        const lit = winRand() < 0.42
-        if (lit) col.copy(winRand() < zone.litWarm ? this.winWarm : this.winCool).multiplyScalar(0.75 + winRand() * 0.5)
-        else col.copy(winDark)
-        this.winInst!.setColorAt(idx, col)
+    // 2) Street crowd wardrobe — re-tint shirts toward this city's look
+    const arch = zone.arch
+    const accent = new THREE.Color()
+    if (arch) {
+      const cols = arch.people.map((c) => new THREE.Color(c))
+      this.peds.forEach((pd, i) => {
+        if (!pd.shirtMats?.length || !pd.baseShirt) return
+        accent.copy(cols[i % cols.length])
+        for (const m of pd.shirtMats) {
+          m.color.copy(pd.baseShirt.clone().lerp(accent, 0.55))
+        }
       })
-      if (this.winInst.instanceColor) this.winInst.instanceColor.needsUpdate = true
     }
     // 3) Distant skyline facade — zone horizon tint
     const skyMat = this.scene.userData.skylineMat as THREE.MeshStandardMaterial | undefined
@@ -2496,9 +3700,69 @@ export class GameEngine {
       this.zoneSigns.get(id)!.visible = id === zone.id
       if (id === zone.id) this.zoneLandmarkPos = g.position.clone()
     }
-    // 5) Asphalt character — each city's tarmac tint (theme still owns the base)
+    // 5) City traffic — only the streets of the city you're in drive
+    for (const t of this.traffic) t.mesh.visible = t.zone === zone.id
+    // 6) Asphalt character — every city's tarmac has its own tint: Mumbai's
+    //    dusty dark, London's wet slate, Beijing's day-lit grey… The road is
+    //    the thing you stare at, so it carries the city identity too.
     if (this.groundMat) this.groundMat.color.set(zone.road)
+    // 7) City air — fog colour/density + lane + sidewalk paint override. The
+    //    atmosphere itself belongs to the city, not just the buildings.
+    this.applyZoneAtmosphere(zone)
+    // 8) Time of day — each city lives in its own light. Dusk/day cities blend
+    //    the whole lighting rig (sky, sun, fog, windows, headlights) over 9s.
+    this.applyZoneHour(zone)
     void banner
+  }
+
+  /** Per-city atmosphere finish — fog colour + density + street paint. Called
+      on arrival and re-applied after any theme blend so the city's air always
+      wins: London haze vs Tokyo pink gloom vs New York deep blue. Night cities
+      use their own palette; day/dusk cities let the hour's light own the air. */
+  private applyZoneAtmosphere(zone: WorldZone): void {
+    const arch = zone.arch
+    if (!arch) return
+    if ((arch.hour ?? 'night') === 'night') {
+      const fog = this.scene.fog as THREE.FogExp2 | null
+      if (fog) {
+        if (arch.fog) fog.color.set(arch.fog)
+        if (arch.fogDensity) fog.density = arch.fogDensity
+      }
+    }
+    if (this.laneMat && arch.laneCol) this.laneMat.color.setHex(arch.laneCol)
+    if (this.walkMat && arch.walkCol) this.walkMat.color.setHex(arch.walkCol)
+  }
+
+  /** Per-city time of day — drives the EXISTING theme blend machinery to a
+      pseudo-theme: night cities keep the player's own theme; dusk cities get
+      a golden-hour sun; day cities get full daylight (windows off, headlights
+      off, bright sky + fog, strong sun). Arrivals blend over 9s so leaving
+      Tokyo at night and crossing into daylight Beijing feels like travelling
+      across the world, not a cut. */
+  private applyZoneHour(zone: WorldZone): void {
+    const arch = zone.arch
+    const hour = arch?.hour ?? 'night'
+    const base = getTheme(this.hooks.getSave().theme)
+    if (hour === 'night') {
+      // Leave the city's light to the player's theme — return to it if a
+      // previous day/dusk zone had moved the rig.
+      if (this.lastZoneHour !== 'night') this.applyTheme(base, 4.5)
+      this.lastZoneHour = 'night'
+      return
+    }
+    const day = hour === 'day'
+    const t = { ...base, id: day ? 'day' : 'golden' } as ReturnType<typeof getTheme>
+    t.sky = day ? 0x8ec8f0 : 0x2a1608
+    t.fog = day ? 0xaed4ee : 0x58290a
+    t.fogDensity = day ? 0.0011 : 0.005
+    t.ambient = day ? 0xcfe0f5 : 0xffb26b
+    t.ambientIntensity = day ? 0.7 : 1.2
+    t.moon = day ? 0xfff3da : 0xffd9a0
+    t.moonIntensity = day ? 1.7 : 1.05
+    t.ground = day ? 0x8b95a1 : 0x171008
+    t.water = day ? 0x3f7fab : 0x3a2410
+    this.applyTheme(t, 4.5)
+    this.lastZoneHour = hour
   }
 
   private genSky(): void {
@@ -2623,14 +3887,20 @@ export class GameEngine {
   // transforms (skyline silhouette, landmark, architecture mood, window glow).
   private worldKm = 0
   private lastZoneId = ''
-  /** InstancedMesh refs + placements, so a zone change can re-tint the whole city */
-  private cityInsts: { inst: THREE.InstancedMesh; list: { x: number; z: number; w: number; h: number; d: number; tint: number; dist: string }[] }[] = []
-  private winInst: THREE.InstancedMesh | null = null
-  private winTransforms: { x: number; y: number; z: number; ry: number }[] = []
-  private winWarm = new THREE.Color(0xffd9a0)
-  private winCool = new THREE.Color(0xbfe0ff)
   /** per-zone hero landmark silhouettes on the skyline ring; one visible at a time */
   private zoneLandmarks = new Map<string, THREE.Group>()
+  // v2.1 per-city architecture packs — each zone owns a fully restyled city
+  // (roof silhouettes, window grids, neon, balconies) built from the SAME
+  // physical placements, so collision never changes while every city reads
+  // architecturally different.
+  private zoneCities = new Map<string, THREE.Group>()
+  private zoneWinMats = new Map<string, THREE.MeshBasicMaterial>()
+  private zoneCityPeds = new Map<string, THREE.Group[]>()
+  /** v2.2 per-city skyline silhouette DNA — seeded height multiplier per
+      building, so London stays terraced while New York rises into canyons */
+  private zoneHMaps = new Map<string, Map<Placement, number>>()
+  /** v2.2 per-city time of day — which light rig the city you're in runs */
+  private lastZoneHour: 'night' | 'dusk' | 'day' = 'night'
   /** per-zone glow lights + city-name billboards + world anchors for the reveal cam */
   private zoneLandmarkLights = new Map<string, THREE.PointLight>()
   private zoneSigns = new Map<string, THREE.Mesh>()
@@ -3063,6 +4333,9 @@ export class GameEngine {
 
   private updateIdlers(dt: number): void {
     for (const id of this.idlers) {
+      // zone pack idlers: skip the cities that aren't on screen (their group
+      // is hidden — animation costs for 7 hidden casts would be waste)
+      if ((id.mesh.parent as THREE.Object3D | null)?.visible === false) continue
       this.tickMixer(id.mixer, id.mesh, id.mesh.position.x, id.mesh.position.z, dt)
       // subtle life: a gentle idle bob so the crowd never looks frozen
       id.mesh.position.y = (id.baseY ?? 0) + Math.abs(Math.sin(this.time * 0.9 + id.mesh.position.x * 0.7)) * 0.02
@@ -3676,19 +4949,22 @@ export class GameEngine {
   }
 
   private spawnTraffic(): void {
-    const rand = seededRand(31415)
-    const palettes: Record<string, number[]> = {
-      // saturated "neon city" palette — dark greys vanish under the night sky
-      sedan: [0x4f7fb8, 0xb85c7a, 0x5aa88f, 0xc9cdd6, 0x7a6fc9],
-      hatch: [0xe23b3b, 0x2f9fd8, 0xf0a020, 0x4fbf67, 0xa06fd8],
-      van: [0xb8c0cc, 0x6fa35f, 0x4f8fb8, 0x98a5b5],
-      sport: [0xfacc15, 0x22d3ee, 0xff4d6d, 0xf2f6ff],
-    }
-    const styles = ['sedan', 'sedan', 'hatch', 'hatch', 'van', 'taxi', 'sport', 'sedan', 'hatch', 'van', 'bus', 'sport', 'sedan', 'hatch', 'van', 'sedan', 'taxi', 'hatch', 'sport', 'sedan', 'taxi', 'hatch', 'sedan', 'van', 'sport', 'hatch', 'bus', 'taxi']
-    const trafficCount = this.lowPower ? 18 : styles.length
+    // v2.1 — every city has its own fleet; only the active city's cars drive.
+    for (const z of WORLD_ZONES) this.spawnZoneTraffic(z)
+  }
+
+  /** One city's fleet: London's double-deckers + black cabs, Mumbai's
+      tuk-tuks, New York's yellow cabs — each zone's mix and colours. */
+  private spawnZoneTraffic(zone: WorldZone): void {
+    const arch = zone.arch
+    if (!arch) return
+    const zi = WORLD_ZONES.findIndex((z) => z.id === zone.id)
+    const rand = seededRand(31415 + zi * 131)
+    const styles = arch.traffic
+    const trafficCount = this.lowPower ? Math.min(styles.length, 10) : (arch.trafficCount ?? styles.length)
     for (let k = 0; k < trafficCount; k++) {
-      const style = styles[k]
-      const palette = style === 'taxi' ? [0xf59e0b] : palettes[style] ?? palettes.sedan
+      const style = styles[k % styles.length]
+      const palette = arch.trafficColors[style] ?? [0x8d99ae]
       const g = this.makeTrafficCar(style, palette[Math.floor(rand() * palette.length)])
       const axis: 'x' | 'z' = rand() > 0.5 ? 'x' : 'z'
       const laneIdx = Math.floor(rand() * (N + 1))
@@ -3702,9 +4978,51 @@ export class GameEngine {
         g.position.set(lane, 0, along)
         g.rotation.y = dir > 0 ? 0 : Math.PI
       }
+      g.visible = false
       this.scene.add(g)
-      this.traffic.push({ mesh: g, axis, lane, dir, speed: 0, cruise: 8 + rand() * 4, nmCooldown: 0, yieldT: 0 })
+      this.traffic.push({ mesh: g, axis, lane, dir, speed: 0, cruise: 8 + rand() * 4, nmCooldown: 0, yieldT: 0, zone: zone.id })
     }
+  }
+
+  /** Mumbai icon: a colourful auto-rickshaw (3-wheeler, canopy + long tail). */
+  private makeTukTuk(color: number): THREE.Group {
+    const g = new THREE.Group()
+    const body = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.2 })
+    const dark = new THREE.MeshStandardMaterial({ color: 0x16181c, roughness: 0.9 })
+    const glass = new THREE.MeshStandardMaterial({ color: 0xbfe3f5, roughness: 0.2, metalness: 0.6, emissive: 0x87a8bb, emissiveIntensity: 0.3 })
+    // cabin
+    const lower = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.7, 2.2), body)
+    lower.position.set(0, 0.6, -0.3)
+    const canopy = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.5, 2.0), body)
+    canopy.position.set(0, 1.2, -0.3)
+    const wind = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.42, 0.1), glass)
+    wind.position.set(0, 0.95, 0.75)
+    const back = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.8, 0.1), dark)
+    back.position.set(0, 0.85, -1.45)
+    g.add(lower, canopy, wind, back)
+    // tail platform (where the bags ride)
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.18, 0.9), dark)
+    tail.position.set(0, 0.52, 1.4)
+    g.add(tail)
+    const wheelGeom = new THREE.CylinderGeometry(0.42, 0.42, 0.3, 10)
+    wheelGeom.rotateZ(Math.PI / 2)
+    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x16181c, roughness: 0.9 })
+    for (const [wx, wz] of [[-0.85, 0.7], [0.85, 0.7], [0, -1.35]] as const) {
+      const w = new THREE.Mesh(wheelGeom, wheelMat)
+      w.position.set(wx, 0.42, wz)
+      g.add(w)
+    }
+    // night strips — headlight + tail
+    const hl = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.14, 0.06), new THREE.MeshBasicMaterial({ color: 0xfff2cc, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.95, depthWrite: false }))
+    hl.position.set(0, 0.85, 0.78)
+    const tl = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.14, 0.06), new THREE.MeshBasicMaterial({ color: 0xff2d44, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.95, depthWrite: false }))
+    tl.position.set(0, 0.8, -1.5)
+    g.add(hl, tl)
+    g.traverse((o) => {
+      const m = o as THREE.Mesh
+      if (m.isMesh) m.castShadow = true
+    })
+    return g
   }
 
   /** London icon: a procedural red double-decker bus (no GLB needed). */
@@ -3744,6 +5062,7 @@ export class GameEngine {
 
   private makeTrafficCar(style: string, color: number): THREE.Group {
     if (style === 'bus') return this.makeDoubleDecker()
+    if (style === 'tuk') return this.makeTukTuk(color)
     const modelByStyle: Record<string, string> = {
       sedan: 'sedan',
       hatch: 'hatchback-sports',
@@ -3824,18 +5143,20 @@ export class GameEngine {
   private themeFrom: ThemeMix | null = null
   private themeTo: ThemeMix | null = null
   private themeBlend = 1
+  private themeBlendDur = 9
   private pendingRain = false
   private targetTheme: ReturnType<typeof getTheme> | null = null
   private themeSkyCanvas: HTMLCanvasElement | null = null
   private themeSkyTex: THREE.CanvasTexture | null = null
 
-  private applyTheme(t: ReturnType<typeof getTheme>): void {
+  private applyTheme(t: ReturnType<typeof getTheme>, dur = 9): void {
     const to = this.themeMixOf(t)
     if (!this.themeTo) {
       // First apply after load: snap straight to the theme.
       this.themeFrom = to
       this.themeTo = to
       this.themeBlend = 1
+      this.themeBlendDur = dur
       this.targetTheme = t
       this.applyMix(to)
       this.scene.background = this.skyBackground(t)
@@ -3848,6 +5169,7 @@ export class GameEngine {
     this.themeFrom = this.lerpMix(this.themeFrom ?? to, this.themeTo, this.themeBlend)
     this.themeTo = to
     this.themeBlend = 0
+    this.themeBlendDur = dur
     this.pendingRain = t.rain
     this.targetTheme = t
     if (t.rain && !this.rain) this.setupRain()
@@ -3855,7 +5177,7 @@ export class GameEngine {
 
   private updateTheme(dt: number): void {
     if (this.themeBlend >= 1 || !this.themeFrom || !this.themeTo) return
-    this.themeBlend = Math.min(1, this.themeBlend + dt / 9)
+    this.themeBlend = Math.min(1, this.themeBlend + dt / this.themeBlendDur)
     const k = this.themeBlend
     const m = this.lerpMix(this.themeFrom, this.themeTo, k)
     this.applyMix(m)
@@ -3867,6 +5189,10 @@ export class GameEngine {
       this.scene.background = this.skyBackground(this.targetTheme)
       if (this.rain) this.rain.visible = this.pendingRain
       this.synth.setRain(this.pendingRain ? 1 : 0)
+      // The blend just overwrote fog/lane/walk with theme values — hand the
+      // air back to the city you're currently in.
+      const z = WORLD_ZONES.find((wz) => wz.id === this.lastZoneId)
+      if (z) this.applyZoneAtmosphere(z)
     }
   }
 
@@ -4059,7 +5385,7 @@ export class GameEngine {
       this.vel.multiplyScalar(1.05)
       this.synth.checkpoint()
     }
-    if (k === 'c' && !this.attract) this.camDist = this.camDist > 12 ? 10 : 17
+    if (k === 'c' && !this.attract) this.cycleCamera()
     if (k === 'r' && !this.attract && !this.paused) {
       this.resetToRoad()
       this.synth.checkpoint()
@@ -4323,6 +5649,7 @@ export class GameEngine {
       if (this.chainTimer <= 0) this.chainCount = 0
     }
     this.updateMission(dt)
+    this.updateRide(dt)
     this.updateCamera(dt)
     // Keep the shadow frustum centred on the player as they roam
     this.moon.position.set(this.pos.x - 120, 180, this.pos.z + 60)
@@ -4391,7 +5718,7 @@ export class GameEngine {
     this.padBoost = btn(5) || btn(3) // RB or Y
     // Edge-triggered buttons (compare with previous frame)
     const edge = (i: number) => btn(i) && !this.padPrev[i]
-    if (edge(1) && !this.attract) this.camDist = this.camDist > 12 ? 10 : 17 // B: camera
+    if (edge(1) && !this.attract) this.cycleCamera() // B: camera
     if (edge(2)) this.hornBlast() // X
     if (edge(9) && !this.attract && !this.paused) this.hooks.onPauseToggle?.() // START
     this.padPrev = pad.buttons.map((b) => b.pressed)
@@ -5029,6 +6356,7 @@ export class GameEngine {
     // Traffic ahead in the same direction yields: drift toward the road edge
     const dir = new THREE.Vector3(Math.sin(this.heading), 0, Math.cos(this.heading))
     for (const t of this.traffic) {
+      if (t.zone !== this.lastZoneId) continue
       const rx = t.mesh.position.x - this.pos.x
       const rz = t.mesh.position.z - this.pos.z
       const ahead = rx * dir.x + rz * dir.z
@@ -5194,6 +6522,7 @@ export class GameEngine {
   // =============== TRAFFIC ===============
   private updateTraffic(dt: number): void {
     for (const t of this.traffic) {
+      if (t.zone !== this.lastZoneId) continue
       const p = t.mesh.position
       // Player blocking ahead? (same lane, in front, close)
       const along = t.axis === 'x' ? p.x : p.z
@@ -5229,6 +6558,7 @@ export class GameEngine {
       // Car-following: never rear-end the car ahead in the same lane — queues
       // form naturally at red lights, accidents and rush-hour crawl.
       for (const o of this.traffic) {
+        if (o.zone !== t.zone) continue
         if (o === t || o.axis !== t.axis || o.dir !== t.dir) continue
         if (Math.abs(o.lane - t.lane) > 1.5) continue
         const oAlong = t.axis === 'x' ? o.mesh.position.x : o.mesh.position.z
@@ -5523,7 +6853,7 @@ export class GameEngine {
         g.rotation.y = dir > 0 ? 0 : Math.PI
       }
       this.scene.add(g)
-      const car: TrafficCar = { mesh: g, axis, lane, dir, speed: 0, cruise: 8 + Math.random() * 3, nmCooldown: 0, yieldT: 0 }
+      const car: TrafficCar = { mesh: g, axis, lane, dir, speed: 0, cruise: 8 + Math.random() * 3, nmCooldown: 0, yieldT: 0, zone: this.lastZoneId }
       this.traffic.push(car)
       this.rushCars.push(car)
     }
@@ -5688,6 +7018,14 @@ export class GameEngine {
     return p
   }
 
+  /** Harbor Rides: cycle camera — near chase → far chase → in-car cockpit. */
+  cycleCamera(): void {
+    this.camMode = ((this.camMode + 1) % 3) as 0 | 1 | 2
+    this.camDist = this.camMode === 1 ? 17 : 10
+    if (this.carModel) this.carModel.visible = this.camMode !== 2
+    this.hooks.onToast(this.camMode === 2 ? '🚗 In-car view — GPS on the dash' : this.camMode === 1 ? '📷 Camera: far' : '📷 Camera: near', 'info')
+  }
+
   startMission(kind: 'delivery' | 'race' | 'taxi' | 'getaway', mods: ModId[] = [], rand: () => number = Math.random): void {
     const save = this.hooks.getSave()
     // Starting a new contract must never orphan the previous one's world props
@@ -5707,7 +7045,7 @@ export class GameEngine {
       const b = this.openPoint(rand, a, 90)
       const timer = Math.round((a.distanceTo(b) / 8 + 30) * rush)
       const passenger = this.makePassenger(a)
-      this.mission = { kind, stage: 'pickup', a, b, timer, name: `Taxi Fare ${save.stats.fares + 1}`, passenger, dist: a.distanceTo(b), mods, damageHits: 0 }
+      this.mission = { kind, stage: 'pickup', a, b, timer, name: `Taxi Fare ${save.stats.fares + 1}`, passenger, dist: a.distanceTo(b), mods, damageHits: 0, late: false }
       this.hooks.onToast('Fare waiting — pick up your passenger at the beacon', 'good')
     } else if (kind === 'getaway') {
       // The contract starts hot: Patrol is already hunting you. Survive until the heat dies.
@@ -5984,6 +7322,116 @@ export class GameEngine {
     this.markerBeacon.visible = false
     this.credMissionBanked = 0 // contract-scoped cred bonus resets with the job
     this.missionPeakStars = 0
+    // Harbor Rides: reset live ride state + hide route chevrons
+    this.ride.violations = 0
+    this.ride.clean = true
+    this.ride.tipBonus = 0
+    this.ride.speedT = 0
+    this.ride.toastCd = 0
+    for (const c of this.chevrons) c.visible = false
+  }
+
+  /** Harbor Rides: next-turn guidance for the HUD (↰/↱ + distance). */
+  turnInfo: { dir: 'left' | 'right'; dist: number } | null = null
+
+  /** Harbor Rides — per-frame ride gameplay: traffic violations that wake the
+      Patrol, passenger reactions (drifts tip, crashes cost), on-road route
+      chevrons and turn guidance. Runs every frame; cheap when no mission. */
+  private updateRide(dt: number): void {
+    const m = this.mission
+    const t = m && (m.kind === 'delivery' || m.kind === 'taxi') ? (m.stage === 'pickup' ? m.a : m.b) : null
+    const riding = !!m && m.kind === 'taxi' && m.stage === 'ride'
+
+    // ---- route chevrons + turn prompt (any point-to-point mission) ----
+    if (t && this.chevrons.length > 0) {
+      const elbowOnRoad = this.isOnRoad(t.x, this.pos.z)
+      const ex = elbowOnRoad ? t.x : this.pos.x
+      const ez = elbowOnRoad ? this.pos.z : t.z
+      // path: pos -> elbow -> target; walk fixed distances along it
+      const seg1x = ex - this.pos.x, seg1z = ez - this.pos.z
+      const len1 = Math.hypot(seg1x, seg1z)
+      const seg2x = t.x - ex, seg2z = t.z - ez
+      const len2 = Math.hypot(seg2x, seg2z)
+      const total = len1 + len2
+      const d1x = len1 > 0.01 ? seg1x / len1 : 0, d1z = len1 > 0.01 ? seg1z / len1 : 1
+      const d2x = len2 > 0.01 ? seg2x / len2 : d1x, d2z = len2 > 0.01 ? seg2z / len2 : d1z
+      const steps = this.lowPower ? [16, 34, 56] : [14, 26, 40, 56, 74]
+      for (let i = 0; i < this.chevrons.length; i++) {
+        const c = this.chevrons[i]
+        const d = steps[i]
+        if (d === undefined || d > total - 4 || total < 18) { c.visible = false; continue }
+        const onSeg1 = d <= len1
+        const px = onSeg1 ? this.pos.x + d1x * d : ex + d2x * (d - len1)
+        const pz = onSeg1 ? this.pos.z + d1z * d : ez + d2z * (d - len1)
+        const dx = onSeg1 ? d1x : d2x, dz = onSeg1 ? d1z : d2z
+        c.position.set(px, 0.28, pz)
+        c.rotation.y = Math.atan2(dx, dz) + Math.PI
+        ;(c.material as THREE.MeshBasicMaterial).opacity = 0.30 + 0.28 * Math.sin(this.time * 4 - i * 0.7)
+        c.visible = true
+      }
+      // turn prompt: approaching the elbow with a real direction change
+      if (len1 > 14 && len1 < 170 && len2 > 8) {
+        const hx = Math.sin(this.heading), hz = Math.cos(this.heading)
+        const cross = hz * d2x - hx * d2z // y of heading × seg2
+        if (Math.abs(cross) > 0.35) this.turnInfo = { dir: cross > 0 ? 'left' : 'right', dist: Math.round(len1) }
+        else this.turnInfo = null
+      } else this.turnInfo = null
+    } else {
+      for (const c of this.chevrons) c.visible = false
+      this.turnInfo = null
+    }
+
+    if (!riding) return
+
+    // ---- passenger reactions: drifts earn tips, crashes burn them ----
+    this.ride.toastCd = Math.max(0, this.ride.toastCd - dt)
+    if (this.drifting && !this.ride.wasDrifting && this.ride.tipBonus < 90) {
+      this.ride.tipBonus += 15
+      this.hooks.onToast('💨 “Nice drift!” +$15 tip', 'good')
+    }
+    this.ride.wasDrifting = this.drifting
+    const dmgDelta = this.damage - this.ride.lastDamage
+    if (dmgDelta > 3) {
+      this.ride.tipBonus -= 20
+      this.ride.violations += 0 // crash is its own penalty; not a traffic violation
+      this.hooks.onToast('😱 “EASY!!” −$20 tip', 'warn')
+    }
+    this.ride.lastDamage = this.damage
+
+    // ---- traffic violations (only while a fare is aboard) ----
+    const sp = this.vel.length()
+    const vx = this.vel.x, vz = this.vel.z
+    const violate = (label: string): void => {
+      if (this.ride.toastCd > 0) return
+      this.ride.toastCd = 2.5
+      this.ride.violations += 1
+      this.ride.clean = false
+      if (this.cruiserNearest < 100 && this.heatAllowed) {
+        this.heat = Math.min(this.heat + 0.6, 5)
+        this.hooks.onToast(`⚠ ${label} — PATROL TURNING ONTO YOU`, 'warn')
+      } else {
+        this.hooks.onToast(`${label} — no patrol saw it… this time`, 'info')
+      }
+    }
+    // red-light running: crossing a lit junction against the phase
+    const ph = this.time % 14
+    for (let i = 0; i < this.lightIntersections.length && i < 4; i++) {
+      this.ride.lightCd[i] = Math.max(0, this.ride.lightCd[i] - dt)
+      const L = this.lightIntersections[i]
+      if (!L || this.ride.lightCd[i] > 0 || sp < 9) continue
+      if (Math.abs(this.pos.x - L.x) < 7 && Math.abs(this.pos.z - L.z) < 7) {
+        const travelEW = Math.abs(vx) > Math.abs(vz)
+        const red = travelEW ? ph >= 9.5 : ph < 9.5
+        if (red) { this.ride.lightCd[i] = 8; violate('RED LIGHT RUN') }
+      }
+    }
+    // speeding: holding >119 km/h inside the city for over a second
+    if (sp > 33) {
+      this.ride.speedT += dt
+      if (this.ride.speedT > 1.2) { this.ride.speedT = -3; violate('SPEEDING') }
+    } else {
+      this.ride.speedT = Math.max(this.ride.speedT > 0 ? 0 : this.ride.speedT + dt, -3)
+    }
   }
 
   cancelMission(): void {
@@ -6250,10 +7698,20 @@ export class GameEngine {
     if (m.kind !== 'getaway') {
       m.timer -= dt
       if (m.timer <= 0) {
-        this.hooks.onToast(`${m.name} — FAILED (out of time)`, 'warn')
-        this.synth.denied()
-        this.clearMission()
-        return
+        // Harbor Rides: a late taxi never FAILS — the tip is lost, the fare
+        // still pays on arrival. Frustration-free, consequence-kept.
+        if (m.kind === 'taxi') {
+          if (m.stage === 'ride' && !m.late) {
+            m.late = true
+            this.hooks.onToast('⏱ Out of time — tip lost. Base fare still pays at the drop.', 'warn')
+          }
+          m.timer = 0
+        } else {
+          this.hooks.onToast(`${m.name} — FAILED (out of time)`, 'warn')
+          this.synth.denied()
+          this.clearMission()
+          return
+        }
       }
     }
     if (m.kind === 'getaway') {
@@ -6284,9 +7742,16 @@ export class GameEngine {
           if (m.kind === 'taxi' && m.passenger) {
             this.scene.remove(m.passenger)
             m.passenger = null
+            // Harbor Rides: fresh fare — reset violations, tip drift, reactions
+            this.ride.violations = 0
+            this.ride.clean = true
+            this.ride.tipBonus = 0
+            this.ride.speedT = 0
+            this.ride.lastDamage = this.damage
+            m.late = false
           }
           this.synth.checkpoint()
-          this.hooks.onToast(m.kind === 'taxi' ? 'Passenger aboard — get them there fast!' : 'Package secured — now DELIVER it!', 'good')
+          this.hooks.onToast(m.kind === 'taxi' ? 'Passenger aboard — beat the clock for the tip. Clean + fast pays DOUBLE.' : 'Package secured — now DELIVER it!', 'good')
         } else if (m.kind === 'delivery') {
           const reward = this.payContract(Math.round(200 + m.a.distanceTo(m.b) * 0.9 + m.timer * 5))
           const save = this.hooks.getSave()
@@ -6300,14 +7765,24 @@ export class GameEngine {
           this.shiftOnMissionDone(m)
           this.clearMission()
         } else {
-          // Taxi fare: base + distance + tip from time remaining (speed pays)
-          const fare = this.payContract(Math.round(120 + m.dist * 0.8 + m.timer * 4))
+          // Harbor Rides fare: base + distance always pays. The TIP pays only
+          // if the clock is beaten — doubled when the ride stayed clean
+          // (no red lights, no speeding) — plus live drift/scare adjustments.
+          const onTime = !m.late && m.timer > 0
+          let tip = onTime ? Math.round(m.timer * 4) + this.ride.tipBonus : 0
+          if (onTime && this.ride.clean && tip > 0) tip *= 2
+          tip = Math.max(0, Math.round(tip))
+          const fare = this.payContract(Math.round(120 + m.dist * 0.8)) + tip
           const save = this.hooks.getSave()
           save.stats.fares += 1
           this.unlockAchievement('first-fare')
           this.grantCash(fare)
           this.grantXp(180)
           this.synth.missionDone()
+          const tipNote = onTime
+            ? this.ride.clean ? `clean & fast — tip DOUBLED +$${tip}` : `tip +$${tip}`
+            : 'late — no tip'
+          this.hooks.onToast(`Fare paid. ${tipNote}${this.ride.violations > 0 ? ` · ${this.ride.violations} violation${this.ride.violations > 1 ? 's' : ''}` : ''}`, onTime ? 'good' : 'info')
           this.hooks.onMissionDone(m.name, fare)
           this.shiftOnMissionDone(m)
           this.clearMission()
@@ -6370,6 +7845,27 @@ export class GameEngine {
     }
     const sp = this.vel.length()
     const dir = new THREE.Vector3(Math.sin(this.heading), 0, Math.cos(this.heading))
+    // cockpit hides the car body so it never blocks the windshield
+    if (this.carModel) this.carModel.visible = this.camMode !== 2
+    // ---- Harbor Rides: cockpit (in-car) camera. The car body would block the
+    // view, so it hides while inside; chevrons + beacon carry navigation. ----
+    if (this.camMode === 2) {
+      const eye = this.pos.clone().addScaledVector(dir, 0.35).add(new THREE.Vector3(0, 1.32, 0))
+      this.camera.position.lerp(eye, 1 - Math.exp(-dt * 14))
+      const lookC = this.pos.clone().addScaledVector(dir, 14).add(new THREE.Vector3(0, 1.05, 0))
+      if (this.shake > 0.01) {
+        lookC.x += (Math.random() - 0.5) * this.shake * 0.7
+        lookC.y += (Math.random() - 0.5) * this.shake * 0.7
+        this.camera.position.y += (Math.random() - 0.5) * this.shake * 0.3
+      }
+      // gentle speed bounce so the road feels alive
+      this.camera.position.y += Math.sin(this.time * 9) * Math.min(sp * 0.0012, 0.02)
+      this.camera.lookAt(lookC)
+      const fovC = 68 + Math.min(sp * 0.5, 18) + (this.boosting ? 8 : 0)
+      this.camera.fov += (fovC - this.camera.fov) * Math.min(dt * 4, 1)
+      this.camera.updateProjectionMatrix()
+      return
+    }
     const target = this.pos.clone().addScaledVector(dir, -this.camDist).add(new THREE.Vector3(0, 4.4 + sp * 0.02, 0))
     this.camera.position.lerp(target, 1 - Math.exp(-dt * 5))
     const look = this.pos.clone().addScaledVector(dir, 7).add(new THREE.Vector3(0, 1.3, 0))
@@ -7485,6 +8981,10 @@ export class GameEngine {
       const pants = new THREE.Color(pick(PANTS))
       const hair = new THREE.Color(senior ? pick(GREY_HAIR) : pick(HAIR))
       const jitter = 0.9 + rand() * 0.25
+      // v2.1 zone crowd: keep the shirt material + base colour so each city
+      // can re-tint the whole street toward its own wardrobe on arrival.
+      const shirtMats: THREE.MeshStandardMaterial[] = []
+      const baseShirt = shirt.clone().multiplyScalar(jitter)
       obj.traverse((o) => {
         const m = o as THREE.Mesh
         if (!m.isMesh) return
@@ -7497,8 +8997,8 @@ export class GameEngine {
         else if (/pant|trouser|skirt|shorts/.test(label)) tint = pants
         else if (/eye/.test(label)) tint = new THREE.Color(0x2b2b2b)
         else if (/shoe|sock/.test(label)) tint = kid ? new THREE.Color(0xe8e8e8) : pants
-        else if (/shirt|top|jacket|body/.test(label)) tint = shirt
-        else tint = shirt
+        else if (/shirt|top|jacket|body/.test(label)) { tint = shirt; shirtMats.push(mat) }
+        else { tint = shirt; shirtMats.push(mat) }
         mat.color = tint.clone().multiplyScalar(jitter)
         // Cool night separation: a whisper of self-glow in the material's own
         // hue (cheap stand-in for rim light — no extra lights for 130 peds).
@@ -7569,6 +9069,8 @@ export class GameEngine {
         glanceT: 0,
         panicT: 0,
         dog: undefined as THREE.Group | undefined,
+        shirtMats,
+        baseShirt,
       }
       // Evening beach life: some strollers take a dog out (low-poly pup trots beside)
       if (beach && rand() < 0.45) {
@@ -8038,6 +9540,146 @@ function roadPoint(rand: () => number, from?: THREE.Vector3, minDist = 0): THREE
     if (!from || p.distanceTo(from) > minDist) return p
   }
   return new THREE.Vector3(0, 0, 0)
+}
+
+/** Canvas texture: weathered facade material with the CITY'S OWN PAINT baked
+    in — slate (Harbor), red brick (London), cream (Paris), stone (Beijing),
+    ochre (Mumbai), pale panels (Tokyo), dark brick (New York). Pattern +
+    grime + accent trim make walls read as a real material, not flat paint.
+    Tiles 5×5 per face so the texture is visible at street level. */
+function makeFacadeTexture(kind: string, base: number, accent: number): THREE.Texture {
+  const cv = document.createElement('canvas')
+  cv.width = 256
+  cv.height = 256
+  const ctx = cv.getContext('2d')
+  if (!ctx) return new THREE.CanvasTexture(cv)
+  let seed = 7
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+  const W = 256
+  const hex = (c: number, mult = 1) => {
+    const r = Math.min(255, Math.round(((c >> 16) & 255) * mult))
+    const g = Math.min(255, Math.round(((c >> 8) & 255) * mult))
+    const b = Math.min(255, Math.round((c & 255) * mult))
+    return `rgb(${r},${g},${b})`
+  }
+  // base wash, grime-dark toward the street
+  const baseGrad = ctx.createLinearGradient(0, 0, 0, 256)
+  baseGrad.addColorStop(0, hex(base, 1.06))
+  baseGrad.addColorStop(0.7, hex(base))
+  baseGrad.addColorStop(1, hex(base, 0.62))
+  ctx.fillStyle = hex(base)
+  ctx.fillRect(0, 0, W, W)
+  ctx.fillStyle = baseGrad
+  ctx.fillRect(0, 0, W, W)
+  if (kind === 'brick') {
+    // running bond brickwork with mortar shadows, tinted by the city base
+    for (let row = 0; row < 16; row++) {
+      const y = row * 16
+      const off = row % 2 === 0 ? 0 : 8
+      ctx.fillStyle = 'rgba(20,14,12,0.5)'
+      ctx.fillRect(0, y, W, 2) // mortar line
+      for (let bx = -1; bx < W / 16; bx++) {
+        const shade = 0.86 + rnd() * 0.3
+        ctx.fillStyle = hex(base, shade * (row % 5 === 0 ? 0.9 : 1))
+        ctx.fillRect(bx * 16 + off, y + 2, 14, 13)
+      }
+    }
+  } else if (kind === 'stone') {
+    // ashlar blocks with bevel shading
+    for (let row = 0; row < 6; row++) {
+      for (let bx = -1; bx < W / 32; bx++) {
+        const shade = 0.84 + rnd() * 0.34
+        ctx.fillStyle = hex(base, shade)
+        ctx.fillRect(bx * 32 + 2, row * 42 + 2, 28, 38)
+        ctx.fillStyle = 'rgba(0,0,0,0.30)'
+        ctx.fillRect(bx * 32 + 2, row * 42 + 34, 28, 6) // under-block shadow
+      }
+    }
+  } else if (kind === 'concrete') {
+    // vertical pour seams + form lines + stains
+    ctx.fillStyle = 'rgba(0,0,0,0.22)'
+    for (let x = 16; x < W; x += 32) ctx.fillRect(x, 0, 3, W)
+    for (let y = 32; y < W; y += 48) ctx.fillRect(0, y, W, 2)
+    for (let i = 0; i < 26; i++) {
+      const x = rnd() * W
+      const y = rnd() * W
+      const r = 6 + rnd() * 18
+      const g = ctx.createRadialGradient(x, y, 2, x, y, r)
+      g.addColorStop(0, 'rgba(18,24,34,0.25)')
+      g.addColorStop(1, 'rgba(18,24,34,0)')
+      ctx.fillStyle = g
+      ctx.fillRect(x - r, y - r, r * 2, r * 2)
+    }
+  } else if (kind === 'plaster' || kind === 'stucco') {
+    // limewash runs + peeling patches in the city's paint color
+    for (let i = 0; i < 22; i++) {
+      const x = rnd() * W
+      const y = rnd() * W * 0.7
+      const w = 12 + rnd() * 34
+      const h = 30 + rnd() * 90
+      const g = ctx.createLinearGradient(x, y, x, y + h)
+      g.addColorStop(0, 'rgba(60,45,34,0.22)')
+      g.addColorStop(1, 'rgba(60,45,34,0.05)')
+      ctx.fillStyle = g
+      ctx.fillRect(x - w / 2, y, w, h)
+    }
+    for (let i = 0; i < 14; i++) {
+      const x = rnd() * W
+      const y = rnd() * W
+      ctx.fillStyle = 'rgba(40,30,24,0.35)'
+      ctx.fillRect(x, y, 2 + rnd() * 5, 14 + rnd() * 40) // water runs
+    }
+    if (kind === 'stucco') {
+      for (let i = 0; i < 8; i++) {
+        const x = rnd() * W
+        const y = rnd() * W
+        const r = 6 + rnd() * 12
+        ctx.fillStyle = 'rgba(120,96,74,0.5)'
+        ctx.beginPath()
+        ctx.arc(x, y, r, 0, Math.PI * 2)
+        ctx.fill() // peeling patch
+      }
+      // Mumbai art-deco pastel bands — mint, peach, powder blue, pink on the
+      // near-white plaster. Reads as South Mumbai deco, not plain white.
+      const pastels = ['rgba(42,157,143,0.55)', 'rgba(231,111,81,0.5)', 'rgba(159,184,224,0.5)', 'rgba(242,160,184,0.5)']
+      for (let i = 0; i < 4; i++) {
+        ctx.fillStyle = pastels[i % pastels.length]
+        ctx.fillRect(0, 44 + i * 52, W, 15)
+      }
+    }
+  } else if (kind === 'panel') {
+    // curtain-wall panels with lit seams
+    ctx.fillStyle = 'rgba(0,0,0,0.20)'
+    for (let x = 0; x < W; x += 32) ctx.fillRect(x, 0, 2, W)
+    for (let y = 0; y < W; y += 32) ctx.fillRect(0, y, W, 2)
+    for (let i = 0; i < 40; i++) {
+      const x = Math.floor(rnd() * 8) * 32 + 4
+      const y = Math.floor(rnd() * 8) * 32 + 4
+      ctx.fillStyle = 'rgba(210,225,245,0.12)'
+      ctx.fillRect(x, y, 24, 24)
+    }
+  }
+  // accent trim — horizontal string courses + vertical pilasters in the
+  // city's signature color, the detail that makes facades look designed
+  ctx.fillStyle = `rgba(${((accent >> 16) & 255)},${((accent >> 8) & 255)},${(accent & 255)},0.38)`
+  for (let y = 34; y < W; y += 58) ctx.fillRect(0, y, W, 4)
+  for (let x = 26; x < W; x += 88) ctx.fillRect(x, 0, 5, W)
+  // corner AO + top edge + subtle noise
+  const ao = ctx.createLinearGradient(0, 0, 0, 256)
+  ao.addColorStop(0, 'rgba(0,0,0,0.32)')
+  ao.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.fillStyle = ao
+  ctx.fillRect(0, 0, W, W)
+  for (let i = 0; i < 400; i++) {
+    const a = rnd() * 0.05
+    ctx.fillStyle = a > 0.03 ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.05)'
+    ctx.fillRect(rnd() * W, rnd() * W, 1.5, 1.5)
+  }
+  const tex = new THREE.CanvasTexture(cv)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  tex.repeat.set(5, 5) // 5 tiles across a face — visible at street level
+  tex.anisotropy = 8
+  return tex
 }
 
 /** Canvas texture: neon billboard sign. */
