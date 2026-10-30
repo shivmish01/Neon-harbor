@@ -214,6 +214,7 @@ export default function App() {
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const minimapRef = useRef<HTMLCanvasElement>(null)
+  const gpsRef = useRef<HTMLCanvasElement>(null)
   const engineRef = useRef<GameEngine | null>(null)
   const assetsRef = useRef<GameAssets | null>(null)
   const enterGameRef = useRef<(() => void) | null>(null)
@@ -439,7 +440,7 @@ export default function App() {
           return !m
         })
       },
-    }, assets)
+    }, assets, gpsRef.current ?? undefined)
     // Quality watchdog — now on EVERY platform: it is the thermal safety net
     // that steps quality down if the machine can't hold the frame rate (a
     // throttling laptop shows up as sustained low fps). Healthy desktops run
@@ -1006,6 +1007,15 @@ export default function App() {
         className={`nh-minimap absolute z-20 rounded-lg border border-cyan-500/30 shadow-[0_0_20px_rgba(34,211,238,0.25)] cursor-pointer ${isTouch ? 'top-2 right-2 w-24 h-24 opacity-85' : 'top-4 right-4'} ${screen === 'game' && hud ? '' : 'hidden'}`}
       />
 
+      {/* Harbor Rides dash GPS — small phone-style canvas the engine draws only
+          in the in-car (cockpit) camera; hidden anywhere else. */}
+      <canvas
+        ref={gpsRef}
+        width={168}
+        height={112}
+        className={`nh-gps absolute z-30 rounded-lg border border-cyan-400/40 shadow-[0_0_18px_rgba(53,240,255,0.2)] ${isTouch ? 'gps-touch' : 'gps-desk'} ${screen === 'game' && hud?.camMode === 2 && hud.mission ? '' : 'hidden'}`}
+      />
+
       {/* ================= OPENING SPLASH (logos, tap to skip) ================= */}
       {splashStep < 2 && (
         <button
@@ -1212,7 +1222,7 @@ export default function App() {
                 <div className="flex justify-between items-center">
                   <span className="text-yellow-300 font-bold text-sm">{hud.mission.name}</span>
                   {hud.mission.timer >= 0 ? (
-                    <span className={`font-mono text-lg font-bold ${hud.mission.timer < 10 ? 'text-red-400 animate-pulse' : 'text-white'}`}>
+                    <span className={`font-mono text-lg font-bold ${hud.mission.timer < 10 ? 'text-red-400 animate-pulse' : hud.mission.timer < 30 ? 'text-amber-300' : 'text-white'}`}>
                       {Math.max(0, hud.mission.timer).toFixed(1)}s
                     </span>
                   ) : (
@@ -1282,6 +1292,20 @@ export default function App() {
               mission tracker, the FIRST NIGHT guide, mission-complete and toasts
               all stack here at the edge — nothing ever floats in front of the car. */}
           <div className={`absolute z-20 flex flex-col items-end gap-2 ${isTouch ? `nc-col${save.controls === 'buttons' ? ' nc-pads' : ''}` : 'top-[196px] right-4'}`}>
+            {/* Harbor Rides route pill — destination + live tip for point-to-point fares */}
+            {(hud.mission?.kind === 'delivery' || hud.mission?.kind === 'taxi') && (
+              <div className="nc-route hud-panel px-2.5 py-1 pointer-events-none border-cyan-400/40">
+                <span className="text-[10px] font-black tracking-[0.18em] text-cyan-300">
+                  ROUTE ▸ {hud.mission.stage === 'pickup' ? 'PICKUP' : 'DROP'}
+                </span>
+                {hud.mission.kind === 'taxi' && (
+                  <span className="text-[9px] font-bold ml-1.5 text-emerald-300">
+                    {hud.ride ? `TIP ~$${Math.round(Math.max(0, hud.mission.timer) * 4 + hud.ride.tipBonus)}` : 'FARE'}
+                    {hud.ride && hud.ride.violations > 0 && <span className="text-red-300"> · ⚠{hud.ride.violations}</span>}
+                  </span>
+                )}
+              </div>
+            )}
             {/* World Circuit (v2): current city zone + odometer — the endless-run
                 pill. Always on, so the next destination is always in view. */}
             {hud.zone && (
@@ -1333,7 +1357,7 @@ export default function App() {
                 <div className="flex justify-between items-center gap-2">
                   <span className="text-yellow-300 font-bold text-[11px] leading-tight">{hud.mission.name}</span>
                   {hud.mission.timer >= 0 ? (
-                    <span className={`font-mono text-sm font-bold shrink-0 ${hud.mission.timer < 10 ? 'text-red-400 animate-pulse' : 'text-white'}`}>
+                    <span className={`font-mono text-sm font-bold shrink-0 ${hud.mission.timer < 10 ? 'text-red-400 animate-pulse' : hud.mission.timer < 30 ? 'text-amber-300' : 'text-white'}`}>
                       {Math.max(0, hud.mission.timer).toFixed(1)}s
                     </span>
                   ) : (

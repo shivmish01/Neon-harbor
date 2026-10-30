@@ -1436,3 +1436,20 @@
   height: 100% !important;
   display: block;
 }
+
+/* Harbor Rides dash GPS (cockpit camera) */
+.nh-gps {
+  pointer-events: none;
+}
+.gps-desk {
+  bottom: 24px;
+  right: 8px;
+  width: 168px;
+  height: 112px;
+}
+.gps-touch {
+  bottom: 132px;
+  right: 10px;
+  width: 126px;
+  height: 84px;
+}

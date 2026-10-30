@@ -58,6 +58,10 @@ export interface HudState {
   boosting: boolean
   /** body damage 0-100 — HUD wrench bar; heavy damage bleeds speed, 100 = WRECKED */
   damage: number
+  /** current camera mode — 2 = in-car cockpit (dash GPS shows only then) */
+  camMode: 0 | 1 | 2
+  /** Harbor Rides live fare state (taxi ride only): tip drift + violation count. */
+  ride: { tipBonus: number; violations: number; clean: boolean } | null
   /** car exploded at 100% damage — game over overlay, tow to garage */
   wrecked: boolean
   /** the hit that did the most recent damage — shown on the WRECKED card so the
@@ -291,6 +295,10 @@ export class GameEngine {
   private mmCanvas: HTMLCanvasElement
   private mmCtx: CanvasRenderingContext2D
   private mmBase: HTMLCanvasElement
+  private gpsCanvas: HTMLCanvasElement | null = null
+  private gpsCtx: CanvasRenderingContext2D | null = null
+  /** Harbor Rides: destination sky beacon — tall additive column + ground ring. */
+  private dropBeacon: THREE.Group | null = null
   private hooks: EngineHooks
   private synth = new Synth()
 
@@ -509,8 +517,12 @@ export class GameEngine {
   private nearMarker: ContractMarker | null = null
   private markerToastCd = 0
 
-  constructor(canvas: HTMLCanvasElement, minimap: HTMLCanvasElement, hooks: EngineHooks, assets: GameAssets) {
+  constructor(canvas: HTMLCanvasElement, minimap: HTMLCanvasElement, hooks: EngineHooks, assets: GameAssets, gps?: HTMLCanvasElement) {
     this.mmCanvas = minimap
+    if (gps) {
+      this.gpsCanvas = gps
+      this.gpsCtx = gps.getContext('2d')
+    }
     this.hooks = hooks
     this.assets = assets
     this.canvas = canvas
@@ -639,6 +651,20 @@ export class GameEngine {
       this.scene.add(m)
       this.chevrons.push(m)
     }
+
+    // Harbor Rides: destination sky beacon — a tall additive cyan column with
+    // a ground ring, placed at the fare's drop point and visible over rooftops.
+    const beaconMat = new THREE.MeshBasicMaterial({ color: 0x35f0ff, transparent: true, opacity: 0.0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
+    const beaconCol = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 30, 14, 1, true), beaconMat)
+    beaconCol.position.y = 15
+    const beaconRing = new THREE.Mesh(new THREE.RingGeometry(4, 5.5, 28), beaconMat)
+    beaconRing.rotation.x = -Math.PI / 2
+    beaconRing.position.y = 0.2
+    const beaconGroup = new THREE.Group()
+    beaconGroup.add(beaconCol, beaconRing)
+    beaconGroup.visible = false
+    this.scene.add(beaconGroup)
+    this.dropBeacon = beaconGroup
 
     this.buildCity()
     this.buildCar()
@@ -7541,6 +7567,7 @@ export class GameEngine {
     this.ride.speedT = 0
     this.ride.toastCd = 0
     for (const c of this.chevrons) c.visible = false
+    if (this.dropBeacon) this.dropBeacon.visible = false
   }
 
   /** Harbor Rides: next-turn guidance for the HUD (↰/↱ + distance). */
@@ -7591,6 +7618,19 @@ export class GameEngine {
     } else {
       for (const c of this.chevrons) c.visible = false
       this.turnInfo = null
+    }
+
+    // ---- destination sky beacon: tall light column over the objective,
+    // visible from anywhere (rides + deliveries) ----
+    if (this.dropBeacon) {
+      if (t) {
+        this.dropBeacon.position.set(t.x, 0, t.z)
+        this.dropBeacon.visible = true
+        const bm = (this.dropBeacon.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial
+        bm.opacity = 0.4 + 0.22 * Math.sin(this.time * 4.5)
+      } else {
+        this.dropBeacon.visible = false
+      }
     }
 
     if (!riding) return
@@ -8286,6 +8326,10 @@ export class GameEngine {
       wrecked: this.wrecked,
       lastHitKmh: this.lastHitKmh,
       lastHitCause: this.lastHitCause,
+      camMode: this.camMode,
+      ride: this.mission && this.mission.kind === 'taxi' && this.mission.stage === 'ride'
+        ? { tipBonus: Math.round(this.ride.tipBonus), violations: this.ride.violations, clean: this.ride.clean }
+        : null,
       stuck: (this.stuckTime > 2 || this.stuckLatch > 0) && !this.busted,
       zone: (() => {
         const z = zoneAt(this.worldKm)
@@ -8506,6 +8550,65 @@ export class GameEngine {
     ctx.strokeStyle = '#ffffff'
     ctx.lineWidth = 2
     ctx.stroke()
+    this.drawGps()
+  }
+
+  /** Harbor Rides: cockpit dash-GPS phone canvas. Same L-shaped route as the
+      minimap, drawn smaller; only rendered while the in-car camera is active. */
+  private drawGps(): void {
+    const g = this.gpsCanvas
+    const ctx = this.gpsCtx
+    if (!g || !ctx || this.camMode !== 2) return
+    const W = g.width
+    const H = g.height
+    ctx.clearRect(0, 0, W, H)
+    ctx.fillStyle = '#060d1a'
+    ctx.fillRect(0, 0, W, H)
+    // faint street grid
+    ctx.strokeStyle = 'rgba(53,240,255,0.07)'
+    ctx.lineWidth = 1
+    for (let i = 0; i < W; i += 14) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, H); ctx.stroke() }
+    for (let i = 0; i < H; i += 14) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(W, i); ctx.stroke() }
+    const scale = W / (SIZE + 16)
+    const toPx = (v: number) => (v + HALF + 8) * scale
+    const rt = this.navTarget()
+    if (rt) {
+      const x0 = toPx(this.pos.x), z0 = toPx(this.pos.z)
+      const x1 = toPx(rt.x), z1 = toPx(rt.z)
+      const elbowRoad = this.isOnRoad(rt.x, this.pos.z)
+      const ex = elbowRoad ? x1 : x0
+      const ez = elbowRoad ? z0 : z1
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.strokeStyle = 'rgba(53,240,255,0.25)'
+      ctx.lineWidth = 6
+      ctx.beginPath(); ctx.moveTo(x0, z0); ctx.lineTo(ex, ez); ctx.lineTo(x1, z1); ctx.stroke()
+      ctx.strokeStyle = 'rgba(53,240,255,0.95)'
+      ctx.lineWidth = 2.6
+      ctx.beginPath(); ctx.moveTo(x0, z0); ctx.lineTo(ex, ez); ctx.lineTo(x1, z1); ctx.stroke()
+      const pulse = 0.5 + 0.5 * Math.sin(this.time * 4)
+      ctx.strokeStyle = `rgba(255,66,53,${0.4 + pulse * 0.5})`
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(x1, z1, 5 + pulse * 2.5, 0, Math.PI * 2)
+      ctx.stroke()
+    }
+    // car dot + heading
+    ctx.fillStyle = '#1a73e8'
+    ctx.beginPath()
+    ctx.arc(toPx(this.pos.x), toPx(this.pos.z), 3.4, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 1.4
+    ctx.stroke()
+    // label
+    ctx.fillStyle = 'rgba(148,233,255,0.9)'
+    ctx.font = 'bold 9px ui-monospace, Menlo, monospace'
+    ctx.fillText('DASH GPS', 5, 12)
+    if (this.mission && (this.mission.kind === 'delivery' || this.mission.kind === 'taxi')) {
+      ctx.fillStyle = 'rgba(255,255,255,0.75)'
+      ctx.fillText(`▸ ${this.mission.stage === 'pickup' ? 'PICKUP' : 'DROP'}`, 5, 24)
+    }
   }
 
   /** AMap / Google-Maps style big map (opened by tapping the minimap). Bright
