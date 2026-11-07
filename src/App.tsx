@@ -172,8 +172,10 @@ export default function App() {
   }, [isTouch, onboardStep, hud])
   // Step 2 (touch): steering is a horizontal swipe — detect a real swipe
   // anywhere on screen and count it as "user did it".
+  const [obSwiped, setObSwiped] = useState(false)
   useEffect(() => {
     if (!isTouch || onboardStep !== 2) return
+    setObSwiped(false)
     // Upright phones show the game rotated 90°: the game's left-right is the
     // screen's up-down.
     const across = (t: Touch | undefined) => (t ? (isPortrait ? t.clientY : t.clientX) : null)
@@ -185,6 +187,7 @@ export default function App() {
       if (startX === null || obAdvRef.current) return
       const dx = (across(e.touches[0]) ?? startX) - startX
       if (Math.abs(dx) > 50) {
+        setObSwiped(true)
         obAdvRef.current = true
         setTimeout(() => setOnboardStep(3), 950)
       }
@@ -406,7 +409,9 @@ export default function App() {
       onToast: (msg, kind) => pushToast(msg, kind),
       onBusted: () => {
         setBustedFlash(true)
-        window.setTimeout(() => setBustedFlash(false), 1800)
+        // booking card reads for ~4s, then the engine has already released
+        // you at the garage
+        window.setTimeout(() => setBustedFlash(false), 4000)
       },
       onWrecked: () => {
         setWreckFlash(true)
@@ -1345,12 +1350,8 @@ export default function App() {
                 <TouchBtn engine={engineRef.current} label={<IcoHorn />} aria="Horn" tap="h" small />
               </div>
             )}
-            {/* ACTION MODE — pinned alert pill while the Patrol is chasing (mobile) */}
-            {isTouch && hud.pursued && !hud.busted && !overlay && (
-              <div className="nc-action pointer-events-none px-2.5 py-1 rounded-md border border-red-500/80 bg-red-950/70 backdrop-blur-sm text-red-300 font-black tracking-[0.18em] text-[10px] animate-pulse">
-                ⚠ ACTION MODE — SAVE YOURSELF
-              </div>
-            )}
+            {/* mobile pursuit warning now lives in the sci-fi pursuit panel
+                (top-right, under the minimap) */}
             {/* mission tracker — compact edge card (mobile) */}
             {isTouch && hud.mission && (
               <div className="nc-mission hud-panel border-yellow-400/40 w-44 px-2 py-1.5 pointer-events-none">
@@ -1690,13 +1691,8 @@ export default function App() {
                 className="absolute inset-0 z-10 pointer-events-none animate-pulse"
                 style={{ boxShadow: 'inset 0 0 80px rgba(255,30,60,0.35)' }}
               />
-              {!isTouch && (
-                <div
-                  className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-none px-4 py-1.5 rounded-md border border-red-500/80 bg-red-950/70 backdrop-blur-sm text-red-300 font-black tracking-[0.25em] text-xs sm:text-sm animate-pulse"
-                >
-                  ⚠ ACTION MODE ON — SAVE YOURSELF
-                </div>
-              )}
+              {/* the warning TEXT now lives in the sci-fi pursuit panel (below
+                  the minimap) — this block keeps only the felt red vignette */}
             </>
           )}
 
@@ -1746,13 +1742,70 @@ export default function App() {
             {GAME_VERSION} · {BUILD_HASH}{isTouch ? '' : ' — progress is saved locally'}
           </div>
 
-          {/* busted flash + what-to-do summary */}
+          {/* ============ PURSUIT SEQUENCE (sci-fi chase UX) ============
+              ① chase starts → full-width cinematic warning banner
+              ② during the chase → compact pursuit panel under the minimap
+                 (units, distance, SAVE YOURSELF when they're on you)
+              ③ heat dies     → EVADED banner */}
+          {hud?.pursuit && hud.pursuit.t < 3 && !hud.busted && (
+            <div className="pursuit-banner absolute top-[17%] left-1/2 -translate-x-1/2 z-30 pointer-events-none max-w-[92vw]">
+              <div className="pursuit-scan" />
+              <div className="px-5 py-2 md:px-8 md:py-3 text-center">
+                <div className="text-[9px] md:text-[10px] tracking-[0.4em] md:tracking-[0.5em] text-red-300/90 font-bold">⚠ PURSUIT INITIATED</div>
+                <div className="text-base md:text-2xl font-black text-white tracking-[0.12em] md:tracking-[0.25em] mt-0.5 drop-shadow-[0_0_14px_rgba(255,45,85,0.9)]">
+                  PATROL UNITS FOLLOWING YOU
+                </div>
+                <div className="text-[11px] tracking-[0.35em] text-cyan-300 font-bold mt-1">SAVE YOURSELF — DO NOT STOP</div>
+              </div>
+            </div>
+          )}
+          {hud?.pursuit && !hud.busted && (
+            <div className={`pursuit-panel ${isTouch ? 'top-[7.2rem] right-2' : 'top-[19.5rem] right-4'} z-30 pointer-events-none`}>
+              <div className="pursuit-scan" />
+              <div className="px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <span className="pursuit-dot" />
+                  <span className="text-[10px] tracking-[0.3em] text-red-300 font-black">PURSUIT</span>
+                  <span className="text-amber-300 text-xs font-black tracking-widest">{'★'.repeat(Math.min(5, hud.pursuit.stars))}</span>
+                </div>
+                <div className="text-[10px] text-slate-300 mt-1 font-mono">
+                  NEAREST UNIT <b className="text-white">{hud.pursuit.nearest >= 900 ? '—' : `${hud.pursuit.nearest}m`}</b>
+                </div>
+                {hud.pursuit.close && (
+                  <div className="text-[10px] tracking-[0.2em] text-red-300 font-black mt-0.5 animate-pulse">
+                    {isTouch ? 'SAVE YOURSELF — MASH DRIFT!' : 'SAVE YOURSELF — MASH SPACE!'}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          {hud?.evaded && !hud.busted && (
+            <div className="absolute top-[12%] left-1/2 -translate-x-1/2 z-30 pointer-events-none px-8 py-2.5 rounded-xl border border-emerald-400/60 bg-emerald-950/70 backdrop-blur-sm">
+              <div className="text-[10px] tracking-[0.5em] text-emerald-300 font-bold">✓ PURSUIT EVADED</div>
+              <div className="text-lg font-black text-white tracking-[0.25em] mt-0.5">YOU'RE A GHOST</div>
+            </div>
+          )}
+
+          {/* ARRESTED — sci-fi booking card. Auto-dismisses as the engine
+              releases you at the garage; tap to skip on touch. */}
           {bustedFlash && (
-            <div className="absolute inset-0 z-30 bg-red-950/50 flex items-center justify-center pointer-events-none">
-              <div className="text-center busted-anim">
-                <div className="text-6xl font-black text-red-400 tracking-[0.3em]">BUSTED</div>
+            <div
+              className="absolute inset-0 z-40 bg-red-950/60 backdrop-blur-[2px] flex items-center justify-center pointer-events-none"
+              onClick={() => setBustedFlash(false)}
+            >
+              <div className="text-center arrest-card busted-anim px-6">
+                <div className="arrest-scan" />
+                <div className="text-[10px] tracking-[0.55em] text-red-300/80 font-bold">HARBOR PATROL · DETENTION UNIT</div>
+                <div className="text-5xl md:text-6xl font-black text-red-400 tracking-[0.3em] mt-1 drop-shadow-[0_0_26px_rgba(255,45,85,0.9)]">ARRESTED</div>
+                <div className="mt-2 text-[11px] font-mono tracking-[0.25em] text-slate-300">
+                  CASE #NH-{String(Date.now()).slice(-6)} · CHARGE: RECKLESS FLIGHT{hud?.arrest ? ` · HEAT ${'★'.repeat(Math.min(5, hud.arrest.stars))}` : ''}
+                </div>
                 <div className="mt-3 text-slate-200 text-sm max-w-sm mx-auto leading-relaxed">
-                  The Patrol hauled you back to the garage and fined 15% of your cash.<br />
+                  Hauled to the impound and released at Garage 97.
+                  {hud?.arrest && hud.arrest.fine > 0 && (
+                    <span className="text-red-300 font-bold"> Fine paid: −${hud.arrest.fine}.</span>
+                  )}
+                  <br />
                   <span className="text-cyan-300">
                     {isTouch
                       ? 'Next time: when a drone grabs you, MASH the DRIFT button rapidly to break free — and never stop moving.'
@@ -1888,10 +1941,11 @@ export default function App() {
 
           {/* ================= TOUCH FLOW — show, don't tell ================= */}
 
-          {/* touch step 1 — hand on the joystick: PUSH UP = DRIVE */}
+          {/* touch step 1 — hand on the joystick: PUSH UP = DRIVE.
+              The hand VANISHES the moment the car moves — show, then get out. */}
           {isTouch && onboardStep === 1 && (
             <>
-              <GuideHand variant="push" style={{ left: '2.85rem', bottom: '5rem' }} />
+              {(hud?.speedKmh ?? 0) <= 8 && <GuideHand variant="push" style={{ left: '2.85rem', bottom: '5rem' }} />}
               <div className={`gchip${(hud?.speedKmh ?? 0) > 8 ? ' gchip-done' : ''}`} style={{ left: '1rem', bottom: '12.3rem' }}>
                 {(hud?.speedKmh ?? 0) > 8 ? '✓ GO!' : 'PUSH UP — DRIVE'}
               </div>
@@ -1903,11 +1957,12 @@ export default function App() {
             </>
           )}
 
-          {/* touch step 2 — hand swipes the right half: SWIPE = STEER */}
+          {/* touch step 2 — hand swipes the right half: SWIPE = STEER.
+              Hand disappears the instant a real swipe lands. */}
           {isTouch && onboardStep === 2 && (
             <>
-              <GuideHand variant="swipe" style={{ right: '16%', top: '38%' }} />
-              <div className="gchip" style={{ right: '9%', top: '30%' }}>SWIPE — STEER</div>
+              {!obSwiped && <GuideHand variant="swipe" style={{ right: '16%', top: '38%' }} />}
+              <div className={`gchip${obSwiped ? ' gchip-done' : ''}`} style={{ right: '9%', top: '30%' }}>{obSwiped ? '✓ STEERING!' : 'SWIPE — STEER'}</div>
               {obFallback && (
                 <button className="gskip" style={{ left: '50%', transform: 'translateX(-50%)', bottom: '1.2rem' }} onClick={() => setOnboardStep(3)}>
                   SKIP →
@@ -1916,10 +1971,11 @@ export default function App() {
             </>
           )}
 
-          {/* touch step 3 — hand taps the nitro bolt: TAP = BOOST */}
+          {/* touch step 3 — hand taps the nitro bolt: TAP = BOOST.
+              Hand vanishes the second nitro fires. */}
           {isTouch && onboardStep === 3 && (
             <>
-              <GuideHand variant="tap" style={{ right: '5.6rem', bottom: '5.4rem' }} />
+              {!(hud && (hud.boosting || hud.boost < 95)) && <GuideHand variant="tap" style={{ right: '5.6rem', bottom: '5.4rem' }} />}
               <div className={`gchip gchip-fuchsia${hud && (hud.boosting || hud.boost < 95) ? ' gchip-done' : ''}`} style={{ right: '1rem', bottom: '12.3rem' }}>
                 {hud && (hud.boosting || hud.boost < 95) ? '✓ BOOM!' : 'TAP ⚡ — NITRO'}
               </div>
@@ -1934,13 +1990,14 @@ export default function App() {
             </>
           )}
 
-          {/* touch step 4 — the objective, while driving: beam = work */}
+          {/* touch step 4 — the objective, while driving: beam = work.
+              The pointing hand leaves once the garage beam is reached. */}
           {isTouch && onboardStep === 4 && (
             <>
               <div className="gchip" style={{ left: '0.9rem', top: '3.1rem' }}>
                 <span className="gbeam" /> BEAM = WORK
               </div>
-              <GuideHand variant="point" style={{ left: '46%', top: '18%' }} />
+              {!hud?.nearGarage && <GuideHand variant="point" style={{ left: '46%', top: '18%' }} />}
               {hud?.nearGarage && (
                 <div className="gchip gchip-done" style={{ left: '50%', transform: 'translateX(-50%)', bottom: '9.5rem' }}>
                   ✓ THAT'S THE SPOT
@@ -2614,10 +2671,23 @@ function GuideHand({ variant, style }: { variant: 'push' | 'swipe' | 'tap' | 'po
     <div className={`ghand ghand-${variant}`} style={style}>
       {variant === 'tap' && <div className="ghand-ripple" />}
       <svg viewBox="0 0 64 64" aria-hidden>
-        <rect x="27" y="7" width="10" height="28" rx="5" fill="#f8fafc" stroke="#0f172a" strokeWidth="2.5" />
-        <rect x="13" y="33" width="11" height="9" rx="4.5" fill="#f8fafc" stroke="#0f172a" strokeWidth="2.5" />
-        <rect x="19" y="28" width="27" height="24" rx="10" fill="#f8fafc" stroke="#0f172a" strokeWidth="2.5" />
-        <rect x="20" y="49" width="25" height="11" rx="4" fill="#22d3ee" stroke="#155e75" strokeWidth="2.5" />
+        {/* cartoon glove — rounded palm, finger bumps along the top edge and a
+            side thumb, so the silhouette can only read as a friendly hand */}
+        {/* side thumb (left) */}
+        <ellipse cx="13" cy="38" rx="6.5" ry="4.6" fill="#f8fafc" stroke="#0f172a" strokeWidth="2.4" transform="rotate(-30 13 38)" />
+        {/* palm */}
+        <rect x="16" y="28" width="32" height="26" rx="12" fill="#f8fafc" stroke="#0f172a" strokeWidth="2.4" />
+        {/* four finger bumps along the top of the palm */}
+        <circle cx="21" cy="28" r="4.6" fill="#f8fafc" stroke="#0f172a" strokeWidth="2.2" />
+        <circle cx="29" cy="27" r="4.6" fill="#f8fafc" stroke="#0f172a" strokeWidth="2.2" />
+        <circle cx="37" cy="27" r="4.6" fill="#f8fafc" stroke="#0f172a" strokeWidth="2.2" />
+        <circle cx="44.5" cy="28" r="4.4" fill="#f8fafc" stroke="#0f172a" strokeWidth="2.2" />
+        {/* index finger — raised and gently angled, clearly coming off the palm */}
+        <g transform="rotate(8 21 29)">
+          <rect x="17.5" y="8" width="8.6" height="22" rx="4.3" fill="#f8fafc" stroke="#0f172a" strokeWidth="2.4" />
+        </g>
+        {/* wrist cuff */}
+        <rect x="20" y="51" width="24" height="8" rx="3.5" fill="#22d3ee" stroke="#155e75" strokeWidth="2.2" />
       </svg>
     </div>
   )

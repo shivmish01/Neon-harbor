@@ -46,6 +46,12 @@ export interface HudState {
   cred: { chain: number; mult: number; idle01: number } | null
   /** true when a chaser (drone/cruiser) is close but hasn't grabbed you yet — HUD shows escape advice */
   pursued: boolean
+  /** Sci-fi pursuit sequence: live while a chase runs (null otherwise). */
+  pursuit: { t: number; stars: number; nearest: number; close: boolean } | null
+  /** True for ~3s right after the pursuit is lost (evaded banner). */
+  evaded: boolean
+  /** Arrest booking details while busted (sci-fi ARRESTED card). */
+  arrest: { fine: number; stars: number } | null
   /** first-time onboarding: current objective, or null when tutorial is finished */
   tutorial: { step: number; total: number; title: string; hint: string } | null
   mission: HudMission | null
@@ -423,6 +429,13 @@ export class GameEngine {
   // Game state
   private heat = 0
   private lastHeatInt = 0
+  /** Pursuit sequence timing (sci-fi chase UX): seconds since the chase began
+      (-1 = no pursuit). evadedT = seconds since the pursuit was lost. */
+  private pursuitT = -1
+  private evadedT = -1
+  private chaseWas = false
+  /** Last arrest details for the ARRESTED game-over card. */
+  private lastArrest: { fine: number; stars: number } | null = null
   // New-player protection: the Patrol stays blind until the First Night guide
   // is done/skipped, plus a 60s grace after that. Speeding is judged against
   // the car's OWN top speed (85%), not a fixed km/h, so arcade speed tuning
@@ -7199,6 +7212,20 @@ export class GameEngine {
     }
     this.lastHeatInt = heatInt
 
+    // Pursuit sequence edges (sci-fi chase UX): rising edge starts the
+    // pursuit clock, falling edge starts the evaded clock.
+    const inPursuit = this.heat >= 1 && !this.busted && !this.wrecked
+    if (inPursuit) {
+      this.pursuitT = this.pursuitT < 0 ? 0 : this.pursuitT + dt
+      this.evadedT = -1
+    } else {
+      if (this.chaseWas) this.evadedT = 0
+      else if (this.evadedT >= 0) this.evadedT += dt
+      this.pursuitT = -1
+    }
+    if (this.evadedT > 3.2) this.evadedT = -1
+    this.chaseWas = inPursuit
+
     // Busted meter: chased + slow + close (drones OR cruisers can box you in).
     // No grab during a player's first-ever chase — ★1 is the whole lesson.
     const grabbed = nearest < 5.5 || this.cruiserNearest < 5
@@ -7224,9 +7251,12 @@ export class GameEngine {
     this.busted = true
     this.bustedCooldown = 2.6
     this.bustedMeter = 0
+    this.lastArrest = { fine, stars: Math.max(1, Math.floor(this.heat)) }
     this.heat = 0
     this.lastHeatInt = 0
     this.firstChaseDone = true
+    this.pursuitT = -1
+    this.evadedT = -1
     this.synth.busted()
     this.hooks.onBusted()
     this.hooks.onToast(`BUSTED — Harbor Patrol impounded your ride. Fine: $${fine}`, 'warn')
@@ -8307,6 +8337,11 @@ export class GameEngine {
         ? { chain: Math.round(this.credChain), mult: this.credMult(), idle01: Math.max(0, Math.min(1, 1 - this.credIdle / 3)) }
         : null,
       pursued: this.heat >= 1 && !this.busted && chasedClose,
+      pursuit: this.pursuitT >= 0
+        ? { t: this.pursuitT, stars: Math.floor(this.heat), nearest: Math.round(this.cruiserNearest), close: chasedClose }
+        : null,
+      evaded: this.evadedT >= 0 && this.evadedT < 3.2,
+      arrest: this.busted ? this.lastArrest : null,
       tutorial,
       mission,
       marker: this.nearMarker && !this.mission

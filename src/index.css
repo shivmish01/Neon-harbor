@@ -641,8 +641,8 @@
    push (joystick), swipe (steer), tap (nitro), point (objective). */
 .ghand {
   position: absolute;
-  width: 3.6rem;
-  height: 3.6rem;
+  width: 4.4rem;
+  height: 4.4rem;
   pointer-events: none;
   z-index: 46;
   filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.65)) drop-shadow(0 0 12px rgba(34, 211, 238, 0.35));
@@ -1452,4 +1452,68 @@
   right: 10px;
   width: 126px;
   height: 84px;
+}
+
+/* ---------- pursuit sequence (sci-fi chase UX) ---------- */
+.pursuit-banner {
+  min-width: 20rem;
+  max-width: 92vw;
+  border: 1px solid rgba(255, 45, 85, 0.65);
+  border-radius: 0.9rem;
+  background: linear-gradient(180deg, rgba(40, 6, 14, 0.92), rgba(20, 4, 9, 0.85));
+  box-shadow: 0 0 34px rgba(255, 45, 85, 0.4), inset 0 0 26px rgba(255, 45, 85, 0.12);
+  overflow: hidden;
+  animation: pursuit-in 0.28s ease-out;
+}
+@keyframes pursuit-in {
+  from { transform: translateY(-14px) scale(0.96); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+.pursuit-panel {
+  position: absolute;
+  width: 10.5rem;
+  border: 1px solid rgba(255, 45, 85, 0.55);
+  border-radius: 0.7rem;
+  background: linear-gradient(180deg, rgba(30, 6, 12, 0.9), rgba(16, 4, 8, 0.82));
+  box-shadow: 0 0 22px rgba(255, 45, 85, 0.28), inset 0 0 18px rgba(255, 45, 85, 0.1);
+  overflow: hidden;
+}
+/* slow horizontal scan line — the "radar" feel */
+.pursuit-scan {
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(255, 90, 120, 0.9), transparent);
+  animation: pursuit-scan 2.4s linear infinite;
+  pointer-events: none;
+}
+@keyframes pursuit-scan {
+  from { transform: translateY(0); opacity: 0.9; }
+  to { transform: translateY(6.5rem); opacity: 0.15; }
+}
+.pursuit-dot {
+  width: 8px; height: 8px; border-radius: 9999px;
+  background: #ff2d55;
+  box-shadow: 0 0 10px #ff2d55;
+  animation: pursuit-blink 0.7s steps(2, start) infinite;
+}
+@keyframes pursuit-blink { 50% { opacity: 0.25; } }
+
+/* ARRESTED booking card */
+.arrest-card {
+  position: relative;
+  max-width: 34rem;
+  border: 1px solid rgba(255, 45, 85, 0.6);
+  border-radius: 1.1rem;
+  background: linear-gradient(180deg, rgba(26, 6, 12, 0.94), rgba(12, 3, 6, 0.9));
+  box-shadow: 0 0 60px rgba(255, 45, 85, 0.35), inset 0 0 40px rgba(255, 45, 85, 0.08);
+  padding: 1.6rem 2rem 1.4rem;
+  overflow: hidden;
+}
+.arrest-scan {
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: 100%;
+  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0 2px, transparent 2px 5px);
+  pointer-events: none;
 }
